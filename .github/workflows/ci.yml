@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    name: Backend (lint, typecheck, tests, build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: orderup
+          POSTGRES_PASSWORD: orderup
+          POSTGRES_DB: orderup
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U orderup -d orderup"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://orderup:orderup@localhost:5432/orderup?schema=public
+      REDIS_URL: redis://localhost:6379
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prisma generate
+        run: npm run prisma:generate
+
+      - name: Apply migrations
+        run: npm run prisma:deploy
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Integration/e2e tests
+        run: npm run test:e2e
+
+      - name: Build
+        run: npm run build

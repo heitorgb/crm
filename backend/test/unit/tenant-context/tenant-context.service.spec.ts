@@ -1,4 +1,5 @@
 import {
+  InvalidTenantContextError,
   TenantContextService,
   TenantContextUnavailableError,
 } from '../../../src/common/tenant-context/tenant-context.service.js';
@@ -59,5 +60,28 @@ describe('TenantContextService', () => {
 
   it('throws when setting context without an active store', () => {
     expect(() => service.setContext(context)).toThrow(TenantContextUnavailableError);
+  });
+
+  it('rejects an incomplete context', () => {
+    service.run({ requestId: 'request-1' }, () => {
+      expect(() => service.setContext({ ...context, role: '' })).toThrow(InvalidTenantContextError);
+      expect(service.getContext()).toBeUndefined();
+    });
+  });
+
+  it('clears the context inside the active store', () => {
+    service.run({ requestId: 'request-1' }, () => {
+      service.setContext(context);
+      expect(service.getContext()).toEqual(context);
+
+      service.clearContext();
+
+      expect(service.getContext()).toBeUndefined();
+      expect(() => service.requireContext()).toThrow(TenantContextUnavailableError);
+    });
+  });
+
+  it('clears context safely without an active store', () => {
+    expect(() => service.clearContext()).not.toThrow();
   });
 });

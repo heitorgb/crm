@@ -1,8 +1,8 @@
-import { randomUUID } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 import type { Params } from 'nestjs-pino';
 import type { Env } from '../../config/env.validation.js';
 import type { TenantContextService } from '../tenant-context/tenant-context.service.js';
+import { normalizeRequestId } from './request-id.js';
 
 const REDACT_PATHS = [
   'req.headers.authorization',
@@ -23,8 +23,7 @@ export function buildLoggerOptions(
 ): Params['pinoHttp'] {
   return {
     level: env.LOG_LEVEL,
-    genReqId: (request: IncomingMessage) =>
-      (request.headers['x-request-id'] as string | undefined) ?? randomUUID(),
+    genReqId: (request: IncomingMessage) => normalizeRequestId(request.headers['x-request-id']),
     redact: { paths: REDACT_PATHS, censor: '[REDACTED]' },
     customProps: () => {
       const context = tenantContext.getContext();

@@ -19,8 +19,17 @@ Sobe apenas o necessário para a fundação:
 - PostgreSQL 16 em `localhost:5432`
 - Redis 7 em `localhost:6379`
 
-Para derrubar (mantendo volumes): `docker compose down`. Para remover volumes:
-`docker compose down -v`.
+Comandos úteis (na raiz):
+
+| Ação                         | Comando                                        |
+| ---------------------------- | ---------------------------------------------- |
+| Subir                        | `docker compose up -d`                          |
+| Parar (mantendo volumes)     | `docker compose down`                           |
+| Ver logs                     | `docker compose logs -f`                        |
+| Logs de um serviço           | `docker compose logs -f postgres`               |
+| Resetar ambiente (apaga dados) | `docker compose down -v`                      |
+| Aplicar migrations           | `cd backend && npm run prisma:migrate`          |
+| Aplicar migrations (CI/prod) | `cd backend && npm run prisma:deploy`           |
 
 ## Backend
 
@@ -40,14 +49,30 @@ npm run start:dev           # watch mode: http://localhost:3000/api/health
 Validadas na inicialização (`src/config/`). O boot falha com mensagem clara se algo estiver
 ausente/ inválido. Nunca commitar `.env`.
 
-| Variável       | Obrigatória | Default       |
-| -------------- | ----------- | ------------- |
-| `NODE_ENV`     | não         | `development` |
-| `PORT`         | não         | `3000`        |
-| `API_PREFIX`   | não         | `api`         |
-| `DATABASE_URL` | sim         | —             |
-| `REDIS_URL`    | sim         | —             |
-| `LOG_LEVEL`    | não         | `info`        |
+| Variável        | Obrigatória                   | Default                  |
+| --------------- | ----------------------------- | ------------------------ |
+| `NODE_ENV`      | não                           | `development`            |
+| `PORT`          | não                           | `3000`                   |
+| `API_PREFIX`    | não                           | `api`                    |
+| `CORS_ORIGINS`  | sim em produção               | `http://localhost:5173`  |
+| `DATABASE_URL`  | sim                           | —                        |
+| `REDIS_URL`     | sim                           | —                        |
+| `JWT_ACCESS_SECRET` | sim                       | —                        |
+| `JWT_ACCESS_TTL_SECONDS` | não                   | `900`                    |
+| `REFRESH_TOKEN_TTL_DAYS` | não                   | `30`                     |
+| `AUTH_COOKIE_SECURE` | não                      | `true` em produção       |
+| `AUTH_COOKIE_SAMESITE` | não                    | `lax`                    |
+| `AUTH_COOKIE_DOMAIN` | não                      | —                        |
+| `LOG_LEVEL`     | não                           | `info`                   |
+| `AI_PROVIDER`   | não                           | —                        |
+| `AI_MODEL`      | quando `AI_PROVIDER`          | —                        |
+| `AI_API_KEY`    | quando `AI_PROVIDER`          | —                        |
+| `AI_BASE_URL`   | não                           | —                        |
+| `AI_TIMEOUT_MS` | não                           | `30000`                  |
+| `AI_MAX_RETRIES`| não                           | `2`                      |
+
+`CORS_ORIGINS` é uma lista separada por vírgulas. `*` não é aceito em produção. As variáveis de IA
+são apenas configuração nesta fase (ver [`ai.md`](./ai.md)); nenhuma chamada é feita.
 
 ## Scripts
 
@@ -126,3 +151,17 @@ backend/
 - Sem comentários no código, exceto para decisões não óbvias.
 - Controllers finos; regra de negócio em services.
 - Não implementar fases futuras antecipadamente.
+
+## Frontend
+
+O frontend fica em `frontend/` (React + Vite + Tailwind + shadcn/ui). Detalhes completos em
+[`frontend.md`](./frontend.md).
+
+```bash
+cd frontend
+npm install
+npm run dev        # http://localhost:5173 (proxy de /api para :3000)
+npm run lint
+npm run typecheck
+npm run build
+```

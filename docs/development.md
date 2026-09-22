@@ -30,6 +30,7 @@ Comandos úteis (na raiz):
 | Resetar ambiente (apaga dados) | `docker compose down -v`                      |
 | Aplicar migrations           | `cd backend && npm run prisma:migrate`          |
 | Aplicar migrations (CI/prod) | `cd backend && npm run prisma:deploy`           |
+| Criar usuário de desenvolvimento | `cd backend && npm run prisma:seed`         |
 
 ## Backend
 
@@ -41,8 +42,23 @@ cp .env.example .env
 npm install
 npm run prisma:generate     # gera o Prisma Client
 npm run prisma:migrate      # aplica as migrations
+npm run prisma:seed         # cria tenant/usuário de desenvolvimento (idempotente)
 npm run start:dev           # watch mode: http://localhost:3000/api/health
 ```
+
+### Usuário de desenvolvimento (seed)
+
+`npm run prisma:seed` cria, de forma **idempotente**, um tenant, um usuário `OWNER`, um perfil de
+qualificação padrão e um pipeline com etapas. Credenciais:
+
+```text
+Tenant: OrderUp Demo
+E-mail: admin@orderup.local
+Senha:  admin12345
+```
+
+Pode rodar quantas vezes quiser: os registros são atualizados, não duplicados. Use **apenas em
+desenvolvimento** e não reutilize essas credenciais em produção.
 
 ### Variáveis de ambiente
 

@@ -23,7 +23,40 @@ O arquivo de configuração do CLI é `backend/prisma7.config.ts`, que lê `DATA
 
 ## Modelagem atual (Implementado)
 
-Apenas a base de identidade e multi-tenancy. **Nenhuma entidade de CRM foi criada.**
+Base de identidade, multi-tenancy e núcleo do CRM. Detalhes de CRM em [`crm-core.md`](./crm-core.md).
+
+### Núcleo de CRM (Prompt 05)
+
+`Customer`, `Contact`, `Tag`, `CustomerTag` e `QualificationProfile` — todas com `tenantId`, índice
+apropriado e isolamento por aplicação. `Customer.document` é `UNIQUE (tenantId, document)`.
+`QualificationProfile` possui índice único parcial para garantir **um único perfil padrão ativo por
+tenant** (ver migration `20260921205850_crm_core`). Retenção de dado pessoal: sem job de expurgo
+nesta fase (Prompt 09), conforme a seção de LGPD abaixo.
+
+### Vendas e qualificação (Prompt 06)
+
+`Lead`, `LeadTag`, `Pipeline`, `PipelineStage`, `Deal`, `Task`, `Activity`,
+`LeadQualificationSession` e `LeadAnalysis` — todas com `tenantId` e índices para as consultas reais.
+Destaques: `Lead` único por `(tenantId, phone)`; `PipelineStage` único por `(pipelineId, position)`;
+`Activity` guarda `userId` sem FK para preservar auditoria. Detalhes em [`sales.md`](./sales.md).
+
+### Atendimento, WhatsApp e digest (Prompt 07)
+
+`WhatsAppInstance`, `Conversation`, `Message`, `MessageAttachment`, `Ticket`,
+`LeadDigestPreference`, `LeadDigestDelivery` e `WebhookEvent` — todas com `tenantId`.
+Idempotência: `Message` único por `(tenantId, externalMessageId)`, `WebhookEvent` por
+`(provider, externalEventId)` e `LeadDigestDelivery` por `(tenantUserId, periodStart)`.
+Credenciais de instância são criptografadas. Detalhes, retenção e endpoints em
+[`attendance.md`](./attendance.md).
+
+### LGPD e compliance (Prompt 09)
+
+`DataSubjectRequest` (trilha de direitos do titular e revisões do art. 20) e campos de conformidade
+em `Tenant` (`dpoName`, `dpoEmail`, `retentionConversationDays`, `retentionLeadDays`,
+`terms/dpaVersion/acceptedAt`) e `Lead` (`legalHold`, `anonymizedAt`, `consentRevokedAt`,
+`oppositionAt`); `Conversation.legalHold`; `LeadQualificationSession.reviewOutcome/reviewNotes/
+reviewResolvedAt/reviewResolvedBy`. Migration `20260921233422_lgpd_compliance`. Ver
+[`lgpd.md`](./lgpd.md) e [`lgpd-retencao.md`](./lgpd-retencao.md).
 
 ### `Tenant`
 

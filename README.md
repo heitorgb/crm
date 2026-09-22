@@ -16,6 +16,8 @@ Lead, Pipeline, WhatsApp, IA) ainda não foram implementados.
 - [docs/ai.md](./docs/ai.md) — fundação de configuração de IA.
 - [docs/qualification-bot.md](./docs/qualification-bot.md) — fundação e limites do bot de qualificação.
 - [docs/development.md](./docs/development.md) — como rodar, testar e validar.
+- [docs/hardening.md](./docs/hardening.md) — auditoria de segurança/performance e pendências.
+- [docs/lgpd.md](./docs/lgpd.md) — LGPD: DPO, direitos do titular, retenção e conformidade.
 - [docs/frontend.md](./docs/frontend.md) — fundação do frontend e design system.
 - [docs/mvp-bot-qualificador.md](./docs/mvp-bot-qualificador.md) — plano incremental do bot qualificador.
 - [docs/decisions/](./docs/decisions/) — decisões arquiteturais (ADRs).
@@ -40,6 +42,7 @@ cd backend
 cp .env.example .env
 npm install
 npm run prisma:migrate               # aplica as migrations
+npm run prisma:seed                  # cria usuário de dev (admin@orderup.local / admin12345)
 npm run start:dev                    # http://localhost:3000/api/health
 ```
 

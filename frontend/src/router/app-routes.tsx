@@ -19,6 +19,52 @@ const LeadDigestPage = lazy(() =>
     default: module.LeadDigestPage,
   })),
 );
+const CustomerListPage = lazy(() =>
+  import('@/features/customers/customer-list-page').then((module) => ({
+    default: module.CustomerListPage,
+  })),
+);
+const CustomerDetailPage = lazy(() =>
+  import('@/features/customers/customer-detail-page').then((module) => ({
+    default: module.CustomerDetailPage,
+  })),
+);
+const ContactListPage = lazy(() =>
+  import('@/features/contacts/contact-list-page').then((module) => ({
+    default: module.ContactListPage,
+  })),
+);
+const TagsPage = lazy(() =>
+  import('@/features/tags/tags-page').then((module) => ({ default: module.TagsPage })),
+);
+const LeadListPage = lazy(() =>
+  import('@/features/leads/lead-list-page').then((module) => ({ default: module.LeadListPage })),
+);
+const KanbanPage = lazy(() =>
+  import('@/features/deals/kanban-page').then((module) => ({ default: module.KanbanPage })),
+);
+const DealsListPage = lazy(() =>
+  import('@/features/deals/deals-list-page').then((module) => ({ default: module.DealsListPage })),
+);
+const TasksPage = lazy(() =>
+  import('@/features/tasks/tasks-page').then((module) => ({ default: module.TasksPage })),
+);
+const PipelineSettingsPage = lazy(() =>
+  import('@/features/pipelines/pipeline-settings-page').then((module) => ({
+    default: module.PipelineSettingsPage,
+  })),
+);
+const AttendancePage = lazy(() =>
+  import('@/features/attendance/attendance-page').then((module) => ({
+    default: module.AttendancePage,
+  })),
+);
+const TicketsPage = lazy(() =>
+  import('@/features/tickets/tickets-page').then((module) => ({ default: module.TicketsPage })),
+);
+const WhatsAppPage = lazy(() =>
+  import('@/features/whatsapp/whatsapp-page').then((module) => ({ default: module.WhatsAppPage })),
+);
 const NotFoundPage = lazy(() =>
   import('@/features/not-found/not-found-page').then((module) => ({
     default: module.NotFoundPage,
@@ -40,41 +86,20 @@ export function AppRoutes() {
         >
           <Route path="/dashboard" element={<DashboardPage />} />
 
-          <Route
-            path="/vendas/leads"
-            element={<PlaceholderPage title="Leads" description="Qualificação e acompanhamento de leads." />}
-          />
-          <Route
-            path="/vendas/funil"
-            element={<PlaceholderPage title="Funil" description="Etapas do pipeline comercial." />}
-          />
-          <Route
-            path="/vendas/negocios"
-            element={<PlaceholderPage title="Negócios" description="Negociações em andamento." />}
-          />
+          <Route path="/vendas/leads" element={<LeadListPage />} />
+          <Route path="/vendas/funil" element={<KanbanPage />} />
+          <Route path="/vendas/negocios" element={<DealsListPage />} />
 
-          <Route
-            path="/clientes/clientes"
-            element={<PlaceholderPage title="Clientes" description="Base de clientes da organização." />}
-          />
-          <Route
-            path="/clientes/contatos"
-            element={<PlaceholderPage title="Contatos" description="Contatos vinculados aos clientes." />}
-          />
+          <Route path="/clientes/clientes" element={<CustomerListPage />} />
+          <Route path="/clientes/clientes/:id" element={<CustomerDetailPage />} />
+          <Route path="/clientes/contatos" element={<ContactListPage />} />
+          <Route path="/clientes/tags" element={<TagsPage />} />
 
-          <Route
-            path="/atendimento/conversas"
-            element={<PlaceholderPage title="Conversas" description="Atendimentos de WhatsApp." />}
-          />
-          <Route
-            path="/atendimento/tickets"
-            element={<PlaceholderPage title="Tickets" description="Chamados de atendimento." />}
-          />
+          <Route path="/atendimento/conversas" element={<AttendancePage />} />
+          <Route path="/atendimento/tickets" element={<TicketsPage />} />
+          <Route path="/atendimento/whatsapp" element={<WhatsAppPage />} />
 
-          <Route
-            path="/tarefas"
-            element={<PlaceholderPage title="Tarefas" description="Atividades do time." />}
-          />
+          <Route path="/tarefas" element={<TasksPage />} />
           <Route
             path="/relatorios"
             element={<PlaceholderPage title="Relatórios" description="Indicadores e relatórios." />}
@@ -82,6 +107,7 @@ export function AppRoutes() {
 
           <Route path="/settings/qualification-bot" element={<QualificationBotPage />} />
           <Route path="/settings/lead-digest" element={<LeadDigestPage />} />
+          <Route path="/settings/pipelines" element={<PipelineSettingsPage />} />
         </Route>
 
         <Route path="/" element={<Navigate to="/dashboard" replace />} />

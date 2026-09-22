@@ -1,7 +1,9 @@
 # Frontend — OrderUp CRM
 
-> Status: **Fundação implementada** (Prompt 04). Design system, layout, tema e telas iniciais.
-> Módulos de negócio reais ainda não foram conectados.
+> Status: **Fundação (Prompt 04) + CRM Core (Prompt 05) + Vendas (Prompt 06) + Atendimento (Prompt 07)**.
+> Design system, layout e tema, e as telas de Clientes/Contatos/Tags/Bot de Qualificação, Vendas
+> (Leads, Kanban, Negócios, Pipelines, Tarefas) e Atendimento (Conversas com realtime, Tickets,
+> Resumo de Leads) conectadas à API via TanStack Query. Relatórios segue como placeholder.
 
 ## Stack
 
@@ -122,10 +124,18 @@ frontend/
 ## Rotas
 
 - `/login` (público), `/dashboard` (protegido).
-- Sidebar: Vendas, Clientes, Atendimento, Tarefas, Relatórios e Configurações (Bot e Qualificação,
-  Resumo de Leads) — a maioria como placeholder.
+- CRM Core (conectado à API): `/clientes/clientes`, `/clientes/clientes/:id`, `/clientes/contatos`,
+  `/clientes/tags` e `/settings/qualification-bot`.
+- Vendas (conectado à API): `/vendas/leads`, `/vendas/funil` (Kanban com drag and drop persistido),
+  `/vendas/negocios`, `/tarefas` e `/settings/pipelines` (CRUD de pipelines/etapas).
+- Atendimento (conectado à API + Socket.IO): `/atendimento/conversas` (3 colunas, painel do cliente
+  recolhível), `/atendimento/tickets` e `/atendimento/whatsapp` (instâncias, conexão por QR code e
+  webhook).
+- Sidebar: Vendas, Clientes (Clientes, Contatos, Tags), Atendimento (Conversas, Tickets, WhatsApp),
+  Tarefas, Relatórios e Configurações (Bot e Qualificação, Resumo de Leads, Pipelines). Relatórios
+  ainda é placeholder.
 - `/settings/qualification-bot` e `/settings/lead-digest` com formulários orientados a negócio (sem
-  pedir prompts técnicos).
+  pedir prompts técnicos). O bot de qualificação persiste perfis reais por tenant.
 - `ProtectedRoute` preparado para exigir sessão; a persistência real do refresh usa cookie HttpOnly.
 
 ## Responsividade e UX
@@ -137,5 +147,6 @@ frontend/
 ## O que é mock (e por quê)
 
 `src/mocks/crm.ts` contém métricas, leads e uma análise de exemplo. São dados **fictícios** usados
-apenas para compor a tela inicial, porque os módulos de CRM/qualificação ainda não existem no
-backend. Nenhuma regra de negócio é simulada.
+apenas para compor a tela inicial, porque os módulos de Leads/qualificação ainda não existem no
+backend. Clientes, Contatos, Tags e perfis do bot já usam a API real. Nenhuma regra de negócio é
+simulada.

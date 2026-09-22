@@ -49,3 +49,55 @@ export interface DigestSettings {
   channel: DigestChannel;
 }
 
+export type DataSensitivityLevel = 'low' | 'medium' | 'high';
+
+export interface ProfileItem {
+  key: string;
+  label: string;
+  description?: string;
+}
+
+export interface RequiredInformationItem extends ProfileItem {
+  required?: boolean;
+}
+
+export interface CriterionItem extends ProfileItem {
+  weight?: number;
+}
+
+export interface QualificationProfile {
+  id: string;
+  name: string;
+  description: string | null;
+  businessContext: string | null;
+  botName: string | null;
+  initialMessage: string | null;
+  privacyNoticeText: string | null;
+  tone: string | null;
+  objective: string | null;
+  requiredInformation: RequiredInformationItem[];
+  qualificationCriteria: CriterionItem[];
+  disqualificationCriteria: CriterionItem[];
+  completionCriteria: ProfileItem[];
+  customInstructions: string | null;
+  qualifiedMessage: string | null;
+  disqualifiedMessage: string | null;
+  needsHumanMessage: string | null;
+  humanHandoffRules: ProfileItem[];
+  qualificationLevels: ProfileItem[];
+  dataSensitivityLevel: DataSensitivityLevel;
+  isDefault: boolean;
+  active: boolean;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type QualificationProfileDraft = Omit<
+  QualificationProfile,
+  'id' | 'version' | 'createdAt' | 'updatedAt'
+>;
+
+export type QualificationProfileInput = Partial<QualificationProfileDraft> & { name: string };
+
+

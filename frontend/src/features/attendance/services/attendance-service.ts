@@ -1,0 +1,48 @@
+import { apiRequest } from '@/lib/api-client';
+import { toQueryString } from '@/lib/query-params';
+import type { PageResult } from '@/types/crm';
+import type { Conversation, ConversationMessage, ConversationStatus } from '@/types/attendance';
+
+export interface ListConversationsParams {
+  page?: number;
+  perPage?: number;
+  search?: string;
+  status?: ConversationStatus;
+  whatsappInstanceId?: string;
+  leadId?: string;
+  customerId?: string;
+}
+
+export const attendanceService = {
+  listConversations: (params: ListConversationsParams = {}) =>
+    apiRequest<PageResult<Conversation>>(
+      `/conversations${toQueryString({
+        page: params.page,
+        perPage: params.perPage,
+        search: params.search,
+        status: params.status,
+        whatsappInstanceId: params.whatsappInstanceId,
+        leadId: params.leadId,
+        customerId: params.customerId,
+      })}`,
+    ),
+
+  getConversation: (id: string) => apiRequest<Conversation>(`/conversations/${id}`),
+
+  listMessages: (id: string, page = 1, perPage = 50) =>
+    apiRequest<PageResult<ConversationMessage>>(
+      `/conversations/${id}/messages${toQueryString({ page, perPage })}`,
+    ),
+
+  takeover: (id: string) =>
+    apiRequest<Conversation>(`/conversations/${id}/takeover`, { method: 'POST', body: {} }),
+
+  close: (id: string) =>
+    apiRequest<Conversation>(`/conversations/${id}/close`, { method: 'POST', body: {} }),
+
+  sendMessage: (id: string, content: string) =>
+    apiRequest<{ ok: true }>(`/conversations/${id}/messages`, {
+      method: 'POST',
+      body: { content },
+    }),
+};

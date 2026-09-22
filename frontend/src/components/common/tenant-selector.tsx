@@ -36,10 +36,10 @@ export function TenantSelector({
   return (
     <Select value={value} onValueChange={onChange}>
       <SelectTrigger className={cn('h-9 w-[190px] gap-2', className)} aria-label="Organização ativa">
-        <span className="flex min-w-0 items-center gap-2">
-          <Building2 className="size-4 shrink-0 text-muted-foreground" />
-          <SelectValue placeholder="Selecionar" />
-        </span>
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <Building2 className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+          <SelectValue placeholder="Selecionar" className="min-w-0 truncate" />
+        </div>
       </SelectTrigger>
       <SelectContent>
         {tenants.map((tenant) => (

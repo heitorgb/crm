@@ -1,12 +1,15 @@
-import { useState } from 'react';
-import { Bot, Info, Plus, Sparkles, X } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { Bot, FileText, Plus, Save, ShieldCheck, Sparkles, Trash2 } from 'lucide-react';
+import { ConfirmDialog } from '@/components/common/confirm-dialog';
+import { EmptyState } from '@/components/common/empty-state';
 import { FormField } from '@/components/common/form-field';
 import { PageHeader } from '@/components/common/page-header';
+import { PageLoader } from '@/components/common/page-loader';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
 import {
   Select,
   SelectContent,
@@ -14,59 +17,127 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Textarea } from '@/components/ui/textarea';
+import { ApiError } from '@/lib/api-client';
+import { useAuthStore } from '@/stores/auth-store';
+import type {
+  DataSensitivityLevel,
+  QualificationProfile,
+  QualificationProfileDraft,
+} from '@/types/qualification';
+import { ProfileItemsField, type EditableProfileItem } from './profile-items-field';
+import {
+  useCreateQualificationProfile,
+  useDeleteQualificationProfile,
+  useQualificationProfiles,
+  useUpdateQualificationProfile,
+} from './queries';
 
-interface BotConfig {
-  botName: string;
-  greeting: string;
-  businessContext: string;
-  goal: string;
-  tone: string;
-  requiredFields: string[];
-  qualificationCriteria: string;
-  disqualificationCriteria: string;
-  stopConditions: string;
-  closingMessage: string;
-  handoffRule: string;
-}
+const NEW_PROFILE_KEY = '__new__';
 
 const toneOptions = ['Amigável', 'Consultivo', 'Formal', 'Direto'];
-const handoffOptions = [
-  'Sempre que o lead pedir um humano',
-  'Somente quando a qualificação falhar',
-  'Quando o score for baixo',
-  'Nunca (entrega apenas no resumo)',
+
+const sensitivityOptions: { value: DataSensitivityLevel; label: string; description: string }[] = [
+  { value: 'low', label: 'Baixo', description: 'Dados comuns. Decisões automáticas liberadas.' },
+  { value: 'medium', label: 'Médio', description: 'Requer atenção à revisão de decisões.' },
+  { value: 'high', label: 'Alto', description: 'Recomenda revisão humana antes de desqualificar.' },
 ];
 
-export function QualificationBotPage() {
-  const [config, setConfig] = useState<BotConfig>({
-    botName: 'Assistente OrderUp',
-    greeting: 'Olá! Sou o assistente da OrderUp. Posso fazer algumas perguntas rápidas para te ajudar?',
-    businessContext:
-      'Somos uma software house que desenvolve sistemas sob medida, automações e integrações para empresas.',
-    goal: 'Entender a necessidade, o orçamento e o prazo para encaminhar ao time comercial.',
-    tone: 'Consultivo',
-    requiredFields: ['Segmento', 'Tamanho da empresa', 'Orçamento', 'Prazo', 'Decisor'],
-    qualificationCriteria:
-      'Orçamento compatível, necessidade clara e decisor presente na conversa.',
-    disqualificationCriteria: 'Busca apenas informação gratuita ou fora da área de atuação.',
-    stopConditions:
-      'Encerrar quando todas as informações essenciais forem coletadas ou após 8 perguntas.',
-    closingMessage: 'Perfeito! Vou registrar suas informações e o time entra em contato em breve.',
-    handoffRule: handoffOptions[0],
-  });
-  const [fieldDraft, setFieldDraft] = useState('');
-
-  const update = (patch: Partial<BotConfig>): void => setConfig((current) => ({ ...current, ...patch }));
-
-  const addField = (): void => {
-    const value = fieldDraft.trim();
-    if (!value || config.requiredFields.includes(value)) {
-      return;
-    }
-    update({ requiredFields: [...config.requiredFields, value] });
-    setFieldDraft('');
+function emptyDraft(): QualificationProfileDraft {
+  return {
+    name: '',
+    description: null,
+    businessContext: null,
+    botName: null,
+    initialMessage: null,
+    privacyNoticeText: null,
+    tone: null,
+    objective: null,
+    requiredInformation: [],
+    qualificationCriteria: [],
+    disqualificationCriteria: [],
+    completionCriteria: [],
+    customInstructions: null,
+    qualifiedMessage: null,
+    disqualifiedMessage: null,
+    needsHumanMessage: null,
+    humanHandoffRules: [],
+    qualificationLevels: [],
+    dataSensitivityLevel: 'low',
+    isDefault: false,
+    active: true,
   };
+}
+
+function fromProfile(profile: QualificationProfile): QualificationProfileDraft {
+  return {
+    name: profile.name,
+    description: profile.description,
+    businessContext: profile.businessContext,
+    botName: profile.botName,
+    initialMessage: profile.initialMessage,
+    privacyNoticeText: profile.privacyNoticeText,
+    tone: profile.tone,
+    objective: profile.objective,
+    requiredInformation: profile.requiredInformation,
+    qualificationCriteria: profile.qualificationCriteria,
+    disqualificationCriteria: profile.disqualificationCriteria,
+    completionCriteria: profile.completionCriteria,
+    customInstructions: profile.customInstructions,
+    qualifiedMessage: profile.qualifiedMessage,
+    disqualifiedMessage: profile.disqualifiedMessage,
+    needsHumanMessage: profile.needsHumanMessage,
+    humanHandoffRules: profile.humanHandoffRules,
+    qualificationLevels: profile.qualificationLevels,
+    dataSensitivityLevel: profile.dataSensitivityLevel,
+    isDefault: profile.isDefault,
+    active: profile.active,
+  };
+}
+
+function itemsAreValid(items: EditableProfileItem[]): boolean {
+  return items.every((item) => item.key.trim().length > 0 && item.label.trim().length > 0);
+}
+
+export function QualificationBotPage() {
+  const query = useQualificationProfiles({ perPage: 100, sort: 'createdAt', order: 'asc' });
+
+  const profiles = useMemo(() => query.data?.data ?? [], [query.data]);
+  const [explicitId, setExplicitId] = useState<string | undefined>(undefined);
+
+  const selectedId =
+    explicitId !== undefined
+      ? explicitId === NEW_PROFILE_KEY
+        ? null
+        : explicitId
+      : (profiles.find((profile) => profile.isDefault && profile.active)?.id ??
+        profiles[0]?.id ??
+        null);
+  const selectedProfile = profiles.find((profile) => profile.id === selectedId) ?? null;
+
+  if (query.isPending) {
+    return <PageLoader label="Carregando perfis de qualificação…" />;
+  }
+
+  if (query.isError) {
+    return (
+      <div className="space-y-5">
+        <PageHeader title="Bot e Qualificação" />
+        <EmptyState
+          icon={Bot}
+          title="Não foi possível carregar os perfis"
+          description="Verifique a conexão com a API e tente novamente."
+          action={
+            <Button variant="outline" onClick={() => void query.refetch()}>
+              Tentar novamente
+            </Button>
+          }
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-5">
@@ -81,225 +152,524 @@ export function QualificationBotPage() {
         }
       />
 
-      <div className="flex items-start gap-2 rounded-md border border-info/20 bg-info/5 p-3 text-xs text-muted-foreground">
-        <Info className="mt-0.5 size-3.5 shrink-0 text-info" aria-hidden />
-        <p>
-          Fundação visual da configuração. A edição será persistida no perfil de qualificação do
-          tenant em uma fase futura — nenhum texto técnico de prompt é exigido do usuário.
-        </p>
-      </div>
-
-      <Tabs defaultValue="identity">
-        <TabsList className="flex-wrap">
-          <TabsTrigger value="identity">Identidade</TabsTrigger>
-          <TabsTrigger value="context">Contexto e objetivo</TabsTrigger>
-          <TabsTrigger value="collection">Coleta</TabsTrigger>
-          <TabsTrigger value="criteria">Critérios</TabsTrigger>
-          <TabsTrigger value="closing">Encerramento e handoff</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="identity">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Bot className="size-4 text-primary" aria-hidden />
-                Identidade do bot
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="grid gap-4 md:grid-cols-2">
-              <FormField id="bot-name" label="Nome do bot" required>
-                <Input
-                  id="bot-name"
-                  value={config.botName}
-                  onChange={(event) => update({ botName: event.target.value })}
-                />
-              </FormField>
-              <FormField
-                id="greeting"
-                label="Mensagem inicial"
-                description="Primeira mensagem enviada ao lead."
-              >
-                <Textarea
-                  id="greeting"
-                  rows={3}
-                  value={config.greeting}
-                  onChange={(event) => update({ greeting: event.target.value })}
-                />
-              </FormField>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="context">
-          <Card>
-            <CardHeader>
-              <CardTitle>Contexto do negócio</CardTitle>
-            </CardHeader>
-            <CardContent className="grid gap-4">
-              <FormField id="business-context" label="Contexto do negócio">
-                <Textarea
-                  id="business-context"
-                  rows={3}
-                  value={config.businessContext}
-                  onChange={(event) => update({ businessContext: event.target.value })}
-                />
-              </FormField>
-              <FormField id="goal" label="Objetivo da qualificação">
-                <Textarea
-                  id="goal"
-                  rows={3}
-                  value={config.goal}
-                  onChange={(event) => update({ goal: event.target.value })}
-                />
-              </FormField>
-              <FormField id="tone" label="Tom de comunicação" className="max-w-xs">
-                <Select value={config.tone} onValueChange={(tone) => update({ tone })}>
-                  <SelectTrigger id="tone">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {toneOptions.map((tone) => (
-                      <SelectItem key={tone} value={tone}>
-                        {tone}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </FormField>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="collection">
-          <Card>
-            <CardHeader>
-              <CardTitle>Informações que devem ser coletadas</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex flex-wrap gap-2">
-                {config.requiredFields.map((field) => (
-                  <span
-                    key={field}
-                    className="inline-flex items-center gap-1 rounded-sm border border-border bg-muted px-2 py-1 text-xs"
-                  >
-                    {field}
-                    <button
-                      type="button"
-                      onClick={() =>
-                        update({ requiredFields: config.requiredFields.filter((item) => item !== field) })
-                      }
-                      className="text-muted-foreground hover:text-danger"
-                      aria-label={`Remover ${field}`}
-                    >
-                      <X className="size-3" />
-                    </button>
-                  </span>
-                ))}
-                {config.requiredFields.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">Nenhuma informação configurada.</p>
-                ) : null}
-              </div>
-              <div className="flex gap-2">
-                <Input
-                  value={fieldDraft}
-                  onChange={(event) => setFieldDraft(event.target.value)}
-                  placeholder="Ex.: Volume mensal de pedidos"
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter') {
-                      event.preventDefault();
-                      addField();
-                    }
-                  }}
-                />
-                <Button type="button" variant="outline" onClick={addField}>
-                  <Plus />
-                  Adicionar
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="criteria">
-          <Card>
-            <CardHeader>
-              <CardTitle>Critérios de qualificação</CardTitle>
-            </CardHeader>
-            <CardContent className="grid gap-4 md:grid-cols-2">
-              <FormField id="qual-criteria" label="Critérios de qualificação">
-                <Textarea
-                  id="qual-criteria"
-                  rows={5}
-                  value={config.qualificationCriteria}
-                  onChange={(event) => update({ qualificationCriteria: event.target.value })}
-                />
-              </FormField>
-              <FormField id="disqual-criteria" label="Critérios de desqualificação">
-                <Textarea
-                  id="disqual-criteria"
-                  rows={5}
-                  value={config.disqualificationCriteria}
-                  onChange={(event) => update({ disqualificationCriteria: event.target.value })}
-                />
-              </FormField>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="closing">
-          <Card>
-            <CardHeader>
-              <CardTitle>Encerramento e handoff</CardTitle>
-            </CardHeader>
-            <CardContent className="grid gap-4">
-              <FormField
-                id="stop-conditions"
-                label="Condições para encerrar a qualificação"
-                description="Quando o bot deve parar de perguntar."
-              >
-                <Textarea
-                  id="stop-conditions"
-                  rows={3}
-                  value={config.stopConditions}
-                  onChange={(event) => update({ stopConditions: event.target.value })}
-                />
-              </FormField>
-              <FormField id="closing-message" label="Mensagem de conclusão">
-                <Textarea
-                  id="closing-message"
-                  rows={2}
-                  value={config.closingMessage}
-                  onChange={(event) => update({ closingMessage: event.target.value })}
-                />
-              </FormField>
-              <FormField
-                id="handoff-rule"
-                label="Regras de handoff para humano"
-                className="max-w-md"
-              >
-                <Select value={config.handoffRule} onValueChange={(handoffRule) => update({ handoffRule })}>
-                  <SelectTrigger id="handoff-rule">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {handoffOptions.map((option) => (
-                      <SelectItem key={option} value={option}>
-                        {option}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </FormField>
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
-
-      <div className="flex justify-end">
-        <Button disabled title="Disponível quando o módulo de qualificação do tenant for implementado">
-          Salvar configuração
-        </Button>
-      </div>
+      <QualificationProfileEditor
+        key={selectedId ?? NEW_PROFILE_KEY}
+        profiles={profiles}
+        selectedId={selectedId}
+        selectedProfile={selectedProfile}
+        onSelect={(id) => setExplicitId(id)}
+        onNew={() => setExplicitId(NEW_PROFILE_KEY)}
+        onResetSelection={() => setExplicitId(undefined)}
+      />
     </div>
+  );
+}
+
+interface QualificationProfileEditorProps {
+  profiles: QualificationProfile[];
+  selectedId: string | null;
+  selectedProfile: QualificationProfile | null;
+  onSelect: (id: string) => void;
+  onNew: () => void;
+  onResetSelection: () => void;
+}
+
+function QualificationProfileEditor({
+  profiles,
+  selectedId,
+  selectedProfile,
+  onSelect,
+  onNew,
+  onResetSelection,
+}: QualificationProfileEditorProps) {
+  const canWrite = useAuthStore((state) => state.hasRole('OWNER', 'ADMIN'));
+
+  const createProfile = useCreateQualificationProfile();
+  const updateProfile = useUpdateQualificationProfile();
+  const deleteProfile = useDeleteQualificationProfile();
+
+  const [draft, setDraft] = useState<QualificationProfileDraft>(
+    selectedProfile ? fromProfile(selectedProfile) : emptyDraft(),
+  );
+  const [feedback, setFeedback] = useState<{ tone: 'success' | 'danger'; message: string } | null>(
+    null,
+  );
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
+  const readOnly = !canWrite;
+  const pending = createProfile.isPending || updateProfile.isPending;
+
+  const update = (patch: Partial<QualificationProfileDraft>): void => {
+    setDraft((current) => ({ ...current, ...patch }));
+    setFeedback(null);
+  };
+
+  const handleSave = async (): Promise<void> => {
+    if (readOnly) {
+      return;
+    }
+    if (draft.name.trim().length === 0) {
+      setFeedback({ tone: 'danger', message: 'Informe o nome do perfil.' });
+      return;
+    }
+
+    const arrays = [
+      draft.requiredInformation,
+      draft.qualificationCriteria,
+      draft.disqualificationCriteria,
+      draft.completionCriteria,
+      draft.humanHandoffRules,
+      draft.qualificationLevels,
+    ];
+    if (!arrays.every((items) => itemsAreValid(items as EditableProfileItem[]))) {
+      setFeedback({ tone: 'danger', message: 'Preencha chave e rótulo de todos os itens.' });
+      return;
+    }
+
+    const input = { ...draft, name: draft.name.trim() };
+
+    try {
+      if (selectedId) {
+        const saved = await updateProfile.mutateAsync({ id: selectedId, input });
+        setDraft(fromProfile(saved));
+      } else {
+        const saved = await createProfile.mutateAsync(input);
+        onSelect(saved.id);
+      }
+      setFeedback({ tone: 'success', message: 'Perfil salvo com sucesso.' });
+    } catch (error) {
+      setFeedback({
+        tone: 'danger',
+        message: error instanceof ApiError ? error.message : 'Não foi possível salvar o perfil.',
+      });
+    }
+  };
+
+  const handleDelete = async (): Promise<void> => {
+    if (!selectedId) {
+      return;
+    }
+    await deleteProfile.mutateAsync(selectedId);
+    setConfirmDelete(false);
+    onResetSelection();
+  };
+
+  return (
+    <>
+      <Card className="p-4">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
+          <FormField id="profile-select" label="Perfil" className="flex-1">
+            <Select
+              value={selectedId ?? ''}
+              onValueChange={onSelect}
+              disabled={profiles.length === 0}
+            >
+              <SelectTrigger id="profile-select">
+                <SelectValue placeholder="Selecione um perfil" />
+              </SelectTrigger>
+              <SelectContent>
+                {profiles.map((profile) => (
+                  <SelectItem key={profile.id} value={profile.id}>
+                    {profile.name}
+                    {profile.isDefault ? ' · padrão' : ''}
+                    {profile.active ? '' : ' · inativo'}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </FormField>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" onClick={onNew} disabled={readOnly}>
+              <Plus />
+              Novo perfil
+            </Button>
+            <Button onClick={() => void handleSave()} disabled={readOnly || pending}>
+              <Save />
+              Salvar
+            </Button>
+            {selectedId ? (
+              <Button
+                variant="danger"
+                onClick={() => setConfirmDelete(true)}
+                disabled={readOnly || deleteProfile.isPending}
+              >
+                <Trash2 />
+                Excluir
+              </Button>
+            ) : null}
+          </div>
+        </div>
+
+        {selectedProfile ? (
+          <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+            <span>Versão {selectedProfile.version}</span>
+            <label className="flex items-center gap-2">
+              <Switch
+                checked={draft.active}
+                onCheckedChange={(checked) =>
+                  update({ active: checked, ...(checked ? {} : { isDefault: false }) })
+                }
+                disabled={readOnly}
+              />
+              Ativo
+            </label>
+            <label className="flex items-center gap-2">
+              <Switch
+                checked={draft.isDefault}
+                onCheckedChange={(checked) => update({ isDefault: checked })}
+                disabled={readOnly || !draft.active}
+              />
+              Perfil padrão
+            </label>
+            <span className="hidden sm:inline">Somente um perfil padrão ativo por organização.</span>
+          </div>
+        ) : null}
+
+        {feedback ? (
+          <p
+            className={
+              feedback.tone === 'success'
+                ? 'mt-3 text-xs font-medium text-success'
+                : 'mt-3 text-xs font-medium text-danger'
+            }
+          >
+            {feedback.message}
+          </p>
+        ) : null}
+      </Card>
+
+      {!selectedProfile && profiles.length === 0 ? (
+        <EmptyState
+          icon={Bot}
+          title="Nenhum perfil configurado"
+          description="Crie um perfil para definir contexto, perguntas e critérios de qualificação do bot."
+          action={
+            <Button onClick={onNew} disabled={readOnly}>
+              <Plus />
+              Criar perfil
+            </Button>
+          }
+        />
+      ) : (
+        <Tabs defaultValue="identity">
+          <TabsList className="flex-wrap">
+            <TabsTrigger value="identity">Identidade</TabsTrigger>
+            <TabsTrigger value="context">Contexto</TabsTrigger>
+            <TabsTrigger value="collection">Coleta</TabsTrigger>
+            <TabsTrigger value="criteria">Critérios</TabsTrigger>
+            <TabsTrigger value="closing">Encerramento</TabsTrigger>
+            <TabsTrigger value="privacy">Privacidade</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="identity">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Bot className="size-4 text-primary" aria-hidden />
+                  Identidade do bot
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="grid gap-4 md:grid-cols-2">
+                <FormField id="profile-name" label="Nome do perfil" required>
+                  <Input
+                    id="profile-name"
+                    value={draft.name}
+                    onChange={(event) => update({ name: event.target.value })}
+                    disabled={readOnly}
+                  />
+                </FormField>
+                <FormField id="profile-bot-name" label="Nome do bot">
+                  <Input
+                    id="profile-bot-name"
+                    value={draft.botName ?? ''}
+                    onChange={(event) => update({ botName: event.target.value })}
+                    disabled={readOnly}
+                  />
+                </FormField>
+                <FormField id="profile-description" label="Descrição" className="md:col-span-2">
+                  <Input
+                    id="profile-description"
+                    value={draft.description ?? ''}
+                    onChange={(event) => update({ description: event.target.value })}
+                    disabled={readOnly}
+                  />
+                </FormField>
+                <FormField
+                  id="profile-initial-message"
+                  label="Mensagem inicial"
+                  className="md:col-span-2"
+                >
+                  <Textarea
+                    id="profile-initial-message"
+                    rows={3}
+                    value={draft.initialMessage ?? ''}
+                    onChange={(event) => update({ initialMessage: event.target.value })}
+                    disabled={readOnly}
+                  />
+                </FormField>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="context">
+            <Card>
+              <CardHeader>
+                <CardTitle>Contexto do negócio</CardTitle>
+              </CardHeader>
+              <CardContent className="grid gap-4">
+                <FormField id="profile-business-context" label="Contexto do negócio">
+                  <Textarea
+                    id="profile-business-context"
+                    rows={3}
+                    value={draft.businessContext ?? ''}
+                    onChange={(event) => update({ businessContext: event.target.value })}
+                    disabled={readOnly}
+                  />
+                </FormField>
+                <FormField id="profile-objective" label="Objetivo da qualificação">
+                  <Textarea
+                    id="profile-objective"
+                    rows={3}
+                    value={draft.objective ?? ''}
+                    onChange={(event) => update({ objective: event.target.value })}
+                    disabled={readOnly}
+                  />
+                </FormField>
+                <FormField id="profile-tone" label="Tom de comunicação" className="max-w-xs">
+                  <Select
+                    value={draft.tone ?? ''}
+                    onValueChange={(tone) => update({ tone })}
+                    disabled={readOnly}
+                  >
+                    <SelectTrigger id="profile-tone">
+                      <SelectValue placeholder="Selecione" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {toneOptions.map((tone) => (
+                        <SelectItem key={tone} value={tone}>
+                          {tone}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </FormField>
+                <FormField
+                  id="profile-custom-instructions"
+                  label="Instruções adicionais"
+                  description="Orientações específicas do seu negócio para o bot."
+                >
+                  <Textarea
+                    id="profile-custom-instructions"
+                    rows={3}
+                    value={draft.customInstructions ?? ''}
+                    onChange={(event) => update({ customInstructions: event.target.value })}
+                    disabled={readOnly}
+                  />
+                </FormField>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="collection">
+            <Card>
+              <CardHeader>
+                <CardTitle>Informações a coletar</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <ProfileItemsField
+                  items={draft.requiredInformation as EditableProfileItem[]}
+                  onChange={(items) => update({ requiredInformation: items })}
+                  disabled={readOnly}
+                  showRequired
+                  addLabel="Adicionar informação"
+                />
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="criteria">
+            <div className="grid gap-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Critérios de qualificação</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <ProfileItemsField
+                    items={draft.qualificationCriteria as EditableProfileItem[]}
+                    onChange={(items) => update({ qualificationCriteria: items })}
+                    disabled={readOnly}
+                    showWeight
+                    addLabel="Adicionar critério"
+                  />
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader>
+                  <CardTitle>Critérios de desqualificação</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <ProfileItemsField
+                    items={draft.disqualificationCriteria as EditableProfileItem[]}
+                    onChange={(items) => update({ disqualificationCriteria: items })}
+                    disabled={readOnly}
+                    addLabel="Adicionar critério"
+                  />
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader>
+                  <CardTitle>Níveis de qualificação</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <ProfileItemsField
+                    items={draft.qualificationLevels as EditableProfileItem[]}
+                    onChange={(items) => update({ qualificationLevels: items })}
+                    disabled={readOnly}
+                    addLabel="Adicionar nível"
+                  />
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader>
+                  <CardTitle>Critérios de conclusão</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <ProfileItemsField
+                    items={draft.completionCriteria as EditableProfileItem[]}
+                    onChange={(items) => update({ completionCriteria: items })}
+                    disabled={readOnly}
+                    addLabel="Adicionar condição"
+                  />
+                </CardContent>
+              </Card>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="closing">
+            <Card>
+              <CardHeader>
+                <CardTitle>Mensagens e handoff</CardTitle>
+              </CardHeader>
+              <CardContent className="grid gap-4">
+                <FormField
+                  id="profile-qualified-message"
+                  label="Mensagem de qualificado"
+                  description="Aceita variáveis, ex.: {{criterioNaoAtendido}}."
+                >
+                  <Textarea
+                    id="profile-qualified-message"
+                    rows={2}
+                    value={draft.qualifiedMessage ?? ''}
+                    onChange={(event) => update({ qualifiedMessage: event.target.value })}
+                    disabled={readOnly}
+                  />
+                </FormField>
+                <FormField
+                  id="profile-disqualified-message"
+                  label="Mensagem de desqualificado"
+                  description="Cite o critério não atendido, ex.: {{criterioNaoAtendido}}."
+                >
+                  <Textarea
+                    id="profile-disqualified-message"
+                    rows={2}
+                    value={draft.disqualifiedMessage ?? ''}
+                    onChange={(event) => update({ disqualifiedMessage: event.target.value })}
+                    disabled={readOnly}
+                  />
+                </FormField>
+                <FormField id="profile-needs-human-message" label="Mensagem de atendimento humano">
+                  <Textarea
+                    id="profile-needs-human-message"
+                    rows={2}
+                    value={draft.needsHumanMessage ?? ''}
+                    onChange={(event) => update({ needsHumanMessage: event.target.value })}
+                    disabled={readOnly}
+                  />
+                </FormField>
+                <div className="space-y-2">
+                  <Label>Regras de handoff para humano</Label>
+                  <ProfileItemsField
+                    items={draft.humanHandoffRules as EditableProfileItem[]}
+                    onChange={(items) => update({ humanHandoffRules: items })}
+                    disabled={readOnly}
+                    addLabel="Adicionar regra"
+                  />
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="privacy">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <ShieldCheck className="size-4 text-primary" aria-hidden />
+                  Privacidade e governança
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="grid gap-4">
+                <FormField
+                  id="profile-privacy-notice"
+                  label="Aviso de privacidade"
+                  description="Enviado no primeiro contato. Se ficar vazio com o perfil ativo, um texto padrão do sistema é usado."
+                >
+                  <Textarea
+                    id="profile-privacy-notice"
+                    rows={4}
+                    value={draft.privacyNoticeText ?? ''}
+                    onChange={(event) => update({ privacyNoticeText: event.target.value })}
+                    disabled={readOnly}
+                  />
+                </FormField>
+                <FormField
+                  id="profile-sensitivity"
+                  label="Sensibilidade dos dados"
+                  description="Define se decisões automáticas de desqualificação precisam de revisão humana."
+                  className="max-w-md"
+                >
+                  <Select
+                    value={draft.dataSensitivityLevel}
+                    onValueChange={(value) =>
+                      update({ dataSensitivityLevel: value as DataSensitivityLevel })
+                    }
+                    disabled={readOnly}
+                  >
+                    <SelectTrigger id="profile-sensitivity">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {sensitivityOptions.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label} — {option.description}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </FormField>
+                <div className="flex items-start gap-2 rounded-md border border-info/20 bg-info/5 p-3 text-xs text-muted-foreground">
+                  <FileText className="mt-0.5 size-3.5 shrink-0 text-info" aria-hidden />
+                  <p>
+                    As instruções deste perfil são configuração de negócio do tenant. Nenhuma chave de
+                    API é armazenada aqui.
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
+      )}
+
+      <ConfirmDialog
+        open={confirmDelete}
+        onOpenChange={setConfirmDelete}
+        title="Excluir perfil"
+        description="Sessões e análises futuras que referenciarem este perfil não poderão recuperá-lo."
+        confirmLabel="Excluir"
+        destructive
+        loading={deleteProfile.isPending}
+        onConfirm={() => void handleDelete()}
+      />
+    </>
   );
 }

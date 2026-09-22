@@ -7,10 +7,13 @@ import {
   Contact,
   Headset,
   KanbanSquare,
+  Layers,
   LayoutDashboard,
   ListChecks,
   MessagesSquare,
   Settings,
+  Smartphone,
+  Tag,
   Ticket,
   TrendingUp,
   Users,
@@ -52,6 +55,7 @@ export const navigation: NavEntry[] = [
     items: [
       { title: 'Clientes', to: '/clientes/clientes', icon: Users },
       { title: 'Contatos', to: '/clientes/contatos', icon: Contact },
+      { title: 'Tags', to: '/clientes/tags', icon: Tag },
     ],
   },
   {
@@ -60,6 +64,7 @@ export const navigation: NavEntry[] = [
     items: [
       { title: 'Conversas', to: '/atendimento/conversas', icon: MessagesSquare },
       { title: 'Tickets', to: '/atendimento/tickets', icon: Ticket },
+      { title: 'WhatsApp', to: '/atendimento/whatsapp', icon: Smartphone },
     ],
   },
   { title: 'Tarefas', to: '/tarefas', icon: ListChecks },
@@ -70,6 +75,7 @@ export const navigation: NavEntry[] = [
     items: [
       { title: 'Bot e Qualificação', to: '/settings/qualification-bot', icon: Bot },
       { title: 'Resumo de Leads', to: '/settings/lead-digest', icon: CalendarClock },
+      { title: 'Pipelines', to: '/settings/pipelines', icon: Layers },
     ],
   },
 ];

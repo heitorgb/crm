@@ -40,6 +40,9 @@ jobs:
       DATABASE_URL: postgresql://orderup:orderup@localhost:5432/orderup?schema=public
       REDIS_URL: redis://localhost:6379
       JWT_ACCESS_SECRET: ci-test-access-secret-0123456789abcdef
+      CREDENTIALS_ENCRYPTION_KEY: ci-test-encryption-key-0123456789abcdef
+      EVOLUTION_WEBHOOK_SECRET: ci-test-webhook-secret
+      QUEUE_DRIVER: inline
     steps:
       - name: Checkout
         uses: actions/checkout@v4

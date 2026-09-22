@@ -149,10 +149,6 @@ export class AuthService {
   private async selectMembership(userId: string, tenantId?: string): Promise<UserMembership> {
     const memberships = await this.memberships.listActiveMembershipsForUser(userId);
 
-    if (memberships.length === 0) {
-      throw new NoActiveMembershipError();
-    }
-
     if (tenantId) {
       const membership = memberships.find((item) => item.tenantId === tenantId);
 
@@ -161,6 +157,10 @@ export class AuthService {
       }
 
       return membership;
+    }
+
+    if (memberships.length === 0) {
+      throw new NoActiveMembershipError();
     }
 
     if (memberships.length > 1) {

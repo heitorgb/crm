@@ -63,12 +63,33 @@ const aiEnvSchema = z.object({
   AI_MAX_RETRIES: z.coerce.number().int().min(0).default(2),
 });
 
+const integrationEnvSchema = z.object({
+  CREDENTIALS_ENCRYPTION_KEY: optionalEnv(z.string().min(32)),
+  QUEUE_DRIVER: z.enum(['bullmq', 'inline']).default('bullmq'),
+  RATE_LIMIT_ENABLED: optionalBoolean,
+  EVOLUTION_API_BASE_URL: optionalEnv(z.url()),
+  EVOLUTION_API_KEY: optionalEnv(z.string().min(1)),
+  EVOLUTION_WEBHOOK_SECRET: optionalEnv(z.string().min(1)),
+  PUBLIC_API_URL: optionalEnv(z.url()),
+  STORAGE_PROVIDER: optionalEnv(z.enum(['minio', 's3'])),
+  STORAGE_ENDPOINT: optionalEnv(z.string().min(1)),
+  STORAGE_BUCKET: optionalEnv(z.string().min(1)),
+  STORAGE_ACCESS_KEY: optionalEnv(z.string().min(1)),
+  STORAGE_SECRET_KEY: optionalEnv(z.string().min(1)),
+  STORAGE_REGION: optionalEnv(z.string().min(1)),
+  LEGAL_TERMS_VERSION: optionalEnv(z.string().min(1)),
+  LEGAL_DPA_VERSION: optionalEnv(z.string().min(1)),
+  ORDERUP_DPO_NAME: optionalEnv(z.string().min(1)),
+  ORDERUP_DPO_EMAIL: optionalEnv(z.email()),
+});
+
 export const envSchema = appEnvSchema
   .merge(databaseEnvSchema)
   .merge(redisEnvSchema)
   .merge(authEnvSchema)
   .merge(loggingEnvSchema)
   .merge(aiEnvSchema)
+  .merge(integrationEnvSchema)
   .superRefine((env, ctx) => {
     if (env.AI_PROVIDER && (!env.AI_MODEL || !env.AI_API_KEY)) {
       ctx.addIssue({
@@ -86,6 +107,36 @@ export const envSchema = appEnvSchema
       });
     }
 
+    if (env.EVOLUTION_API_BASE_URL && !env.EVOLUTION_API_KEY) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['EVOLUTION_API_KEY'],
+        message: 'EVOLUTION_API_KEY is required when EVOLUTION_API_BASE_URL is set',
+      });
+    }
+
+    if (env.EVOLUTION_API_BASE_URL && !env.EVOLUTION_WEBHOOK_SECRET) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['EVOLUTION_WEBHOOK_SECRET'],
+        message:
+          'EVOLUTION_WEBHOOK_SECRET is required when EVOLUTION_API_BASE_URL is set (public webhook)',
+      });
+    }
+
+    if (env.STORAGE_PROVIDER) {
+      const missing = (
+        ['STORAGE_ENDPOINT', 'STORAGE_BUCKET', 'STORAGE_ACCESS_KEY', 'STORAGE_SECRET_KEY'] as const
+      ).filter((key) => !env[key]);
+      if (missing.length > 0) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['STORAGE_PROVIDER'],
+          message: `Missing storage configuration: ${missing.join(', ')}`,
+        });
+      }
+    }
+
     if (env.NODE_ENV === 'production') {
       if (env.CORS_ORIGINS.length === 0) {
         ctx.addIssue({
@@ -100,6 +151,23 @@ export const envSchema = appEnvSchema
           code: 'custom',
           path: ['CORS_ORIGINS'],
           message: 'CORS_ORIGINS must not contain "*" in production',
+        });
+      }
+
+      if (env.EVOLUTION_API_BASE_URL && !env.CREDENTIALS_ENCRYPTION_KEY) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['CREDENTIALS_ENCRYPTION_KEY'],
+          message:
+            'CREDENTIALS_ENCRYPTION_KEY is required in production when WhatsApp is enabled',
+        });
+      }
+
+      if (env.EVOLUTION_API_BASE_URL && !env.PUBLIC_API_URL) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['PUBLIC_API_URL'],
+          message: 'PUBLIC_API_URL is required in production when WhatsApp is enabled',
         });
       }
     }

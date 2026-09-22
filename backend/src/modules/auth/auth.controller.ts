@@ -1,5 +1,7 @@
-import { Body, Controller, Get, HttpCode, Post, Req, Res } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Post, Req, Res, UseGuards } from '@nestjs/common';
 import type { FastifyReply, FastifyRequest } from 'fastify';
+import { RateLimit } from '../../common/http/rate-limit/rate-limit.decorator.js';
+import { RateLimitGuard } from '../../common/http/rate-limit/rate-limit.guard.js';
 import type { TenantContext } from '../../common/tenant-context/tenant-context.types.js';
 import type { IssuedSession, RequestMetadata } from './auth.types.js';
 import { AuthService } from './auth.service.js';
@@ -26,6 +28,8 @@ export class AuthController {
   ) {}
 
   @Public()
+  @UseGuards(RateLimitGuard)
+  @RateLimit({ name: 'auth-login', limit: 10, windowMs: 60_000 })
   @Post('login')
   @HttpCode(200)
   async login(
@@ -40,6 +44,8 @@ export class AuthController {
   }
 
   @Public()
+  @UseGuards(RateLimitGuard)
+  @RateLimit({ name: 'auth-refresh', limit: 30, windowMs: 60_000 })
   @Post('refresh')
   @HttpCode(200)
   async refresh(

@@ -15,6 +15,15 @@ export interface MembershipSummary {
   updatedAt: Date;
 }
 
+export interface MemberWithUser {
+  id: string;
+  userId: string;
+  name: string;
+  email: string;
+  role: Role;
+  active: boolean;
+}
+
 export interface UserMembership {
   id: string;
   tenantId: string;
@@ -88,6 +97,31 @@ export class MembershipsService {
       select: MEMBERSHIP_SELECT,
       orderBy: { createdAt: 'asc' },
     });
+  }
+
+  async listMembersWithUsers(): Promise<MemberWithUser[]> {
+    const { tenantId } = this.tenantContext.requireContext();
+
+    const members = await this.prisma.tenantUser.findMany({
+      where: { tenantId, active: true, user: { active: true } },
+      select: {
+        id: true,
+        userId: true,
+        role: true,
+        active: true,
+        user: { select: { name: true, email: true } },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    return members.map((member) => ({
+      id: member.id,
+      userId: member.userId,
+      name: member.user.name,
+      email: member.user.email,
+      role: member.role,
+      active: member.active,
+    }));
   }
 
   async findMember(membershipId: string): Promise<MembershipSummary | null> {

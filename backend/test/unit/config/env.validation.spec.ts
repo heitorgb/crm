@@ -123,4 +123,53 @@ describe('validateEnv', () => {
 
     expect(env.CORS_ORIGINS).toEqual(['https://app.orderup.com.br']);
   });
+
+  it('requires API key and webhook secret when WhatsApp is enabled', () => {
+    expect(() =>
+      validateEnv({ ...baseEnv, EVOLUTION_API_BASE_URL: 'https://evolution.local' }),
+    ).toThrow(/EVOLUTION_API_KEY/);
+
+    expect(() =>
+      validateEnv({
+        ...baseEnv,
+        EVOLUTION_API_BASE_URL: 'https://evolution.local',
+        EVOLUTION_API_KEY: 'key',
+      }),
+    ).toThrow(/EVOLUTION_WEBHOOK_SECRET/);
+  });
+
+  it('requires the encryption key in production when WhatsApp is enabled', () => {
+    expect(() =>
+      validateEnv({
+        ...baseEnv,
+        NODE_ENV: 'production',
+        CORS_ORIGINS: 'https://app.orderup.com.br',
+        EVOLUTION_API_BASE_URL: 'https://evolution.local',
+        EVOLUTION_API_KEY: 'key',
+        EVOLUTION_WEBHOOK_SECRET: 'secret',
+      }),
+    ).toThrow(/CREDENTIALS_ENCRYPTION_KEY/);
+  });
+
+  it('requires the full storage configuration when a provider is set', () => {
+    expect(() => validateEnv({ ...baseEnv, STORAGE_PROVIDER: 'minio' })).toThrow(
+      /Missing storage configuration/,
+    );
+
+    const env = validateEnv({
+      ...baseEnv,
+      STORAGE_PROVIDER: 'minio',
+      STORAGE_ENDPOINT: 'http://minio:9000',
+      STORAGE_BUCKET: 'orderup',
+      STORAGE_ACCESS_KEY: 'access',
+      STORAGE_SECRET_KEY: 'secret',
+    });
+    expect(env.STORAGE_PROVIDER).toBe('minio');
+  });
+
+  it('parses RATE_LIMIT_ENABLED as a boolean with default enabled', () => {
+    expect(validateEnv({ ...baseEnv }).RATE_LIMIT_ENABLED).toBeUndefined();
+    expect(validateEnv({ ...baseEnv, RATE_LIMIT_ENABLED: 'false' }).RATE_LIMIT_ENABLED).toBe(false);
+    expect(validateEnv({ ...baseEnv, RATE_LIMIT_ENABLED: 'true' }).RATE_LIMIT_ENABLED).toBe(true);
+  });
 });

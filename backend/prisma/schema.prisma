@@ -12,14 +12,196 @@ enum Role {
   USER
 }
 
+enum CustomerStatus {
+  ACTIVE
+  INACTIVE
+  ARCHIVED
+}
+
+enum DataSensitivityLevel {
+  low
+  medium
+  high
+}
+
+enum LeadStatus {
+  NEW
+  QUALIFYING
+  QUALIFIED_WAITING_DIGEST
+  DISQUALIFIED
+  NEEDS_HUMAN
+  ASSIGNED
+}
+
+enum DealStatus {
+  OPEN
+  WON
+  LOST
+}
+
+enum TaskStatus {
+  PENDING
+  IN_PROGRESS
+  DONE
+  CANCELED
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum QualificationSessionStatus {
+  PENDING
+  BOT_QUALIFYING
+  QUALIFIED
+  DISQUALIFIED
+  NEEDS_HUMAN
+  ABANDONED
+}
+
+enum QualificationOutcome {
+  QUALIFIED
+  DISQUALIFIED
+  NEEDS_HUMAN
+}
+
+enum WhatsAppInstanceStatus {
+  CONNECTED
+  CONNECTING
+  DISCONNECTED
+  ERROR
+}
+
+enum ConversationStatus {
+  BOT_QUALIFYING
+  QUALIFIED_WAITING_DIGEST
+  DISQUALIFIED
+  NEEDS_HUMAN
+  HUMAN
+  CLOSED
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  AUDIO
+  VIDEO
+  DOCUMENT
+  LOCATION
+  CONTACT
+  UNKNOWN
+}
+
+enum MessageStatus {
+  RECEIVED
+  PENDING
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+enum TicketStatus {
+  OPEN
+  PENDING
+  RESOLVED
+  CLOSED
+}
+
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum DigestFrequency {
+  DAILY
+}
+
+enum DigestChannel {
+  INTERNAL
+  WHATSAPP
+  EMAIL
+}
+
+enum DigestStatus {
+  PENDING
+  SENT
+  FAILED
+  SKIPPED
+}
+
+enum AutomatedReviewOutcome {
+  UPHELD
+  REVERSED
+}
+
+enum DataSubjectRequestType {
+  ACCESS
+  RECTIFICATION
+  ERASURE
+  PORTABILITY
+  CONSENT_REVOCATION
+  OPPOSITION
+  AUTOMATED_REVIEW
+}
+
+enum DataSubjectRequestStatus {
+  PENDING
+  COMPLETED
+  REJECTED
+}
+
 model Tenant {
   id        String   @id @default(uuid()) @db.Uuid
   name      String
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  members       TenantUser[]
-  refreshTokens RefreshToken[]
+  dpoName     String? @map("dpo_name")
+  dpoEmail    String? @map("dpo_email")
+  retentionConversationDays Int @default(365) @map("retention_conversation_days")
+  retentionLeadDays         Int @default(730) @map("retention_lead_days")
+
+  termsVersion    String?   @map("terms_version")
+  termsAcceptedAt DateTime? @map("terms_accepted_at")
+  dpaVersion      String?   @map("dpa_version")
+  dpaAcceptedAt   DateTime? @map("dpa_accepted_at")
+
+  members               TenantUser[]
+  refreshTokens         RefreshToken[]
+  customers             Customer[]
+  contacts              Contact[]
+  tags                  Tag[]
+  customerTags          CustomerTag[]
+  qualificationProfiles QualificationProfile[]
+  leads                 Lead[]
+  leadTags              LeadTag[]
+  pipelines             Pipeline[]
+  pipelineStages        PipelineStage[]
+  deals                 Deal[]
+  tasks                 Task[]
+  activities            Activity[]
+  qualificationSessions LeadQualificationSession[]
+  leadAnalyses          LeadAnalysis[]
+  whatsappInstances     WhatsAppInstance[]
+  conversations         Conversation[]
+  messages              Message[]
+  messageAttachments    MessageAttachment[]
+  tickets               Ticket[]
+  digestPreferences     LeadDigestPreference[]
+  digestDeliveries      LeadDigestDelivery[]
+  webhookEvents         WebhookEvent[]
+  dataSubjectRequests   DataSubjectRequest[]
 
   @@map("tenants")
 }
@@ -51,6 +233,13 @@ model TenantUser {
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  ownedDeals    Deal[]
+  assignedTasks Task[]
+
+  assignedTickets   Ticket[]
+  digestPreference  LeadDigestPreference?
+  digestDeliveries  LeadDigestDelivery[]
+
   @@unique([tenantId, userId])
   @@index([userId])
   @@map("tenant_users")
@@ -75,4 +264,560 @@ model RefreshToken {
   @@index([userId])
   @@index([familyId])
   @@map("refresh_tokens")
+}
+
+model Customer {
+  id        String         @id @default(uuid()) @db.Uuid
+  tenantId  String         @map("tenant_id") @db.Uuid
+  name      String
+  document  String?
+  status    CustomerStatus @default(ACTIVE)
+  createdAt DateTime       @default(now()) @map("created_at")
+  updatedAt DateTime       @updatedAt @map("updated_at")
+
+  tenant   Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  contacts Contact[]
+  tags     CustomerTag[]
+  leads    Lead[]
+  deals    Deal[]
+  tasks    Task[]
+  conversations Conversation[]
+  tickets       Ticket[]
+
+  @@unique([tenantId, document])
+  @@index([tenantId, status])
+  @@index([tenantId, createdAt])
+  @@map("customers")
+}
+
+model Contact {
+  id         String   @id @default(uuid()) @db.Uuid
+  tenantId   String   @map("tenant_id") @db.Uuid
+  customerId String   @map("customer_id") @db.Uuid
+  name       String
+  email      String?
+  phone      String?
+  position   String?
+  isPrimary  Boolean  @default(false) @map("is_primary")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  leads    Lead[]
+  deals    Deal[]
+  conversations Conversation[]
+
+  @@index([tenantId, customerId])
+  @@index([tenantId, createdAt])
+  @@map("contacts")
+}
+
+model Tag {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  name      String
+  color     String?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  tenant    Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customers CustomerTag[]
+  leads     LeadTag[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId, createdAt])
+  @@map("tags")
+}
+
+model CustomerTag {
+  customerId String   @map("customer_id") @db.Uuid
+  tagId      String   @map("tag_id") @db.Uuid
+  tenantId   String   @map("tenant_id") @db.Uuid
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  tag      Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@id([customerId, tagId])
+  @@index([tenantId, tagId])
+  @@map("customer_tags")
+}
+
+model QualificationProfile {
+  id                       String               @id @default(uuid()) @db.Uuid
+  tenantId                 String               @map("tenant_id") @db.Uuid
+  name                     String
+  description              String?
+  businessContext          String?              @map("business_context")
+  botName                  String?              @map("bot_name")
+  initialMessage           String?              @map("initial_message")
+  privacyNoticeText        String?              @map("privacy_notice_text")
+  tone                     String?
+  objective                String?
+  requiredInformation      Json                 @default("[]") @map("required_information")
+  qualificationCriteria    Json                 @default("[]") @map("qualification_criteria")
+  disqualificationCriteria Json                 @default("[]") @map("disqualification_criteria")
+  completionCriteria       Json                 @default("[]") @map("completion_criteria")
+  customInstructions       String?              @map("custom_instructions")
+  qualifiedMessage         String?              @map("qualified_message")
+  disqualifiedMessage      String?              @map("disqualified_message")
+  needsHumanMessage        String?              @map("needs_human_message")
+  humanHandoffRules        Json                 @default("[]") @map("human_handoff_rules")
+  qualificationLevels      Json                 @default("[]") @map("qualification_levels")
+  dataSensitivityLevel     DataSensitivityLevel @default(low) @map("data_sensitivity_level")
+  isDefault                Boolean              @default(false) @map("is_default")
+  active                   Boolean              @default(true)
+  version                  Int                  @default(1)
+  createdAt                DateTime             @default(now()) @map("created_at")
+  updatedAt                DateTime             @updatedAt @map("updated_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  sessions LeadQualificationSession[]
+  analyses LeadAnalysis[]
+
+  @@index([tenantId])
+  @@index([tenantId, active])
+  @@index([tenantId, createdAt])
+  @@map("qualification_profiles")
+}
+
+model Lead {
+  id         String     @id @default(uuid()) @db.Uuid
+  tenantId   String     @map("tenant_id") @db.Uuid
+  name       String?
+  phone      String?
+  email      String?
+  source     String?
+  status     LeadStatus @default(NEW)
+  customerId String?    @map("customer_id") @db.Uuid
+  contactId  String?    @map("contact_id") @db.Uuid
+  legalHold        Boolean   @default(false) @map("legal_hold")
+  anonymizedAt     DateTime? @map("anonymized_at")
+  consentRevokedAt DateTime? @map("consent_revoked_at")
+  oppositionAt     DateTime? @map("opposition_at")
+  createdAt  DateTime   @default(now()) @map("created_at")
+  updatedAt  DateTime   @updatedAt @map("updated_at")
+
+  tenant   Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer Customer?     @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  contact  Contact?      @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  tags     LeadTag[]
+  deals    Deal[]
+  tasks    Task[]
+  sessions LeadQualificationSession[]
+  analyses LeadAnalysis[]
+  conversations Conversation[]
+  tickets       Ticket[]
+  dataSubjectRequests DataSubjectRequest[]
+
+  @@unique([tenantId, phone])
+  @@index([tenantId, status])
+  @@index([tenantId, createdAt])
+  @@map("leads")
+}
+
+model LeadTag {
+  leadId    String   @map("lead_id") @db.Uuid
+  tagId     String   @map("tag_id") @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+
+  lead   Lead   @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  tag    Tag    @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@id([leadId, tagId])
+  @@index([tenantId, tagId])
+  @@map("lead_tags")
+}
+
+model Pipeline {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
+  name        String
+  description String?
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  tenant Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  stages PipelineStage[]
+  deals  Deal[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId, createdAt])
+  @@map("pipelines")
+}
+
+model PipelineStage {
+  id         String   @id @default(uuid()) @db.Uuid
+  tenantId   String   @map("tenant_id") @db.Uuid
+  pipelineId String   @map("pipeline_id") @db.Uuid
+  name       String
+  position   Int
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  tenant   Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  pipeline Pipeline      @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+  deals    Deal[]
+
+  @@unique([pipelineId, position])
+  @@index([tenantId, pipelineId])
+  @@map("pipeline_stages")
+}
+
+model Deal {
+  id              String     @id @default(uuid()) @db.Uuid
+  tenantId        String     @map("tenant_id") @db.Uuid
+  pipelineId      String     @map("pipeline_id") @db.Uuid
+  stageId         String     @map("stage_id") @db.Uuid
+  title           String
+  description     String?
+  value           Decimal    @default(0) @db.Decimal(14, 2)
+  currency        String     @default("BRL")
+  status          DealStatus @default(OPEN)
+  customerId      String?    @map("customer_id") @db.Uuid
+  contactId       String?    @map("contact_id") @db.Uuid
+  leadId          String?    @map("lead_id") @db.Uuid
+  ownerId         String?    @map("owner_id") @db.Uuid
+  expectedCloseAt DateTime?  @map("expected_close_at")
+  closedAt        DateTime?  @map("closed_at")
+  createdAt       DateTime   @default(now()) @map("created_at")
+  updatedAt       DateTime   @updatedAt @map("updated_at")
+
+  tenant   Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  pipeline Pipeline       @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+  stage    PipelineStage  @relation(fields: [stageId], references: [id], onDelete: Restrict)
+  customer Customer?      @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  contact  Contact?       @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  lead     Lead?          @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  owner    TenantUser?    @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+  tasks    Task[]
+
+  @@index([tenantId, status])
+  @@index([tenantId, stageId])
+  @@index([tenantId, createdAt])
+  @@index([pipelineId, stageId])
+  @@map("deals")
+}
+
+model Task {
+  id          String       @id @default(uuid()) @db.Uuid
+  tenantId    String       @map("tenant_id") @db.Uuid
+  title       String
+  description String?
+  status      TaskStatus   @default(PENDING)
+  priority    TaskPriority @default(MEDIUM)
+  dueAt       DateTime?    @map("due_at")
+  completedAt DateTime?    @map("completed_at")
+  ownerId     String?      @map("owner_id") @db.Uuid
+  leadId      String?      @map("lead_id") @db.Uuid
+  dealId      String?      @map("deal_id") @db.Uuid
+  customerId  String?      @map("customer_id") @db.Uuid
+  createdAt   DateTime     @default(now()) @map("created_at")
+  updatedAt   DateTime     @updatedAt @map("updated_at")
+
+  tenant   Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  owner    TenantUser? @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+  lead     Lead?       @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  deal     Deal?       @relation(fields: [dealId], references: [id], onDelete: SetNull)
+  customer Customer?   @relation(fields: [customerId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, status])
+  @@index([tenantId, dueAt])
+  @@index([tenantId, createdAt])
+  @@map("tasks")
+}
+
+model Activity {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  userId    String?  @map("user_id") @db.Uuid
+  entity    String
+  entityId  String?  @map("entity_id") @db.Uuid
+  action    String
+  metadata  Json     @default("{}")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, createdAt])
+  @@index([tenantId, entity, entityId])
+  @@map("activities")
+}
+
+model LeadQualificationSession {
+  id                String                     @id @default(uuid()) @db.Uuid
+  tenantId          String                     @map("tenant_id") @db.Uuid
+  leadId            String                     @map("lead_id") @db.Uuid
+  profileId         String                     @map("profile_id") @db.Uuid
+  profileVersion    Int                        @map("profile_version")
+  status            QualificationSessionStatus @default(PENDING)
+  collectedData     Json                       @default("{}") @map("collected_data")
+  missingInformation Json                      @default("[]") @map("missing_information")
+  transcript        Json                       @default("[]")
+  questionCount     Int                        @default(0) @map("question_count")
+  reviewRequested   Boolean                    @default(false) @map("review_requested")
+  reviewRequestedAt DateTime?                  @map("review_requested_at")
+  reviewOutcome     AutomatedReviewOutcome?    @map("review_outcome")
+  reviewNotes       String?                    @map("review_notes")
+  reviewResolvedAt  DateTime?                  @map("review_resolved_at")
+  reviewResolvedBy  String?                    @map("review_resolved_by") @db.Uuid
+  handoffReason     String?                    @map("handoff_reason")
+  startedAt         DateTime                   @default(now()) @map("started_at")
+  lastInteractionAt DateTime                   @default(now()) @map("last_interaction_at")
+  completedAt       DateTime?                  @map("completed_at")
+  createdAt         DateTime                   @default(now()) @map("created_at")
+  updatedAt         DateTime                   @updatedAt @map("updated_at")
+
+  tenant   Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  lead     Lead                @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  profile  QualificationProfile @relation(fields: [profileId], references: [id], onDelete: Restrict)
+  analyses LeadAnalysis[]
+
+  @@index([tenantId, leadId])
+  @@index([tenantId, status])
+  @@index([tenantId, createdAt])
+  @@map("lead_qualification_sessions")
+}
+
+model LeadAnalysis {
+  id                   String                @id @default(uuid()) @db.Uuid
+  tenantId             String                @map("tenant_id") @db.Uuid
+  leadId               String                @map("lead_id") @db.Uuid
+  sessionId            String                @map("session_id") @db.Uuid
+  profileId            String                @map("profile_id") @db.Uuid
+  profileVersion       Int                   @map("profile_version")
+  provider             String
+  model                String
+  outcome              QualificationOutcome
+  score                Int?
+  qualificationLevel   String?               @map("qualification_level")
+  summary              String
+  collectedData        Json                  @default("{}") @map("collected_data")
+  strengths            Json                  @default("[]")
+  risks                Json                  @default("[]")
+  missingInformation   Json                  @default("[]") @map("missing_information")
+  recommendedNextStep  String?               @map("recommended_next_step")
+  qualificationReasons Json                  @default("[]") @map("qualification_reasons")
+  createdAt            DateTime              @default(now()) @map("created_at")
+  completedAt          DateTime              @default(now()) @map("completed_at")
+
+  tenant  Tenant                   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  lead    Lead                     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  session LeadQualificationSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  profile QualificationProfile     @relation(fields: [profileId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, leadId])
+  @@index([tenantId, createdAt])
+  @@map("lead_analyses")
+}
+
+model WhatsAppInstance {
+  id                   String                @id @default(uuid()) @db.Uuid
+  tenantId             String                @map("tenant_id") @db.Uuid
+  name                 String
+  instanceName         String                @unique @map("instance_name")
+  externalInstanceId   String?               @map("external_instance_id")
+  phone                String?
+  status               WhatsAppInstanceStatus @default(DISCONNECTED)
+  credentialsEncrypted String?               @map("credentials_encrypted")
+  active               Boolean               @default(true)
+  createdAt            DateTime              @default(now()) @map("created_at")
+  updatedAt            DateTime              @updatedAt @map("updated_at")
+
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  conversations Conversation[]
+
+  @@index([tenantId, status])
+  @@index([tenantId, createdAt])
+  @@map("whatsapp_instances")
+}
+
+model Conversation {
+  id                 String             @id @default(uuid()) @db.Uuid
+  tenantId           String             @map("tenant_id") @db.Uuid
+  whatsappInstanceId String             @map("whatsapp_instance_id") @db.Uuid
+  externalContactId  String?            @map("external_contact_id")
+  leadId             String?            @map("lead_id") @db.Uuid
+  customerId         String?            @map("customer_id") @db.Uuid
+  contactId          String?            @map("contact_id") @db.Uuid
+  status             ConversationStatus @default(BOT_QUALIFYING)
+  subject            String?
+  legalHold          Boolean            @default(false) @map("legal_hold")
+  lastMessageAt      DateTime?          @map("last_message_at")
+  closedAt           DateTime?          @map("closed_at")
+  createdAt          DateTime           @default(now()) @map("created_at")
+  updatedAt          DateTime           @updatedAt @map("updated_at")
+
+  tenant   Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  instance WhatsAppInstance @relation(fields: [whatsappInstanceId], references: [id], onDelete: Cascade)
+  lead     Lead?            @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  customer Customer?        @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  contact  Contact?         @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  messages Message[]
+  tickets  Ticket[]
+
+  @@unique([whatsappInstanceId, externalContactId])
+  @@index([tenantId, status])
+  @@index([tenantId, leadId])
+  @@index([tenantId, lastMessageAt])
+  @@map("conversations")
+}
+
+model Message {
+  id                String           @id @default(uuid()) @db.Uuid
+  tenantId          String           @map("tenant_id") @db.Uuid
+  conversationId    String           @map("conversation_id") @db.Uuid
+  direction         MessageDirection
+  type              MessageType      @default(TEXT)
+  content           String?
+  externalMessageId String?          @map("external_message_id")
+  status            MessageStatus    @default(RECEIVED)
+  metadata          Json             @default("{}")
+  occurredAt        DateTime         @default(now()) @map("occurred_at")
+  createdAt         DateTime         @default(now()) @map("created_at")
+
+  tenant       Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  conversation Conversation        @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  attachments  MessageAttachment[]
+
+  @@unique([tenantId, externalMessageId])
+  @@index([tenantId, conversationId, occurredAt])
+  @@index([tenantId, createdAt])
+  @@map("messages")
+}
+
+model MessageAttachment {
+  id         String   @id @default(uuid()) @db.Uuid
+  tenantId   String   @map("tenant_id") @db.Uuid
+  messageId  String   @map("message_id") @db.Uuid
+  storageKey String   @map("storage_key")
+  fileName   String   @map("file_name")
+  mimeType   String   @map("mime_type")
+  size       Int
+  metadata   Json     @default("{}")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, messageId])
+  @@map("message_attachments")
+}
+
+model Ticket {
+  id             String         @id @default(uuid()) @db.Uuid
+  tenantId       String         @map("tenant_id") @db.Uuid
+  conversationId String?        @map("conversation_id") @db.Uuid
+  leadId         String?        @map("lead_id") @db.Uuid
+  customerId     String?        @map("customer_id") @db.Uuid
+  subject        String
+  status         TicketStatus   @default(OPEN)
+  priority       TicketPriority @default(MEDIUM)
+  assigneeId     String?        @map("assignee_id") @db.Uuid
+  openedAt       DateTime       @default(now()) @map("opened_at")
+  closedAt       DateTime?      @map("closed_at")
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+
+  tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  conversation Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  lead         Lead?         @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  customer     Customer?     @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  assignee     TenantUser?   @relation(fields: [assigneeId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, status])
+  @@index([tenantId, priority])
+  @@index([tenantId, createdAt])
+  @@map("tickets")
+}
+
+model LeadDigestPreference {
+  id                  String          @id @default(uuid()) @db.Uuid
+  tenantId            String          @map("tenant_id") @db.Uuid
+  tenantUserId        String          @unique @map("tenant_user_id") @db.Uuid
+  enabled             Boolean         @default(true)
+  frequency           DigestFrequency @default(DAILY)
+  deliveryTime        String          @map("delivery_time")
+  timeZone            String          @map("time_zone")
+  channel             DigestChannel   @default(INTERNAL)
+  whatsappDestination String?         @map("whatsapp_destination")
+  includeOnlyAssigned Boolean         @default(false) @map("include_only_assigned")
+  lastDeliveredAt     DateTime?       @map("last_delivered_at")
+  createdAt           DateTime        @default(now()) @map("created_at")
+  updatedAt           DateTime        @updatedAt @map("updated_at")
+
+  tenant     Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantUser TenantUser @relation(fields: [tenantUserId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, enabled])
+  @@map("lead_digest_preferences")
+}
+
+model LeadDigestDelivery {
+  id                String        @id @default(uuid()) @db.Uuid
+  tenantId          String        @map("tenant_id") @db.Uuid
+  tenantUserId      String        @map("tenant_user_id") @db.Uuid
+  periodStart       DateTime      @map("period_start")
+  periodEnd         DateTime      @map("period_end")
+  status            DigestStatus  @default(PENDING)
+  leadCount         Int           @default(0) @map("lead_count")
+  channel           DigestChannel
+  payloadSnapshot   Json?         @map("payload_snapshot")
+  externalMessageId String?       @map("external_message_id")
+  errorCode         String?       @map("error_code")
+  createdAt         DateTime      @default(now()) @map("created_at")
+  deliveredAt       DateTime?     @map("delivered_at")
+
+  tenant     Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantUser TenantUser @relation(fields: [tenantUserId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantUserId, periodStart])
+  @@index([tenantId, createdAt])
+  @@map("lead_digest_deliveries")
+}
+
+model WebhookEvent {
+  id              String    @id @default(uuid()) @db.Uuid
+  tenantId        String?   @map("tenant_id") @db.Uuid
+  provider        String    @default("evolution")
+  externalEventId String    @map("external_event_id")
+  eventType       String    @map("event_type")
+  payload         Json      @default("{}")
+  processedAt     DateTime? @map("processed_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+
+  @@unique([provider, externalEventId])
+  @@index([tenantId, createdAt])
+  @@map("webhook_events")
+}
+
+model DataSubjectRequest {
+  id             String                   @id @default(uuid()) @db.Uuid
+  tenantId       String                   @map("tenant_id") @db.Uuid
+  type           DataSubjectRequestType
+  status         DataSubjectRequestStatus @default(PENDING)
+  leadId         String?                  @map("lead_id") @db.Uuid
+  sessionId      String?                  @map("session_id") @db.Uuid
+  requestedBy    String?                  @map("requested_by") @db.Uuid
+  subjectContact String?                  @map("subject_contact")
+  details        Json                     @default("{}")
+  response       Json?
+  notes          String?
+  createdAt      DateTime                 @default(now()) @map("created_at")
+  completedAt    DateTime?                @map("completed_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  lead   Lead?  @relation(fields: [leadId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, type])
+  @@index([tenantId, createdAt])
+  @@map("data_subject_requests")
 }

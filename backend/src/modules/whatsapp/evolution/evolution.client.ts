@@ -28,6 +28,31 @@ export interface EvolutionSendResult {
   raw: unknown;
 }
 
+export type EvolutionMediaType = 'image' | 'video' | 'document' | 'audio';
+
+export interface EvolutionSendMediaInput {
+  number: string;
+  mediatype: EvolutionMediaType;
+  media: string;
+  fileName?: string;
+  caption?: string;
+  mimetype?: string;
+}
+
+export interface EvolutionMediaMessageKey {
+  id: string;
+  remoteJid: string;
+  fromMe?: boolean;
+}
+
+export interface EvolutionMediaContent {
+  base64: string;
+  mimeType: string | null;
+  fileName: string | null;
+  caption: string | null;
+  size: number | null;
+}
+
 @Injectable()
 export class EvolutionClient {
   private readonly logger = new Logger(EvolutionClient.name);
@@ -83,6 +108,53 @@ export class EvolutionClient {
     return { externalMessageId: extractMessageId(raw), raw };
   }
 
+  async sendMedia(
+    instanceName: string,
+    input: EvolutionSendMediaInput,
+  ): Promise<EvolutionSendResult> {
+    const raw = await this.request('POST', `/message/sendMedia/${encodeURIComponent(instanceName)}`, {
+      number: input.number,
+      mediatype: input.mediatype,
+      media: input.media,
+      ...(input.fileName ? { fileName: input.fileName } : {}),
+      ...(input.caption ? { caption: input.caption } : {}),
+      ...(input.mimetype ? { mimetype: input.mimetype } : {}),
+    });
+
+    return { externalMessageId: extractMessageId(raw), raw };
+  }
+
+  async getBase64FromMediaMessage(
+    instanceName: string,
+    key: EvolutionMediaMessageKey,
+  ): Promise<EvolutionMediaContent> {
+    const raw = await this.request(
+      'POST',
+      `/chat/getBase64FromMediaMessage/${encodeURIComponent(instanceName)}`,
+      {
+        message: {
+          key: { id: key.id, remoteJid: key.remoteJid, fromMe: key.fromMe ?? false },
+        },
+      },
+    );
+
+    const record = isRecord(raw) ? raw : {};
+    const base64 = readString(record.base64);
+    if (!base64) {
+      throw new EvolutionRequestError('Media content not available for this message');
+    }
+
+    const size = isRecord(record) && typeof record.size === 'number' ? record.size : null;
+
+    return {
+      base64,
+      mimeType: readString(record.mimetype) ?? readString(record.mimeType),
+      fileName: readString(record.fileName),
+      caption: readString(record.caption),
+      size,
+    };
+  }
+
   private async request(method: string, path: string, body?: unknown): Promise<unknown> {
     if (!this.baseUrl || !this.apiKey) {
       throw new EvolutionUnavailableError();
@@ -132,6 +204,14 @@ function extractMessageId(raw: unknown): string | undefined {
     return record.id;
   }
   return undefined;
+}
+
+function readString(value: unknown): string | null {
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function trimTrailingSlash(value: string): string {

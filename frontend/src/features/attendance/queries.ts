@@ -1,5 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { attendanceService, type ListConversationsParams } from './services/attendance-service';
+import { apiRequestBlob } from '@/lib/api-client';
+import {
+  attachmentPath,
+  attendanceService,
+  type ListConversationsParams,
+} from './services/attendance-service';
 
 export const attendanceKeys = {
   all: ['attendance'] as const,
@@ -7,6 +12,12 @@ export const attendanceKeys = {
     ['attendance', 'conversations', params] as const,
   conversation: (id: string) => ['attendance', 'conversation', id] as const,
   messages: (id: string) => ['attendance', 'messages', id] as const,
+  attachment: (
+    conversationId: string,
+    messageId: string,
+    attachmentId: string,
+    variant: 'main' | 'thumb',
+  ) => ['attendance', 'attachment', conversationId, messageId, attachmentId, variant] as const,
 };
 
 export function useConversations(params: ListConversationsParams = {}) {
@@ -60,5 +71,46 @@ export function useSendConversationMessage() {
       void queryClient.invalidateQueries({ queryKey: attendanceKeys.messages(variables.id) });
       void queryClient.invalidateQueries({ queryKey: attendanceKeys.all });
     },
+  });
+}
+
+export function useSendConversationMedia() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, file, caption }: { id: string; file: File; caption?: string }) =>
+      attendanceService.sendMedia(id, file, caption),
+    onSuccess: (_result, variables) => {
+      void queryClient.invalidateQueries({ queryKey: attendanceKeys.messages(variables.id) });
+      void queryClient.invalidateQueries({ queryKey: attendanceKeys.all });
+    },
+  });
+}
+
+export function useAttachmentBlob(params: {
+  conversationId: string;
+  messageId: string;
+  attachmentId: string;
+  variant: 'main' | 'thumb';
+  enabled?: boolean;
+}) {
+  return useQuery({
+    queryKey: attendanceKeys.attachment(
+      params.conversationId,
+      params.messageId,
+      params.attachmentId,
+      params.variant,
+    ),
+    queryFn: () =>
+      apiRequestBlob(
+        attachmentPath(
+          params.conversationId,
+          params.messageId,
+          params.attachmentId,
+          params.variant,
+        ),
+      ),
+    enabled: params.enabled ?? true,
+    staleTime: Infinity,
+    gcTime: Infinity,
   });
 }

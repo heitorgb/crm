@@ -21,6 +21,7 @@ Contatos (histórico de conversas por contato)
 - [docs/multi-tenancy.md](./docs/multi-tenancy.md) — isolamento entre tenants.
 - [docs/authentication.md](./docs/authentication.md) — autenticação/autorização.
 - [docs/como-executar.md](./docs/como-executar.md) — guia passo a passo para executar (infra, backend, frontend, Evolution).
+- [docs/media.md](./docs/media.md) — envio/recebimento de imagens no Chat (otimização e storage).
 - [docs/development.md](./docs/development.md) — como rodar, testar e validar.
 - [docs/frontend.md](./docs/frontend.md) — frontend e design system.
 - [docs/hardening.md](./docs/hardening.md) — auditoria de segurança/performance.

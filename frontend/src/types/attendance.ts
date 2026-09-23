@@ -66,10 +66,12 @@ export interface ConversationMessage {
   createdAt: string;
   attachments: {
     id: string;
-    storageKey: string;
     fileName: string;
     mimeType: string;
     size: number;
+    width: number | null;
+    height: number | null;
+    hasThumbnail: boolean;
   }[];
 }
 

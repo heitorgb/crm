@@ -15,4 +15,5 @@ export const JOB_QUEUE = 'JOB_QUEUE';
 
 export const JOB_NAMES = {
   WHATSAPP_SEND: 'whatsapp.message.send',
+  MEDIA_PROCESS: 'media.process',
 } as const;

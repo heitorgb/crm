@@ -122,6 +122,23 @@ Sem uma URL alcançável, a configuração automática do webhook falha (`PUBLIC
 
 Painel da Evolution (opcional): `http://localhost:8080/manager`.
 
+### 4.5 Mídia (imagens)
+
+O Chat envia e recebe imagens. As imagens são otimizadas com `sharp` (redimensiona até 1600px, JPEG
+q80, gera thumbnail) e persistidas em disco — **o original não é guardado**. Detalhes em
+[`media.md`](./media.md).
+
+Variáveis (já com defaults em `backend/.env.example`):
+
+```env
+STORAGE_PROVIDER=local
+STORAGE_LOCAL_DIR=./storage
+MEDIA_MAX_BYTES=26214400
+MEDIA_IMAGE_MAX_DIMENSION=1600
+MEDIA_IMAGE_QUALITY=80
+MEDIA_THUMBNAIL_DIMENSION=256
+```
+
 ---
 
 ## 5. Validação completa

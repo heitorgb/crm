@@ -1,10 +1,16 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { ConversationStatus, MessageDirection, Prisma } from '@prisma/client';
+import { AppException } from '../../common/errors/app.exception.js';
 import { buildPage, skipOf, type PageResult } from '../../common/http/pagination.js';
 import { TenantContextService } from '../../common/tenant-context/tenant-context.service.js';
+import type { Env } from '../../config/env.validation.js';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service.js';
 import { RealtimeService } from '../../infrastructure/realtime/realtime.service.js';
-import { ConversationProcessingService } from './conversation-processing.service.js';
+import {
+  ConversationProcessingService,
+  type DeliverMediaInput,
+} from './conversation-processing.service.js';
 import { ConversationNotFoundError } from './conversations.errors.js';
 import type {
   CreateConversationDto,
@@ -56,6 +62,7 @@ export class ConversationsService {
     private readonly tenantContext: TenantContextService,
     private readonly processing: ConversationProcessingService,
     private readonly realtime: RealtimeService,
+    private readonly config: ConfigService<Env, true>,
   ) {}
 
   async list(query: ListConversationsQueryDto): Promise<PageResult<ConversationView>> {
@@ -187,6 +194,36 @@ export class ConversationsService {
     }
 
     await this.processing.deliverText(tenantId, id, content);
+  }
+
+  async sendHumanMedia(id: string, input: DeliverMediaInput): Promise<void> {
+    const { tenantId } = this.tenantContext.requireContext();
+    const conversation = await this.prisma.conversation.findFirst({
+      where: { id, tenantId },
+      select: { id: true, status: true },
+    });
+
+    if (!conversation) {
+      throw new ConversationNotFoundError();
+    }
+
+    if (input.buffer.length === 0) {
+      throw new AppException('MEDIA_EMPTY', 'The uploaded file is empty', 400);
+    }
+
+    const maxBytes = this.config.get('MEDIA_MAX_BYTES');
+    if (input.buffer.length > maxBytes) {
+      throw new AppException('MEDIA_TOO_LARGE', 'The uploaded file is too large', 413);
+    }
+
+    if (conversation.status === ConversationStatus.CLOSED) {
+      await this.prisma.conversation.update({
+        where: { id },
+        data: { status: ConversationStatus.OPEN, closedAt: null },
+      });
+    }
+
+    await this.processing.deliverMedia(tenantId, id, input);
   }
 
   private async requireConversation(tenantId: string, id: string): Promise<void> {

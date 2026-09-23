@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   MessageSquare,
   PanelRightClose,
   PanelRightOpen,
+  Paperclip,
   Send,
   Smartphone,
   XCircle,
@@ -31,8 +32,10 @@ import {
   useConversation,
   useConversationMessages,
   useConversations,
+  useSendConversationMedia,
   useSendConversationMessage,
 } from './queries';
+import { MessageImage } from './message-image';
 import { useAttendanceRealtime } from './use-realtime';
 
 const statusTone: Record<ConversationStatus, StatusTone> = {
@@ -93,8 +96,10 @@ export function AttendancePage() {
   const messagesQuery = useConversationMessages(activeId ?? undefined);
   const closeConversation = useCloseConversation();
   const sendMessage = useSendConversationMessage();
+  const sendMedia = useSendConversationMedia();
 
   const bottomRef = useRef<HTMLDivElement>(null);
+  const mediaInputRef = useRef<HTMLInputElement>(null);
   const messageCount = messagesQuery.data?.data.length ?? 0;
 
   useEffect(() => {
@@ -109,6 +114,20 @@ export function AttendancePage() {
       return;
     }
     await sendMessage.mutateAsync({ id: activeId, content: draft.trim() });
+    setDraft('');
+  };
+
+  const handleMediaSelected = async (event: ChangeEvent<HTMLInputElement>): Promise<void> => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file || !activeId) {
+      return;
+    }
+    await sendMedia.mutateAsync({
+      id: activeId,
+      file,
+      caption: draft.trim().length > 0 ? draft.trim() : undefined,
+    });
     setDraft('');
   };
 
@@ -291,9 +310,16 @@ export function AttendancePage() {
                             : 'border border-border bg-card text-foreground',
                         )}
                       >
-                        <p className="whitespace-pre-wrap">
-                          {message.content ?? `[${message.type.toLowerCase()}]`}
-                        </p>
+                        {message.type === 'IMAGE' ? (
+                          <MessageImage
+                            conversationId={message.conversationId}
+                            message={message}
+                          />
+                        ) : (
+                          <p className="whitespace-pre-wrap">
+                            {message.content ?? `[${message.type.toLowerCase()}]`}
+                          </p>
+                        )}
                         <span
                           className={cn(
                             'mt-1 block text-[10px]',
@@ -313,12 +339,28 @@ export function AttendancePage() {
               </div>
 
               <div className="border-t border-border p-3">
+                <input
+                  ref={mediaInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(event) => void handleMediaSelected(event)}
+                />
                 <div className="flex items-end gap-2">
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    onClick={() => mediaInputRef.current?.click()}
+                    disabled={sendMedia.isPending}
+                    aria-label="Enviar imagem"
+                  >
+                    <Paperclip />
+                  </Button>
                   <Textarea
                     rows={2}
                     value={draft}
                     onChange={(event) => setDraft(event.target.value)}
-                    placeholder="Escreva uma mensagem…"
+                    placeholder="Escreva uma mensagem ou anexe uma imagem…"
                     onKeyDown={(event) => {
                       if (event.key === 'Enter' && !event.shiftKey) {
                         event.preventDefault();
@@ -326,7 +368,10 @@ export function AttendancePage() {
                       }
                     }}
                   />
-                  <Button onClick={() => void handleSend()} disabled={sendMessage.isPending}>
+                  <Button
+                    onClick={() => void handleSend()}
+                    disabled={sendMessage.isPending || sendMedia.isPending}
+                  >
                     <Send />
                   </Button>
                 </div>

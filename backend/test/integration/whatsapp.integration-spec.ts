@@ -1,5 +1,8 @@
 import { randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
+import sharp from 'sharp';
 import { PrismaService } from '../../src/infrastructure/prisma/prisma.service.js';
 import { EvolutionRequestError } from '../../src/modules/whatsapp/evolution/evolution.client.js';
 import {
@@ -12,12 +15,25 @@ import {
   type TestApp,
 } from './crm.helpers.js';
 
+interface SentMedia {
+  instance: string;
+  number: string;
+  mediatype: string;
+  media: string;
+  fileName?: string;
+  caption?: string;
+  mimetype?: string;
+}
+
 class FakeEvolution {
   configured = true;
   readonly sent: { instance: string; number: string; text: string }[] = [];
+  readonly sentMedia: SentMedia[] = [];
   readonly created: string[] = [];
   readonly webhooks: { instance: string; url: string; events: string[] }[] = [];
   createInstanceError?: { status: number };
+  mediaBase64?: string;
+  mediaError?: { status: number };
   private counter = 0;
 
   async createInstance(instanceName: string) {
@@ -50,6 +66,28 @@ class FakeEvolution {
     this.webhooks.push({ instance, url, events });
     return {};
   }
+
+  async sendMedia(instance: string, input: SentMedia) {
+    this.counter += 1;
+    this.sentMedia.push({ ...input, instance });
+    return { externalMessageId: `media-${this.counter}`, raw: {} };
+  }
+
+  async getBase64FromMediaMessage() {
+    if (this.mediaError) {
+      throw new EvolutionRequestError('media unavailable', this.mediaError.status);
+    }
+    if (!this.mediaBase64) {
+      throw new EvolutionRequestError('media unavailable', 404);
+    }
+    return {
+      base64: this.mediaBase64,
+      mimeType: 'image/png',
+      fileName: 'photo.png',
+      caption: null,
+      size: null,
+    };
+  }
 }
 
 const evolution = new FakeEvolution();
@@ -74,9 +112,12 @@ describe('WhatsApp attendance (integration)', () => {
 
   beforeEach(async () => {
     evolution.sent.length = 0;
+    evolution.sentMedia.length = 0;
     evolution.created.length = 0;
     evolution.webhooks.length = 0;
     evolution.createInstanceError = undefined;
+    evolution.mediaBase64 = undefined;
+    evolution.mediaError = undefined;
     ownerA = await seedTenant(app, prisma, { name: 'Wa Owner A', role: 'OWNER' });
     userA = await seedMember(app, prisma, ownerA.tenantId, { name: 'Wa User A', role: 'USER' });
     ownerB = await seedTenant(app, prisma, { name: 'Wa Owner B', role: 'OWNER' });
@@ -117,12 +158,57 @@ describe('WhatsApp attendance (integration)', () => {
     };
   }
 
+  function imagePayload(
+    instanceName: string,
+    messageId: string,
+    caption: string | null = null,
+    remoteJid = '5511999999999@s.whatsapp.net',
+  ) {
+    return {
+      event: 'messages.upsert',
+      instance: instanceName,
+      data: {
+        key: { remoteJid, fromMe: false, id: messageId },
+        pushName: 'Contato Teste',
+        message: { imageMessage: { mimetype: 'image/png', caption } },
+      },
+    };
+  }
+
   function postWebhook(payload: object, token = 'test-webhook-secret') {
     return app.inject({
       method: 'POST',
       url: `/api/webhooks/evolution?token=${token}`,
       payload,
     });
+  }
+
+  function buildMultipart(
+    file: Buffer,
+    fileName: string,
+    mimeType: string,
+    caption?: string,
+  ): { payload: Buffer; contentType: string } {
+    const boundary = `----orderup${randomUUID()}`;
+    const chunks: Buffer[] = [];
+    if (caption) {
+      chunks.push(
+        Buffer.from(
+          `--${boundary}\r\nContent-Disposition: form-data; name="caption"\r\n\r\n${caption}\r\n`,
+        ),
+      );
+    }
+    chunks.push(
+      Buffer.from(
+        `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${fileName}"\r\nContent-Type: ${mimeType}\r\n\r\n`,
+      ),
+    );
+    chunks.push(file);
+    chunks.push(Buffer.from(`\r\n--${boundary}--\r\n`));
+    return {
+      payload: Buffer.concat(chunks),
+      contentType: `multipart/form-data; boundary=${boundary}`,
+    };
   }
 
   describe('instances', () => {
@@ -514,6 +600,138 @@ describe('WhatsApp attendance (integration)', () => {
         headers: authHeaders(ownerB),
       });
       expect(listB.json().data).toHaveLength(0);
+    });
+  });
+
+  describe('media', () => {
+    async function seedConversation(): Promise<string> {
+      const instanceName = `media-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      await postWebhook(evolutionPayload(instanceName, randomUUID(), 'Olá'));
+      const conversation = await prisma.conversation.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId },
+      });
+      return conversation.id;
+    }
+
+    it('optimizes and stores an inbound image with a thumbnail', async () => {
+      const instanceName = `in-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      const original = await sharp({
+        create: { width: 2400, height: 1200, channels: 3, background: '#3366ff' },
+      })
+        .png()
+        .toBuffer();
+      evolution.mediaBase64 = original.toString('base64');
+
+      const response = await postWebhook(
+        imagePayload(instanceName, randomUUID(), 'minha legenda'),
+      );
+      expect(response.statusCode).toBe(200);
+
+      const message = await prisma.message.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId, type: 'IMAGE' },
+      });
+      expect(message.content).toBe('minha legenda');
+
+      const attachment = await prisma.messageAttachment.findFirstOrThrow({
+        where: { messageId: message.id },
+      });
+      expect(attachment.mimeType).toBe('image/jpeg');
+      expect(attachment.size).toBeLessThan(original.length);
+
+      const metadata = attachment.metadata as { width?: number; thumbnailKey?: string };
+      expect(metadata.width ?? 0).toBeLessThanOrEqual(1600);
+      expect(metadata.thumbnailKey).toBeDefined();
+
+      const baseDir = process.env.STORAGE_LOCAL_DIR as string;
+      const stored = await readFile(join(baseDir, attachment.storageKey));
+      expect(stored.length).toBe(attachment.size);
+      const thumb = await readFile(join(baseDir, metadata.thumbnailKey as string));
+      expect(thumb.length).toBeGreaterThan(0);
+    });
+
+    it('marks the message when inbound media cannot be retrieved', async () => {
+      const instanceName = `in-fail-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      evolution.mediaError = { status: 404 };
+
+      await postWebhook(imagePayload(instanceName, randomUUID()));
+
+      const message = await prisma.message.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId, type: 'IMAGE' },
+      });
+      expect((message.metadata as { mediaError?: string }).mediaError).toBe('fetch_failed');
+      const attachments = await prisma.messageAttachment.count({ where: { messageId: message.id } });
+      expect(attachments).toBe(0);
+    });
+
+    it('sends an uploaded image reduced and marks it as sent', async () => {
+      const conversationId = await seedConversation();
+      const file = await sharp({
+        create: { width: 2000, height: 1000, channels: 3, background: '#ff0000' },
+      })
+        .png()
+        .toBuffer();
+      const { payload, contentType } = buildMultipart(
+        file,
+        'foto.png',
+        'image/png',
+        'legenda da foto',
+      );
+
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/conversations/${conversationId}/messages/media`,
+        headers: { ...authHeaders(ownerA), 'content-type': contentType },
+        payload,
+      });
+
+      expect(response.statusCode).toBe(201);
+      expect(evolution.sentMedia).toHaveLength(1);
+      expect(evolution.sentMedia[0].mediatype).toBe('image');
+      expect(evolution.sentMedia[0].caption).toBe('legenda da foto');
+
+      const outbound = await prisma.message.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId, conversationId, direction: 'OUTBOUND', type: 'IMAGE' },
+      });
+      expect(outbound.status).toBe('SENT');
+      expect(outbound.content).toBe('legenda da foto');
+
+      const attachment = await prisma.messageAttachment.findFirstOrThrow({
+        where: { messageId: outbound.id },
+      });
+      expect(attachment.mimeType).toBe('image/jpeg');
+      expect(attachment.size).toBeLessThan(file.length);
+    });
+
+    it('serves attachments only to the owning tenant', async () => {
+      const instanceName = `dl-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      const original = await sharp({
+        create: { width: 800, height: 600, channels: 3, background: '#00ff00' },
+      })
+        .png()
+        .toBuffer();
+      evolution.mediaBase64 = original.toString('base64');
+
+      await postWebhook(imagePayload(instanceName, randomUUID()));
+
+      const message = await prisma.message.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId, type: 'IMAGE' },
+      });
+      const attachment = await prisma.messageAttachment.findFirstOrThrow({
+        where: { messageId: message.id },
+      });
+
+      const url = `/api/conversations/${message.conversationId}/messages/${message.id}/attachments/${attachment.id}`;
+
+      const owned = await app.inject({ method: 'GET', url, headers: authHeaders(ownerA) });
+      expect(owned.statusCode).toBe(200);
+      expect(owned.headers['content-type']).toBe('image/jpeg');
+
+      const foreign = await app.inject({ method: 'GET', url, headers: authHeaders(ownerB) });
+      expect(foreign.statusCode).toBe(404);
     });
   });
 });

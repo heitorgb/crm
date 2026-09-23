@@ -13,6 +13,8 @@ import { validateEnv } from './config/env.validation.js';
 import { PrismaModule } from './infrastructure/prisma/prisma.module.js';
 import { RedisModule } from './infrastructure/redis/redis.module.js';
 import { CryptoModule } from './infrastructure/crypto/crypto.module.js';
+import { MediaModule } from './infrastructure/media/media.module.js';
+import { StorageModule } from './infrastructure/storage/storage.module.js';
 import { QueueModule } from './infrastructure/queue/queue.module.js';
 import { RealtimeModule } from './infrastructure/realtime/realtime.module.js';
 import { HealthModule } from './modules/health/health.module.js';
@@ -46,6 +48,8 @@ import { WebhooksModule } from './modules/webhooks/webhooks.module.js';
     PrismaModule,
     RedisModule,
     CryptoModule,
+    StorageModule,
+    MediaModule,
     QueueModule,
     RealtimeModule,
     HealthModule,

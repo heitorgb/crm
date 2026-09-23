@@ -1,16 +1,19 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { MessageDirection, MessageStatus, MessageType, Prisma } from '@prisma/client';
 import { buildPage, skipOf, type PageResult } from '../../common/http/pagination.js';
 import { TenantContextService } from '../../common/tenant-context/tenant-context.service.js';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service.js';
+import { STORAGE, type StorageService } from '../../infrastructure/storage/storage.types.js';
 import { ConversationNotFoundError, MessageNotFoundError } from './conversations.errors.js';
 
 export interface MessageAttachmentView {
   id: string;
-  storageKey: string;
   fileName: string;
   mimeType: string;
   size: number;
+  width: number | null;
+  height: number | null;
+  hasThumbnail: boolean;
 }
 
 export interface MessageView {
@@ -47,9 +50,37 @@ export interface PersistOutboundInput {
   metadata?: Record<string, unknown>;
 }
 
+export interface CreateAttachmentInput {
+  tenantId: string;
+  messageId: string;
+  storageKey: string;
+  fileName: string;
+  mimeType: string;
+  size: number;
+  thumbnailKey?: string | null;
+  width?: number | null;
+  height?: number | null;
+}
+
+export interface StoredAttachment {
+  id: string;
+  messageId: string;
+  storageKey: string;
+  thumbnailKey: string | null;
+  fileName: string;
+  mimeType: string;
+  size: number;
+}
+
 const MESSAGE_INCLUDE = {
   attachments: {
-    select: { id: true, storageKey: true, fileName: true, mimeType: true, size: true },
+    select: {
+      id: true,
+      fileName: true,
+      mimeType: true,
+      size: true,
+      metadata: true,
+    },
   },
 } satisfies Prisma.MessageInclude;
 
@@ -60,6 +91,7 @@ export class MessagesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly tenantContext: TenantContextService,
+    @Inject(STORAGE) private readonly storage: StorageService,
   ) {}
 
   async listByConversation(
@@ -152,6 +184,90 @@ export class MessagesService {
     return toMessageView(message);
   }
 
+  async createAttachment(input: CreateAttachmentInput): Promise<string> {
+    const metadata: Record<string, unknown> = {};
+    if (input.thumbnailKey) metadata.thumbnailKey = input.thumbnailKey;
+    if (input.width != null) metadata.width = input.width;
+    if (input.height != null) metadata.height = input.height;
+
+    const attachment = await this.prisma.messageAttachment.create({
+      data: {
+        tenantId: input.tenantId,
+        messageId: input.messageId,
+        storageKey: input.storageKey,
+        fileName: input.fileName,
+        mimeType: input.mimeType,
+        size: input.size,
+        metadata: metadata as Prisma.InputJsonValue,
+      },
+      select: { id: true },
+    });
+
+    return attachment.id;
+  }
+
+  /** Tenant-scoped lookup used by the media download endpoint. */
+  async findAttachment(input: {
+    tenantId: string;
+    conversationId: string;
+    messageId: string;
+    attachmentId: string;
+  }): Promise<StoredAttachment> {
+    const message = await this.prisma.message.findFirst({
+      where: { id: input.messageId, tenantId: input.tenantId, conversationId: input.conversationId },
+      select: { id: true },
+    });
+    if (!message) {
+      throw new MessageNotFoundError();
+    }
+
+    const attachment = await this.prisma.messageAttachment.findFirst({
+      where: { id: input.attachmentId, tenantId: input.tenantId, messageId: input.messageId },
+    });
+    if (!attachment) {
+      throw new MessageNotFoundError();
+    }
+
+    const metadata = isRecord(attachment.metadata) ? attachment.metadata : {};
+
+    return {
+      id: attachment.id,
+      messageId: attachment.messageId,
+      storageKey: attachment.storageKey,
+      thumbnailKey: typeof metadata.thumbnailKey === 'string' ? metadata.thumbnailKey : null,
+      fileName: attachment.fileName,
+      mimeType: attachment.mimeType,
+      size: attachment.size,
+    };
+  }
+
+  /** Reads an attachment from storage for the authenticated download endpoint. */
+  async readAttachment(input: {
+    conversationId: string;
+    messageId: string;
+    attachmentId: string;
+    variant: 'main' | 'thumb';
+  }): Promise<{ buffer: Buffer; mimeType: string; fileName: string }> {
+    const { tenantId } = this.tenantContext.requireContext();
+    const attachment = await this.findAttachment({
+      tenantId,
+      conversationId: input.conversationId,
+      messageId: input.messageId,
+      attachmentId: input.attachmentId,
+    });
+
+    const key =
+      input.variant === 'thumb' && attachment.thumbnailKey
+        ? attachment.thumbnailKey
+        : attachment.storageKey;
+
+    return {
+      buffer: await this.storage.get(key),
+      mimeType: attachment.mimeType,
+      fileName: attachment.fileName,
+    };
+  }
+
   async markOutboundStatus(
     messageId: string,
     status: MessageStatus,
@@ -196,6 +312,21 @@ function toMessageView(message: PrismaMessage): MessageView {
     metadata: message.metadata,
     occurredAt: message.occurredAt,
     createdAt: message.createdAt,
-    attachments: message.attachments,
+    attachments: message.attachments.map((attachment) => {
+      const metadata = isRecord(attachment.metadata) ? attachment.metadata : {};
+      return {
+        id: attachment.id,
+        fileName: attachment.fileName,
+        mimeType: attachment.mimeType,
+        size: attachment.size,
+        width: typeof metadata.width === 'number' ? metadata.width : null,
+        height: typeof metadata.height === 'number' ? metadata.height : null,
+        hasThumbnail: typeof metadata.thumbnailKey === 'string',
+      };
+    }),
   };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

@@ -71,12 +71,17 @@ const integrationEnvSchema = z.object({
   EVOLUTION_API_KEY: optionalEnv(z.string().min(1)),
   EVOLUTION_WEBHOOK_SECRET: optionalEnv(z.string().min(1)),
   PUBLIC_API_URL: optionalEnv(z.url()),
-  STORAGE_PROVIDER: optionalEnv(z.enum(['minio', 's3'])),
+  STORAGE_PROVIDER: z.enum(['local', 'minio', 's3']).default('local'),
+  STORAGE_LOCAL_DIR: optionalEnv(z.string().min(1)),
   STORAGE_ENDPOINT: optionalEnv(z.string().min(1)),
   STORAGE_BUCKET: optionalEnv(z.string().min(1)),
   STORAGE_ACCESS_KEY: optionalEnv(z.string().min(1)),
   STORAGE_SECRET_KEY: optionalEnv(z.string().min(1)),
   STORAGE_REGION: optionalEnv(z.string().min(1)),
+  MEDIA_MAX_BYTES: z.coerce.number().int().positive().default(26_214_400),
+  MEDIA_IMAGE_MAX_DIMENSION: z.coerce.number().int().positive().default(1600),
+  MEDIA_IMAGE_QUALITY: z.coerce.number().int().min(1).max(100).default(80),
+  MEDIA_THUMBNAIL_DIMENSION: z.coerce.number().int().positive().default(256),
   LEGAL_TERMS_VERSION: optionalEnv(z.string().min(1)),
   LEGAL_DPA_VERSION: optionalEnv(z.string().min(1)),
   ORDERUP_DPO_NAME: optionalEnv(z.string().min(1)),
@@ -124,7 +129,7 @@ export const envSchema = appEnvSchema
       });
     }
 
-    if (env.STORAGE_PROVIDER) {
+    if (env.STORAGE_PROVIDER === 'minio' || env.STORAGE_PROVIDER === 's3') {
       const missing = (
         ['STORAGE_ENDPOINT', 'STORAGE_BUCKET', 'STORAGE_ACCESS_KEY', 'STORAGE_SECRET_KEY'] as const
       ).filter((key) => !env[key]);

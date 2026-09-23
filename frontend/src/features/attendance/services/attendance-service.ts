@@ -1,7 +1,17 @@
-import { apiRequest } from '@/lib/api-client';
+import { apiRequest, apiUpload } from '@/lib/api-client';
 import { toQueryString } from '@/lib/query-params';
 import type { PageResult } from '@/types/crm';
 import type { Conversation, ConversationMessage, ConversationStatus } from '@/types/attendance';
+
+export function attachmentPath(
+  conversationId: string,
+  messageId: string,
+  attachmentId: string,
+  variant: 'main' | 'thumb' = 'main',
+): string {
+  const query = variant === 'thumb' ? '?variant=thumb' : '';
+  return `/conversations/${conversationId}/messages/${messageId}/attachments/${attachmentId}${query}`;
+}
 
 export interface ListConversationsParams {
   page?: number;
@@ -45,4 +55,13 @@ export const attendanceService = {
       method: 'POST',
       body: { content },
     }),
+
+  sendMedia: (id: string, file: File, caption?: string) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    if (caption && caption.trim().length > 0) {
+      formData.append('caption', caption.trim());
+    }
+    return apiUpload<{ ok: true }>(`/conversations/${id}/messages/media`, formData);
+  },
 };

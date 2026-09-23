@@ -1,7 +1,12 @@
 import { createHash } from 'node:crypto';
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConversationStatus, MessageType, Prisma } from '@prisma/client';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service.js';
+import {
+  JOB_NAMES,
+  JOB_QUEUE,
+  type JobQueue,
+} from '../../infrastructure/queue/job-queue.types.js';
 import { RealtimeService } from '../../infrastructure/realtime/realtime.service.js';
 import { ContactsService } from '../contacts/contacts.service.js';
 import { WhatsAppInstancesService } from '../whatsapp/whatsapp-instances.service.js';
@@ -22,6 +27,7 @@ export class WebhookService {
     private readonly instances: WhatsAppInstancesService,
     private readonly contacts: ContactsService,
     private readonly realtime: RealtimeService,
+    @Inject(JOB_QUEUE) private readonly queue: JobQueue,
   ) {}
 
   async ingestEvolution(payload: unknown): Promise<WebhookIngestResult> {
@@ -104,6 +110,13 @@ export class WebhookService {
 
     if (!persisted) {
       return { accepted: true, ignored: 'duplicate_message' };
+    }
+
+    if (isMediaType(type)) {
+      await this.queue.enqueue(JOB_NAMES.MEDIA_PROCESS, {
+        tenantId: instance.tenantId,
+        messageId: persisted.id,
+      });
     }
 
     this.realtime.emitToConversation(instance.tenantId, conversation.id, 'message.created', {
@@ -292,6 +305,15 @@ function detectType(message: unknown): MessageType {
   if (message.locationMessage !== undefined) return MessageType.LOCATION;
   if (message.contactMessage !== undefined) return MessageType.CONTACT;
   return MessageType.UNKNOWN;
+}
+
+function isMediaType(type: MessageType): boolean {
+  return (
+    type === MessageType.IMAGE ||
+    type === MessageType.AUDIO ||
+    type === MessageType.VIDEO ||
+    type === MessageType.DOCUMENT
+  );
 }
 
 function readString(value: unknown): string | null {

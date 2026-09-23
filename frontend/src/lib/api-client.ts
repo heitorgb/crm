@@ -52,3 +52,54 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
 
   return payload as T;
 }
+
+export async function apiUpload<T>(path: string, formData: FormData): Promise<T> {
+  const token = useAuthStore.getState().session?.accessToken;
+
+  const response = await fetch(`${BASE_URL}${API_PREFIX}${path}`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: formData,
+  });
+
+  const payload = (await response.json().catch(() => null)) as
+    | { code?: string; message?: string }
+    | null;
+
+  if (!response.ok) {
+    throw new ApiError(
+      response.status,
+      payload?.code ?? 'REQUEST_FAILED',
+      payload?.message ?? 'Não foi possível enviar o arquivo.',
+    );
+  }
+
+  return payload as T;
+}
+
+export async function apiRequestBlob(path: string): Promise<Blob> {
+  const token = useAuthStore.getState().session?.accessToken;
+
+  const response = await fetch(`${BASE_URL}${API_PREFIX}${path}`, {
+    credentials: 'include',
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as
+      | { code?: string; message?: string }
+      | null;
+    throw new ApiError(
+      response.status,
+      payload?.code ?? 'REQUEST_FAILED',
+      payload?.message ?? 'Não foi possível carregar o arquivo.',
+    );
+  }
+
+  return response.blob();
+}

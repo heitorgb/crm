@@ -159,7 +159,13 @@ export class ConversationProcessingService implements OnModuleInit {
       const remoteJid = conversation.externalContactId;
       const externalId = message.externalMessageId;
       if (!externalId || !remoteJid) {
-        await this.markMediaError(messageId, message.metadata, 'missing_media_key');
+        await this.markMediaError(
+          tenantId,
+          conversation.id,
+          messageId,
+          message.metadata,
+          'missing_media_key',
+        );
         return;
       }
 
@@ -175,23 +181,41 @@ export class ConversationProcessingService implements OnModuleInit {
             error instanceof Error ? error.message : 'unknown'
           }`,
         );
-        await this.markMediaError(messageId, message.metadata, 'fetch_failed');
+        await this.markMediaError(
+          tenantId,
+          conversation.id,
+          messageId,
+          message.metadata,
+          'fetch_failed',
+        );
         return;
       }
 
       const maxBytes = this.config.get('MEDIA_MAX_BYTES');
       if ((content.size ?? 0) > maxBytes) {
-        await this.markMediaError(messageId, message.metadata, 'too_large');
+        await this.markMediaError(
+          tenantId,
+          conversation.id,
+          messageId,
+          message.metadata,
+          'too_large',
+        );
         return;
       }
 
       const buffer = decodeBase64(content.base64);
       if (!buffer || buffer.length === 0) {
-        await this.markMediaError(messageId, message.metadata, 'empty');
+        await this.markMediaError(tenantId, conversation.id, messageId, message.metadata, 'empty');
         return;
       }
       if (buffer.length > maxBytes) {
-        await this.markMediaError(messageId, message.metadata, 'too_large');
+        await this.markMediaError(
+          tenantId,
+          conversation.id,
+          messageId,
+          message.metadata,
+          'too_large',
+        );
         return;
       }
 
@@ -226,7 +250,7 @@ export class ConversationProcessingService implements OnModuleInit {
         });
       }
 
-      this.realtime.emitToConversation(tenantId, conversation.id, 'message.created', {
+      this.realtime.emitToTenant(tenantId, 'conversation.updated', {
         conversationId: conversation.id,
         messageId,
       });
@@ -397,6 +421,8 @@ export class ConversationProcessingService implements OnModuleInit {
   }
 
   private async markMediaError(
+    tenantId: string,
+    conversationId: string,
     messageId: string,
     currentMetadata: Prisma.JsonValue,
     errorCode: string,
@@ -405,6 +431,10 @@ export class ConversationProcessingService implements OnModuleInit {
     await this.prisma.message.update({
       where: { id: messageId },
       data: { metadata: { ...metadata, mediaError: errorCode } as Prisma.InputJsonValue },
+    });
+    this.realtime.emitToTenant(tenantId, 'conversation.updated', {
+      conversationId,
+      messageId,
     });
   }
 

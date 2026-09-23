@@ -6,6 +6,7 @@ import { Dialog, DialogContent, DialogTrigger } from '@/components/ui/dialog';
 import { apiRequestBlob } from '@/lib/api-client';
 import type { ConversationMessage } from '@/types/attendance';
 import { attachmentPath } from './services/attendance-service';
+import { mediaErrorLabel } from './media-message-utils';
 import { useAttachmentBlob } from './queries';
 
 function useObjectUrl(blob: Blob | undefined): string | null {
@@ -22,20 +23,6 @@ function useObjectUrl(blob: Blob | undefined): string | null {
   return url;
 }
 
-function mediaErrorLabel(metadata: Record<string, unknown> | null): string | null {
-  if (!metadata) {
-    return null;
-  }
-  const error = metadata.mediaError;
-  if (error === 'too_large') {
-    return 'Arquivo maior que o permitido';
-  }
-  if (typeof error === 'string') {
-    return 'Mídia indisponível';
-  }
-  return null;
-}
-
 interface MediaProps {
   conversationId: string;
   message: ConversationMessage;
@@ -50,7 +37,7 @@ export function MessageMedia({ conversationId, message }: MediaProps) {
   }
 
   if (!attachment) {
-    return <p className="text-xs italic opacity-75">Recebendo mídia…</p>;
+    return null;
   }
 
   switch (message.type) {

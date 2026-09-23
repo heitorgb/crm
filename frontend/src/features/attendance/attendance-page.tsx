@@ -28,7 +28,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { ApiError } from '@/lib/api-client';
 import { cn } from '@/lib/utils';
-import type { ConversationMessage, ConversationStatus } from '@/types/attendance';
+import type { ConversationStatus } from '@/types/attendance';
 import { useWhatsAppInstances } from '@/features/whatsapp/queries';
 import {
   useCloseConversation,
@@ -39,16 +39,9 @@ import {
   useSendConversationMessage,
 } from './queries';
 import { MessageMedia } from './message-media';
+import { isMediaMessage, isMediaPending } from './media-message-utils';
 import { useAudioRecorder } from './use-audio-recorder';
 import { useAttendanceRealtime } from './use-realtime';
-
-const MEDIA_TYPES: ConversationMessage['type'][] = [
-  'IMAGE',
-  'AUDIO',
-  'VIDEO',
-  'DOCUMENT',
-  'STICKER',
-];
 
 const statusTone: Record<ConversationStatus, StatusTone> = {
   OPEN: 'success',
@@ -121,11 +114,13 @@ export function AttendancePage() {
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const mediaInputRef = useRef<HTMLInputElement>(null);
-  const messageCount = messagesQuery.data?.data.length ?? 0;
+  const visibleMessages = (messagesQuery.data?.data ?? []).filter(
+    (message) => !isMediaPending(message),
+  );
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messageCount, activeId]);
+  }, [visibleMessages.length, activeId]);
 
   const conversation = conversationQuery.data;
   const canSend = Boolean(conversation);
@@ -340,9 +335,9 @@ export function AttendancePage() {
                     ))}
                   </div>
                 ) : (
-                  messagesQuery.data?.data.map((message) => {
+                  visibleMessages.map((message) => {
                     const isSticker = message.type === 'STICKER';
-                    const isMedia = MEDIA_TYPES.includes(message.type);
+                    const isMedia = isMediaMessage(message);
                     return (
                       <div
                         key={message.id}

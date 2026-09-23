@@ -50,13 +50,13 @@ export function UserMenu() {
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
         <DropdownMenuItem asChild>
-          <Link to="/settings/qualification-bot">
+          <Link to="/configuracoes">
             <User />
             Meu perfil
           </Link>
         </DropdownMenuItem>
         <DropdownMenuItem asChild>
-          <Link to="/settings/qualification-bot">
+          <Link to="/configuracoes">
             <Settings />
             Configurações
           </Link>

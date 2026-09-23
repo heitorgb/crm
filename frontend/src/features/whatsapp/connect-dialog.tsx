@@ -47,7 +47,7 @@ export function ConnectDialog({
             <CheckCircle2 className="size-10 text-success" aria-hidden />
             <p className="text-sm font-medium text-foreground">WhatsApp conectado com sucesso.</p>
             <p className="text-xs text-muted-foreground">
-              O bot já pode receber e responder mensagens nesta instância.
+              Esta instância já pode receber e enviar mensagens.
             </p>
           </div>
         ) : (

@@ -5,7 +5,6 @@ import { TenantSelector, type TenantOption } from '@/components/common/tenant-se
 import { Button } from '@/components/ui/button';
 import { useSwitchTenant } from '@/features/auth/queries';
 import { useAuthStore } from '@/stores/auth-store';
-import { NotificationsMenu } from './notifications-menu';
 import { ThemeToggle } from './theme-toggle';
 import { UserMenu } from './user-menu';
 
@@ -40,7 +39,7 @@ export function Header({ onOpenMobileSidebar }: HeaderProps) {
       <SearchInput
         value={search}
         onChange={setSearch}
-        placeholder="Buscar leads, clientes, conversas…"
+        placeholder="Buscar contatos e conversas…"
         className="hidden w-full max-w-xs md:block"
       />
 
@@ -56,7 +55,6 @@ export function Header({ onOpenMobileSidebar }: HeaderProps) {
           </div>
         ) : null}
         <ThemeToggle />
-        <NotificationsMenu />
         <UserMenu />
       </div>
     </header>

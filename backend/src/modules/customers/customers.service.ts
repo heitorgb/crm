@@ -3,7 +3,6 @@ import { CustomerStatus, Prisma } from '@prisma/client';
 import { buildPage, skipOf, type PageResult } from '../../common/http/pagination.js';
 import { TenantContextService } from '../../common/tenant-context/tenant-context.service.js';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service.js';
-import { ActivitiesService } from '../activities/activities.service.js';
 import {
   CustomerDocumentConflictError,
   CustomerNotFoundError,
@@ -60,7 +59,6 @@ export class CustomersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly tenantContext: TenantContextService,
-    private readonly activities: ActivitiesService,
   ) {}
 
   async list(query: ListCustomersQueryDto): Promise<PageResult<CustomerView>> {
@@ -154,7 +152,6 @@ export class CustomersService {
         return customer.id;
       });
 
-      await this.activities.record({ entity: 'customer', entityId: created, action: 'created' });
       return await this.findOne(created);
     } catch (error) {
       throw mapDocumentConflict(error);
@@ -191,7 +188,6 @@ export class CustomersService {
       throw mapDocumentConflict(error);
     }
 
-    await this.activities.record({ entity: 'customer', entityId: id, action: 'updated' });
     return this.findOne(id);
   }
 

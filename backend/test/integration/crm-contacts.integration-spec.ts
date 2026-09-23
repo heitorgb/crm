@@ -117,10 +117,7 @@ describe('Contacts (integration)', () => {
   });
 
   describe('validation', () => {
-    it('requires a valid customer and name', async () => {
-      const missingCustomer = await createContact(ownerA, { name: 'Sem cliente' });
-      expect(missingCustomer.statusCode).toBe(400);
-
+    it('requires a name and validates the email', async () => {
       const missingName = await createContact(ownerA, { customerId: customerA });
       expect(missingName.statusCode).toBe(400);
 
@@ -132,6 +129,17 @@ describe('Contacts (integration)', () => {
       expect(invalidEmail.statusCode).toBe(400);
     });
 
+    it('allows a contact without a customer', async () => {
+      const response = await createContact(ownerA, {
+        name: 'Sem empresa',
+        phone: '+55 11 98888-7777',
+      });
+      expect(response.statusCode).toBe(201);
+      expect(response.json().customerId).toBeNull();
+      expect(response.json().customerName).toBeNull();
+      expect(response.json().phone).toBe('5511988887777');
+    });
+
     it('rejects a nonexistent customer', async () => {
       const response = await createContact(ownerA, {
         customerId: '00000000-0000-4000-8000-000000000000',
@@ -139,6 +147,26 @@ describe('Contacts (integration)', () => {
       });
       expect(response.statusCode).toBe(404);
       expect(response.json().code).toBe('CONTACT_CUSTOMER_NOT_FOUND');
+    });
+  });
+
+  describe('phone identity', () => {
+    it('normalizes the phone and rejects duplicates inside the tenant', async () => {
+      const first = await createContact(ownerA, { name: 'Ana', phone: '+55 (11) 91111-2222' });
+      expect(first.statusCode).toBe(201);
+      expect(first.json().phone).toBe('5511911112222');
+
+      const duplicate = await createContact(ownerA, { name: 'Outra Ana', phone: '5511911112222' });
+      expect(duplicate.statusCode).toBe(409);
+      expect(duplicate.json().code).toBe('CONTACT_PHONE_CONFLICT');
+    });
+
+    it('allows the same phone in different tenants', async () => {
+      const createdA = await createContact(ownerA, { name: 'A', phone: '5511911113333' });
+      expect(createdA.statusCode).toBe(201);
+
+      const createdB = await createContact(ownerB, { name: 'B', phone: '5511911113333' });
+      expect(createdB.statusCode).toBe(201);
     });
   });
 

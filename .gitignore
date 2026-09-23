@@ -31,3 +31,6 @@ Thumbs.db
 
 # TypeScript
 *.tsbuildinfo
+
+# Apresentações (material comercial)
+apresentacao/

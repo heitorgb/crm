@@ -14,10 +14,23 @@ docker compose up -d
 docker compose ps
 ```
 
-Sobe apenas o necessário para a fundação:
+Sobe o necessário para o CRM:
 
 - PostgreSQL 16 em `localhost:5432`
 - Redis 7 em `localhost:6379`
+
+Para o WhatsApp, a **Evolution API** roda em um compose separado (opcional):
+
+```bash
+# junto com a infra do CRM (mesma rede)
+docker compose -f docker-compose.yml -f docker-compose.evolution.yml up -d
+
+# ou isolada
+docker compose -f docker-compose.evolution.yml up -d
+```
+
+Sobe `evolution` (porta `8080`), `evolution-postgres` e `evolution-redis`, isolados dos serviços do
+CRM. Ver a seção [Evolution API (WhatsApp)](#evolution-api-whatsapp).
 
 Comandos úteis (na raiz):
 
@@ -48,8 +61,7 @@ npm run start:dev           # watch mode: http://localhost:3000/api/health
 
 ### Usuário de desenvolvimento (seed)
 
-`npm run prisma:seed` cria, de forma **idempotente**, um tenant, um usuário `OWNER`, um perfil de
-qualificação padrão e um pipeline com etapas. Credenciais:
+`npm run prisma:seed` cria, de forma **idempotente**, um tenant e um usuário `OWNER`. Credenciais:
 
 ```text
 Tenant: OrderUp Demo
@@ -80,15 +92,18 @@ ausente/ inválido. Nunca commitar `.env`.
 | `AUTH_COOKIE_SAMESITE` | não                    | `lax`                    |
 | `AUTH_COOKIE_DOMAIN` | não                      | —                        |
 | `LOG_LEVEL`     | não                           | `info`                   |
-| `AI_PROVIDER`   | não                           | —                        |
-| `AI_MODEL`      | quando `AI_PROVIDER`          | —                        |
-| `AI_API_KEY`    | quando `AI_PROVIDER`          | —                        |
-| `AI_BASE_URL`   | não                           | —                        |
-| `AI_TIMEOUT_MS` | não                           | `30000`                  |
-| `AI_MAX_RETRIES`| não                           | `2`                      |
+| `CREDENTIALS_ENCRYPTION_KEY` | sim com WhatsApp   | —                        |
+| `QUEUE_DRIVER`  | não                           | `bullmq`                 |
+| `RATE_LIMIT_ENABLED` | não                      | `true`                   |
+| `EVOLUTION_API_BASE_URL` | sim com WhatsApp      | —                        |
+| `EVOLUTION_API_KEY` | quando há `EVOLUTION_API_BASE_URL` | —              |
+| `EVOLUTION_WEBHOOK_SECRET` | quando há `EVOLUTION_API_BASE_URL` | —      |
+| `PUBLIC_API_URL`| sim em produção com WhatsApp  | —                        |
+| `AI_*`          | não (legado)                  | —                        |
 
 `CORS_ORIGINS` é uma lista separada por vírgulas. `*` não é aceito em produção. As variáveis de IA
-são apenas configuração nesta fase (ver [`ai.md`](./ai.md)); nenhuma chamada é feita.
+são legado do módulo de qualificação removido: continuam sendo validadas, mas podem ficar vazias e
+nenhum módulo as consome.
 
 ## Scripts
 
@@ -167,6 +182,55 @@ backend/
 - Sem comentários no código, exceto para decisões não óbvias.
 - Controllers finos; regra de negócio em services.
 - Não implementar fases futuras antecipadamente.
+
+## Evolution API (WhatsApp)
+
+A Evolution API é um **serviço externo** que intermediia a conexão com o WhatsApp. Não faz parte do
+`docker-compose.yml` principal — use `docker-compose.evolution.yml`.
+
+### Subir
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.evolution.yml up -d
+docker compose logs -f evolution
+```
+
+Variáveis aceitas pelo compose: `EVOLUTION_IMAGE` (default
+`evoapicloud/evolution-api:v2.3.7`), `EVOLUTION_PORT` (default `8080`), `EVOLUTION_API_KEY`,
+`EVOLUTION_POSTGRES_*`.
+
+### Configurar o backend (`backend/.env`)
+
+```env
+EVOLUTION_API_BASE_URL=http://localhost:8080
+EVOLUTION_API_KEY=change-me-evolution-api-key
+EVOLUTION_WEBHOOK_SECRET=change-me-webhook-secret
+CREDENTIALS_ENCRYPTION_KEY=<segredo com 32+ caracteres>
+PUBLIC_API_URL=https://<url-publica-do-backend>
+```
+
+- `EVOLUTION_API_KEY` deve ser igual ao `AUTHENTICATION_API_KEY` da Evolution.
+- `PUBLIC_API_URL` precisa ser alcançável **pela Evolution**. O compose da Evolution já inclui
+  `host.docker.internal`; com o backend no host, use
+  `PUBLIC_API_URL=http://host.docker.internal:3000`. Alternativas: túnel (`ngrok http 3000`) ou,
+  se backend e Evolution estiverem no mesmo Docker network, `http://<host-do-backend>:3000`. Sem uma
+  URL alcançável, o webhook falha com `PUBLIC_API_URL_MISSING`.
+- Se backend e Evolution estiverem no mesmo Docker network, use
+  `EVOLUTION_API_BASE_URL=http://evolution:8080`.
+- Credenciais por instância (`apiKey`/`webhookSecret`) são opcionais e ficam cifradas em repouso
+  (AES-256-GCM); a API nunca as devolve.
+
+### Usar
+
+1. **Atendimento → WhatsApp → Nova instância** (nome, `instanceName` único, telefone opcional).
+2. **Conectar** → a API cria a instância na Evolution (`POST /instance/create`) ou reaproveita
+   (`GET /instance/connect`) e retorna QR/pairing.
+3. O webhook (`MESSAGES_UPSERT`) é configurado automaticamente.
+4. Mensagens recebidas criam/reutilizam o **Contact** por telefone e a **Conversation** da instância.
+
+Endpoints da Evolution usados por `EvolutionClient` (`src/modules/whatsapp/evolution/`):
+`/instance/create`, `/instance/connect/{name}`, `/instance/logout/{name}`,
+`/instance/connectionState/{name}`, `/message/sendText/{name}`, `/webhook/set/{name}`.
 
 ## Frontend
 

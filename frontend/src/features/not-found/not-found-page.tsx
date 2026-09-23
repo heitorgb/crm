@@ -11,10 +11,10 @@ export function NotFoundPage() {
       <EmptyState
         icon={Compass}
         title="Página não encontrada"
-        description="Verifique o endereço ou volte para o dashboard."
+        description="Verifique o endereço ou volte para as conversas."
         action={
           <Button asChild>
-            <Link to="/dashboard">Ir para o dashboard</Link>
+            <Link to="/atendimento/conversas">Ir para as conversas</Link>
           </Button>
         }
       />

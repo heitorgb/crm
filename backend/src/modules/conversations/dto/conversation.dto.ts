@@ -17,7 +17,7 @@ export class ListConversationsQueryDto extends PaginationQueryDto {
 
   @IsOptional()
   @IsUUID()
-  leadId?: string;
+  contactId?: string;
 
   @IsOptional()
   @IsUUID()
@@ -32,10 +32,6 @@ export class CreateConversationDto {
   @IsString()
   @MaxLength(120)
   externalContactId?: string;
-
-  @IsOptional()
-  @IsUUID()
-  leadId?: string;
 
   @IsOptional()
   @IsUUID()
@@ -60,10 +56,6 @@ export class UpdateConversationDto {
   @IsString()
   @MaxLength(200)
   subject?: string | null;
-
-  @IsOptional()
-  @IsUUID()
-  leadId?: string | null;
 
   @IsOptional()
   @IsUUID()

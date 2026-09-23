@@ -27,7 +27,7 @@ export function useLogin() {
         setMemberships([]);
       }
 
-      navigate('/dashboard', { replace: true });
+      navigate('/atendimento/conversas', { replace: true });
     },
   });
 }

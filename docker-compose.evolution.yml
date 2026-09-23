@@ -1,0 +1,83 @@
+# Evolution API — serviço externo de WhatsApp (NÃO faz parte do compose principal).
+#
+# Suba junto com a infra do CRM:
+#   docker compose -f docker-compose.yml -f docker-compose.evolution.yml up -d
+#
+# Ou isolado:
+#   docker compose -f docker-compose.evolution.yml up -d
+#
+# A porta 8080 fica exposta no host. Aponte o backend para ela:
+#   EVOLUTION_API_BASE_URL=http://localhost:8080
+#   EVOLUTION_API_KEY=<mesmo AUTHENTICATION_API_KEY abaixo>
+#
+# Observação: os nomes das variáveis de ambiente podem variar entre versões da
+# Evolution API. Ajuste a tag da imagem e as chaves conforme a documentação oficial.
+
+services:
+  evolution-postgres:
+    image: postgres:16-alpine
+    container_name: orderup-evolution-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${EVOLUTION_POSTGRES_USER:-evolution}
+      POSTGRES_PASSWORD: ${EVOLUTION_POSTGRES_PASSWORD:-evolution}
+      POSTGRES_DB: ${EVOLUTION_POSTGRES_DB:-evolution}
+    volumes:
+      - evolution_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${EVOLUTION_POSTGRES_USER:-evolution} -d ${EVOLUTION_POSTGRES_DB:-evolution}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  evolution-redis:
+    image: redis:7-alpine
+    container_name: orderup-evolution-redis
+    restart: unless-stopped
+    command: ['redis-server', '--appendonly', 'yes']
+    volumes:
+      - evolution_redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  evolution:
+    image: ${EVOLUTION_IMAGE:-evoapicloud/evolution-api:v2.3.7}
+    container_name: orderup-evolution
+    restart: unless-stopped
+    ports:
+      - '${EVOLUTION_PORT:-8080}:8080'
+    environment:
+      AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY:-change-me-evolution-api-key}
+      SERVER_URL: ${EVOLUTION_SERVER_URL:-http://localhost:8080}
+      DATABASE_ENABLED: 'true'
+      DATABASE_PROVIDER: postgresql
+      DATABASE_CONNECTION_URI: postgresql://${EVOLUTION_POSTGRES_USER:-evolution}:${EVOLUTION_POSTGRES_PASSWORD:-evolution}@evolution-postgres:5432/${EVOLUTION_POSTGRES_DB:-evolution}
+      DATABASE_SAVE_DATA_INSTANCE: 'true'
+      DATABASE_SAVE_DATA_NEW_MESSAGE: 'true'
+      DATABASE_SAVE_MESSAGE_UPDATE: 'true'
+      DATABASE_SAVE_DATA_CONTACTS: 'true'
+      DATABASE_SAVE_DATA_CHATS: 'true'
+      CACHE_REDIS_ENABLED: 'true'
+      CACHE_REDIS_URI: redis://evolution-redis:6379/1
+      CACHE_REDIS_PREFIX_KEY: evolution
+      CACHE_REDIS_SAVE_INSTANCES: 'true'
+      CACHE_LOCAL_ENABLED: 'false'
+      CONFIG_SESSION_PHONE_CLIENT: OrderUp CRM
+      CONFIG_SESSION_PHONE_NAME: Chrome
+      DEL_INSTANCE: 'false'
+      LOG_LEVEL: ERROR
+    # Permite a Evolution alcançar o backend rodando no host (PUBLIC_API_URL=http://host.docker.internal:3000).
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    depends_on:
+      evolution-postgres:
+        condition: service_healthy
+      evolution-redis:
+        condition: service_healthy
+
+volumes:
+  evolution_postgres_data:
+  evolution_redis_data:

@@ -1,13 +1,9 @@
 import { createHash } from 'node:crypto';
-import { Inject, Injectable, Logger } from '@nestjs/common';
-import { MessageType, Prisma } from '@prisma/client';
+import { Injectable, Logger } from '@nestjs/common';
+import { ConversationStatus, MessageType, Prisma } from '@prisma/client';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service.js';
-import {
-  JOB_NAMES,
-  JOB_QUEUE,
-  type JobQueue,
-} from '../../infrastructure/queue/job-queue.types.js';
-import { ConversationStatus } from '@prisma/client';
+import { RealtimeService } from '../../infrastructure/realtime/realtime.service.js';
+import { ContactsService } from '../contacts/contacts.service.js';
 import { WhatsAppInstancesService } from '../whatsapp/whatsapp-instances.service.js';
 
 export interface WebhookIngestResult {
@@ -24,7 +20,8 @@ export class WebhookService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly instances: WhatsAppInstancesService,
-    @Inject(JOB_QUEUE) private readonly queue: JobQueue,
+    private readonly contacts: ContactsService,
+    private readonly realtime: RealtimeService,
   ) {}
 
   async ingestEvolution(payload: unknown): Promise<WebhookIngestResult> {
@@ -57,7 +54,7 @@ export class WebhookService {
     }
 
     if (eventType !== 'messages.upsert') {
-      return { accepted: true, ignored: 'unsupported_event', };
+      return { accepted: true, ignored: 'unsupported_event' };
     }
 
     const data = isRecord(payload.data) ? payload.data : null;
@@ -69,10 +66,22 @@ export class WebhookService {
       return { accepted: true, ignored: 'outbound_or_missing_contact' };
     }
 
+    const phone = extractPhone(remoteJid);
+    const pushName = readString(data?.pushName);
+
+    const contact = phone
+      ? await this.contacts.findOrCreateByPhone({
+          tenantId: instance.tenantId,
+          phone,
+          name: pushName,
+        })
+      : null;
+
     const conversation = await this.findOrCreateConversation(
       instance.tenantId,
       instance.id,
       remoteJid,
+      contact?.id ?? null,
     );
 
     const message = data?.message;
@@ -88,7 +97,7 @@ export class WebhookService {
       externalMessageId,
       metadata: {
         remoteJid,
-        pushName: readString(data?.pushName),
+        pushName,
         instanceName,
       },
     });
@@ -97,10 +106,13 @@ export class WebhookService {
       return { accepted: true, ignored: 'duplicate_message' };
     }
 
-    await this.queue.enqueue(JOB_NAMES.WHATSAPP_MESSAGE, {
-      tenantId: instance.tenantId,
+    this.realtime.emitToConversation(instance.tenantId, conversation.id, 'message.created', {
       conversationId: conversation.id,
       messageId: persisted.id,
+    });
+    this.realtime.emitToTenant(instance.tenantId, 'conversation.updated', {
+      conversationId: conversation.id,
+      status: conversation.status,
     });
 
     return {
@@ -139,17 +151,24 @@ export class WebhookService {
     tenantId: string,
     whatsappInstanceId: string,
     externalContactId: string,
+    contactId: string | null,
   ) {
     const existing = await this.prisma.conversation.findFirst({
       where: { tenantId, whatsappInstanceId, externalContactId },
-      select: { id: true, status: true },
+      select: { id: true, status: true, contactId: true },
     });
 
     if (existing) {
-      if (existing.status === ConversationStatus.CLOSED) {
+      if (existing.status === ConversationStatus.CLOSED || !existing.contactId) {
         return this.prisma.conversation.update({
           where: { id: existing.id },
-          data: { status: ConversationStatus.BOT_QUALIFYING, closedAt: null },
+          data: {
+            ...(existing.status === ConversationStatus.CLOSED
+              ? { status: ConversationStatus.OPEN, closedAt: null }
+              : {}),
+            ...(existing.contactId ? {} : { contactId }),
+          },
+          select: { id: true, status: true },
         });
       }
       return existing;
@@ -160,7 +179,8 @@ export class WebhookService {
         tenantId,
         whatsappInstanceId,
         externalContactId,
-        status: ConversationStatus.BOT_QUALIFYING,
+        contactId,
+        status: ConversationStatus.OPEN,
       },
       select: { id: true, status: true },
     });
@@ -204,7 +224,11 @@ export class WebhookService {
   }
 }
 
-function computeEventId(payload: Record<string, unknown>, eventType: string, instanceName: string): string {
+function computeEventId(
+  payload: Record<string, unknown>,
+  eventType: string,
+  instanceName: string,
+): string {
   const data = isRecord(payload.data) ? payload.data : null;
   const key = data && isRecord(data.key) ? data.key : null;
   const messageId = readString(key?.id);
@@ -223,6 +247,12 @@ function readInstanceName(payload: Record<string, unknown>): string | null {
   }
   const data = isRecord(payload.data) ? payload.data : null;
   return data ? readString(data.instance) : null;
+}
+
+function extractPhone(remoteJid: string): string | null {
+  const [number] = remoteJid.split('@');
+  const digits = number.replace(/\D/g, '');
+  return digits.length > 0 ? digits : null;
 }
 
 function extractText(message: unknown): string | null {

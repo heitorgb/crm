@@ -21,19 +21,9 @@ import { MembershipsModule } from './modules/memberships/memberships.module.js';
 import { CustomersModule } from './modules/customers/customers.module.js';
 import { ContactsModule } from './modules/contacts/contacts.module.js';
 import { TagsModule } from './modules/tags/tags.module.js';
-import { QualificationProfilesModule } from './modules/qualification-profiles/qualification-profiles.module.js';
-import { ActivitiesModule } from './modules/activities/activities.module.js';
-import { LeadsModule } from './modules/leads/leads.module.js';
-import { PipelinesModule } from './modules/pipelines/pipelines.module.js';
-import { DealsModule } from './modules/deals/deals.module.js';
-import { TasksModule } from './modules/tasks/tasks.module.js';
-import { QualificationModule } from './modules/qualification/qualification.module.js';
 import { WhatsAppModule } from './modules/whatsapp/whatsapp.module.js';
 import { ConversationsModule } from './modules/conversations/conversations.module.js';
-import { TicketsModule } from './modules/tickets/tickets.module.js';
 import { WebhooksModule } from './modules/webhooks/webhooks.module.js';
-import { DigestModule } from './modules/digest/digest.module.js';
-import { ComplianceModule } from './modules/compliance/compliance.module.js';
 
 @Module({
   imports: [
@@ -64,19 +54,9 @@ import { ComplianceModule } from './modules/compliance/compliance.module.js';
     CustomersModule,
     ContactsModule,
     TagsModule,
-    QualificationProfilesModule,
-    ActivitiesModule,
-    LeadsModule,
-    PipelinesModule,
-    DealsModule,
-    TasksModule,
-    QualificationModule,
     WhatsAppModule,
     ConversationsModule,
-    TicketsModule,
     WebhooksModule,
-    DigestModule,
-    ComplianceModule,
   ],
   providers: [{ provide: APP_FILTER, useClass: AllExceptionsFilter }],
 })

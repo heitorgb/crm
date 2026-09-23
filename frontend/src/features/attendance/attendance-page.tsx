@@ -1,12 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
   MessageSquare,
   PanelRightClose,
   PanelRightOpen,
   Send,
   Smartphone,
-  UserCheck,
   XCircle,
 } from 'lucide-react';
 import { EmptyState } from '@/components/common/empty-state';
@@ -26,31 +25,23 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 import type { ConversationStatus } from '@/types/attendance';
+import { useWhatsAppInstances } from '@/features/whatsapp/queries';
 import {
   useCloseConversation,
   useConversation,
   useConversationMessages,
   useConversations,
   useSendConversationMessage,
-  useTakeoverConversation,
 } from './queries';
 import { useAttendanceRealtime } from './use-realtime';
 
 const statusTone: Record<ConversationStatus, StatusTone> = {
-  BOT_QUALIFYING: 'info',
-  QUALIFIED_WAITING_DIGEST: 'success',
-  DISQUALIFIED: 'danger',
-  NEEDS_HUMAN: 'warning',
-  HUMAN: 'accent',
+  OPEN: 'success',
   CLOSED: 'secondary',
 };
 
 const statusLabel: Record<ConversationStatus, string> = {
-  BOT_QUALIFYING: 'Bot qualificando',
-  QUALIFIED_WAITING_DIGEST: 'Qualificado',
-  DISQUALIFIED: 'Desqualificado',
-  NEEDS_HUMAN: 'Requer humano',
-  HUMAN: 'Atendimento humano',
+  OPEN: 'Aberta',
   CLOSED: 'Encerrada',
 };
 
@@ -58,26 +49,48 @@ function formatTime(value: string): string {
   return new Intl.DateTimeFormat('pt-BR', { timeStyle: 'short' }).format(new Date(value));
 }
 
+function contactLabel(
+  conversation:
+    | {
+        contactName: string | null;
+        contactPhone: string | null;
+        externalContactId: string | null;
+      }
+    | undefined,
+): string {
+  if (!conversation) {
+    return 'Contato';
+  }
+  return (
+    conversation.contactName ?? conversation.contactPhone ?? conversation.externalContactId ?? 'Contato'
+  );
+}
+
 export function AttendancePage() {
   useAttendanceRealtime();
 
+  const [searchParams] = useSearchParams();
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState<ConversationStatus | 'ALL'>('ALL');
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [instanceId, setInstanceId] = useState<string>('ALL');
+  const [selectedId, setSelectedId] = useState<string | null>(
+    searchParams.get('conversation'),
+  );
   const [panelOpen, setPanelOpen] = useState(true);
   const [draft, setDraft] = useState('');
 
+  const instancesQuery = useWhatsAppInstances({ perPage: 100 });
   const conversationsQuery = useConversations({
     perPage: 50,
     search: search || undefined,
     status: status === 'ALL' ? undefined : status,
+    whatsappInstanceId: instanceId === 'ALL' ? undefined : instanceId,
   });
   const conversations = conversationsQuery.data?.data ?? [];
   const activeId = selectedId ?? conversations[0]?.id ?? null;
 
   const conversationQuery = useConversation(activeId ?? undefined);
   const messagesQuery = useConversationMessages(activeId ?? undefined);
-  const takeover = useTakeoverConversation();
   const closeConversation = useCloseConversation();
   const sendMessage = useSendConversationMessage();
 
@@ -89,7 +102,7 @@ export function AttendancePage() {
   }, [messageCount, activeId]);
 
   const conversation = conversationQuery.data;
-  const canSend = conversation?.status === 'HUMAN';
+  const canSend = Boolean(conversation);
 
   const handleSend = async (): Promise<void> => {
     if (!activeId || draft.trim().length === 0 || !canSend) {
@@ -103,13 +116,32 @@ export function AttendancePage() {
     <div className="space-y-5">
       <PageHeader
         title="Conversas"
-        description="Atendimento de WhatsApp com o bot de qualificação."
+        description="Chat centralizado de todos os WhatsApps conectados."
       />
 
       <div className="grid gap-4 lg:grid-cols-[320px_1fr] xl:grid-cols-[320px_1fr_300px]">
         <Card className="flex h-[70vh] flex-col overflow-hidden">
           <div className="space-y-3 border-b border-border p-3">
             <SearchInput value={search} onChange={setSearch} placeholder="Buscar conversa" />
+            <Select
+              value={instanceId}
+              onValueChange={(value) => {
+                setInstanceId(value);
+                setSelectedId(null);
+              }}
+            >
+              <SelectTrigger aria-label="Filtrar por WhatsApp">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ALL">Todos os WhatsApps</SelectItem>
+                {instancesQuery.data?.data.map((instance) => (
+                  <SelectItem key={instance.id} value={instance.id}>
+                    {instance.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <Select
               value={status}
               onValueChange={(value) => setStatus(value as ConversationStatus | 'ALL')}
@@ -119,11 +151,8 @@ export function AttendancePage() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="ALL">Todas</SelectItem>
-                {Object.entries(statusLabel).map(([value, label]) => (
-                  <SelectItem key={value} value={value}>
-                    {label}
-                  </SelectItem>
-                ))}
+                <SelectItem value="OPEN">Abertas</SelectItem>
+                <SelectItem value="CLOSED">Encerradas</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -164,7 +193,7 @@ export function AttendancePage() {
                 >
                   <div className="flex items-center justify-between gap-2">
                     <span className="truncate text-sm font-medium text-foreground">
-                      {item.leadName ?? item.leadPhone ?? item.externalContactId ?? 'Contato'}
+                      {contactLabel(item)}
                     </span>
                     <span className="shrink-0 text-[10px] text-muted-foreground">
                       {item.lastMessageAt ? formatTime(item.lastMessageAt) : ''}
@@ -173,8 +202,13 @@ export function AttendancePage() {
                   <p className="truncate text-xs text-muted-foreground">
                     {item.lastMessage?.content ?? 'Sem mensagens'}
                   </p>
-                  <div className="pt-1">
-                    <StatusBadge tone={statusTone[item.status]}>{statusLabel[item.status]}</StatusBadge>
+                  <div className="flex items-center gap-1.5 pt-1">
+                    <StatusBadge tone={statusTone[item.status]}>
+                      {statusLabel[item.status]}
+                    </StatusBadge>
+                    <span className="truncate rounded-sm bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                      {item.instanceName}
+                    </span>
                   </div>
                 </button>
               ))
@@ -196,10 +230,11 @@ export function AttendancePage() {
               <div className="flex items-center justify-between gap-2 border-b border-border p-3">
                 <div className="min-w-0">
                   <p className="truncate text-sm font-semibold text-foreground">
-                    {conversation?.leadName ?? conversation?.leadPhone ?? 'Contato'}
+                    {contactLabel(conversation)}
                   </p>
                   <p className="truncate text-xs text-muted-foreground">
-                    {conversation?.instanceName ?? ''} · {conversation?.externalContactId ?? ''}
+                    WhatsApp: {conversation?.instanceName ?? '—'} ·{' '}
+                    {conversation?.contactPhone ?? conversation?.externalContactId ?? ''}
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
@@ -207,17 +242,6 @@ export function AttendancePage() {
                     <StatusBadge tone={statusTone[conversation.status]}>
                       {statusLabel[conversation.status]}
                     </StatusBadge>
-                  ) : null}
-                  {conversation && conversation.status !== 'HUMAN' && conversation.status !== 'CLOSED' ? (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => void takeover.mutateAsync(conversation.id)}
-                      disabled={takeover.isPending}
-                    >
-                      <UserCheck />
-                      Assumir
-                    </Button>
                   ) : null}
                   {conversation && conversation.status !== 'CLOSED' ? (
                     <Button
@@ -236,7 +260,7 @@ export function AttendancePage() {
                     variant="ghost"
                     className="hidden xl:inline-flex"
                     onClick={() => setPanelOpen((value) => !value)}
-                    aria-label="Alternar painel do cliente"
+                    aria-label="Alternar painel do contato"
                   >
                     {panelOpen ? <PanelRightClose /> : <PanelRightOpen />}
                   </Button>
@@ -289,30 +313,23 @@ export function AttendancePage() {
               </div>
 
               <div className="border-t border-border p-3">
-                {canSend ? (
-                  <div className="flex items-end gap-2">
-                    <Textarea
-                      rows={2}
-                      value={draft}
-                      onChange={(event) => setDraft(event.target.value)}
-                      placeholder="Escreva uma mensagem…"
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter' && !event.shiftKey) {
-                          event.preventDefault();
-                          void handleSend();
-                        }
-                      }}
-                    />
-                    <Button onClick={() => void handleSend()} disabled={sendMessage.isPending}>
-                      <Send />
-                    </Button>
-                  </div>
-                ) : (
-                  <p className="text-xs text-muted-foreground">
-                    Assuma a conversa para responder como humano. O bot responde enquanto estiver em
-                    qualificação.
-                  </p>
-                )}
+                <div className="flex items-end gap-2">
+                  <Textarea
+                    rows={2}
+                    value={draft}
+                    onChange={(event) => setDraft(event.target.value)}
+                    placeholder="Escreva uma mensagem…"
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' && !event.shiftKey) {
+                        event.preventDefault();
+                        void handleSend();
+                      }
+                    }}
+                  />
+                  <Button onClick={() => void handleSend()} disabled={sendMessage.isPending}>
+                    <Send />
+                  </Button>
+                </div>
               </div>
             </>
           )}
@@ -320,20 +337,22 @@ export function AttendancePage() {
 
         {panelOpen ? (
           <Card className="hidden h-[70vh] flex-col overflow-y-auto p-4 xl:flex">
-            <p className="text-sm font-semibold text-foreground">Cliente</p>
+            <p className="text-sm font-semibold text-foreground">Contato</p>
             {conversation ? (
               <div className="mt-3 space-y-3 text-sm">
                 <div>
-                  <p className="text-xs text-muted-foreground">Lead</p>
-                  <p>{conversation.leadName ?? '—'}</p>
+                  <p className="text-xs text-muted-foreground">Nome</p>
+                  <p>{conversation.contactName ?? '—'}</p>
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">Telefone</p>
-                  <p className="font-mono text-xs">{conversation.leadPhone ?? '—'}</p>
+                  <p className="font-mono text-xs">
+                    {conversation.contactPhone ?? conversation.externalContactId ?? '—'}
+                  </p>
                 </div>
                 <div>
-                  <p className="text-xs text-muted-foreground">Cliente vinculado</p>
-                  <p>{conversation.customerName ?? '—'}</p>
+                  <p className="text-xs text-muted-foreground">WhatsApp</p>
+                  <p className="text-xs">{conversation.instanceName}</p>
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">Status</p>
@@ -341,10 +360,11 @@ export function AttendancePage() {
                     {statusLabel[conversation.status]}
                   </StatusBadge>
                 </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Instância</p>
-                  <p className="text-xs">{conversation.instanceName}</p>
-                </div>
+                {conversation.contactId ? (
+                  <Button variant="outline" size="sm" asChild>
+                    <Link to={`/contatos/${conversation.contactId}`}>Ver contato</Link>
+                  </Button>
+                ) : null}
               </div>
             ) : (
               <p className="mt-3 text-xs text-muted-foreground">Nenhuma conversa selecionada.</p>

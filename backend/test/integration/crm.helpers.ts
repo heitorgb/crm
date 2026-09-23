@@ -8,29 +8,9 @@ import { createFastifyAdapter } from '../../src/common/http/create-fastify-adapt
 import { registerHttpPlugins } from '../../src/common/http/register-http-plugins.js';
 import { PrismaService } from '../../src/infrastructure/prisma/prisma.service.js';
 import { PasswordService } from '../../src/modules/auth/password.service.js';
-import { AI_PROVIDER } from '../../src/modules/qualification/ai/ai-provider.types.js';
-import type { AiEvaluationInput, AiProvider } from '../../src/modules/qualification/ai/ai-provider.types.js';
 import { EvolutionClient } from '../../src/modules/whatsapp/evolution/evolution.client.js';
 
 export const TEST_PASSWORD = 'correct-horse-battery';
-
-export class FakeAiProvider implements AiProvider {
-  readonly info = { provider: 'fake', model: 'fake-model' };
-  readonly calls: AiEvaluationInput[] = [];
-  private readonly responses: unknown[];
-
-  constructor(responses: unknown[] = []) {
-    this.responses = [...responses];
-  }
-
-  async evaluate(input: AiEvaluationInput): Promise<unknown> {
-    this.calls.push(input);
-    if (this.responses.length > 0) {
-      return this.responses.shift();
-    }
-    return { action: 'ASK', question: 'Pode me contar mais?', collectedData: {}, missingInformation: [] };
-  }
-}
 
 const passwords = new PasswordService();
 
@@ -41,7 +21,6 @@ export interface TestApp {
 }
 
 export interface TestAppOptions {
-  aiProvider?: AiProvider;
   evolution?: unknown;
 }
 
@@ -49,9 +28,6 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestA
   process.env.JWT_ACCESS_SECRET ??= 'integration-test-access-secret-0000';
 
   const builder = Test.createTestingModule({ imports: [AppModule] });
-  if (options.aiProvider) {
-    builder.overrideProvider(AI_PROVIDER).useValue(options.aiProvider);
-  }
   if (options.evolution) {
     builder.overrideProvider(EvolutionClient).useValue(options.evolution);
   }

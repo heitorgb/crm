@@ -1,23 +1,4 @@
-import {
-  BarChart3,
-  Bot,
-  Briefcase,
-  Building2,
-  CalendarClock,
-  Contact,
-  Headset,
-  KanbanSquare,
-  Layers,
-  LayoutDashboard,
-  ListChecks,
-  MessagesSquare,
-  Settings,
-  Smartphone,
-  Tag,
-  Ticket,
-  TrendingUp,
-  Users,
-} from 'lucide-react';
+import { Contact, Headset, MessagesSquare, Settings, Smartphone, Users } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
 export interface NavItem {
@@ -39,43 +20,18 @@ export function isNavGroup(entry: NavEntry): entry is NavGroup {
 }
 
 export const navigation: NavEntry[] = [
-  { title: 'Dashboard', to: '/dashboard', icon: LayoutDashboard },
-  {
-    title: 'Vendas',
-    icon: TrendingUp,
-    items: [
-      { title: 'Leads', to: '/vendas/leads', icon: Users },
-      { title: 'Funil', to: '/vendas/funil', icon: KanbanSquare },
-      { title: 'Negócios', to: '/vendas/negocios', icon: Briefcase },
-    ],
-  },
-  {
-    title: 'Clientes',
-    icon: Building2,
-    items: [
-      { title: 'Clientes', to: '/clientes/clientes', icon: Users },
-      { title: 'Contatos', to: '/clientes/contatos', icon: Contact },
-      { title: 'Tags', to: '/clientes/tags', icon: Tag },
-    ],
-  },
   {
     title: 'Atendimento',
     icon: Headset,
     items: [
       { title: 'Conversas', to: '/atendimento/conversas', icon: MessagesSquare },
-      { title: 'Tickets', to: '/atendimento/tickets', icon: Ticket },
       { title: 'WhatsApp', to: '/atendimento/whatsapp', icon: Smartphone },
     ],
   },
-  { title: 'Tarefas', to: '/tarefas', icon: ListChecks },
-  { title: 'Relatórios', to: '/relatorios', icon: BarChart3 },
   {
-    title: 'Configurações',
-    icon: Settings,
-    items: [
-      { title: 'Bot e Qualificação', to: '/settings/qualification-bot', icon: Bot },
-      { title: 'Resumo de Leads', to: '/settings/lead-digest', icon: CalendarClock },
-      { title: 'Pipelines', to: '/settings/pipelines', icon: Layers },
-    ],
+    title: 'Contatos',
+    icon: Users,
+    items: [{ title: 'Contatos', to: '/contatos', icon: Contact }],
   },
+  { title: 'Configurações', to: '/configuracoes', icon: Settings },
 ];

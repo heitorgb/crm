@@ -158,7 +158,7 @@ export function WhatsAppPage() {
             <EmptyState
               icon={Smartphone}
               title="Nenhuma instância WhatsApp"
-              description="Cadastre uma instância e conecte o número por QR code para o bot atender."
+              description="Cadastre uma instância e conecte o número por QR code para começar a atender."
               action={
                 <Button onClick={openCreate}>
                   <Plus />

@@ -9,7 +9,7 @@ export interface ListConversationsParams {
   search?: string;
   status?: ConversationStatus;
   whatsappInstanceId?: string;
-  leadId?: string;
+  contactId?: string;
   customerId?: string;
 }
 
@@ -22,7 +22,7 @@ export const attendanceService = {
         search: params.search,
         status: params.status,
         whatsappInstanceId: params.whatsappInstanceId,
-        leadId: params.leadId,
+        contactId: params.contactId,
         customerId: params.customerId,
       })}`,
     ),

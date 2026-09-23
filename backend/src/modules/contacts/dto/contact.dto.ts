@@ -15,8 +15,9 @@ export const CONTACT_SORT_FIELDS = ['createdAt', 'updatedAt', 'name'] as const;
 export type ContactSortField = (typeof CONTACT_SORT_FIELDS)[number];
 
 export class CreateContactDto {
+  @IsOptional()
   @IsUUID()
-  customerId!: string;
+  customerId?: string;
 
   @IsString()
   @MinLength(1)

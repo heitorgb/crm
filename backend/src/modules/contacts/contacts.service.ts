@@ -3,13 +3,17 @@ import { Prisma } from '@prisma/client';
 import { buildPage, skipOf, type PageResult } from '../../common/http/pagination.js';
 import { TenantContextService } from '../../common/tenant-context/tenant-context.service.js';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service.js';
-import { ContactCustomerNotFoundError, ContactNotFoundError } from './contacts.errors.js';
+import {
+  ContactCustomerNotFoundError,
+  ContactNotFoundError,
+  ContactPhoneConflictError,
+} from './contacts.errors.js';
 import type { CreateContactDto, ListContactsQueryDto, UpdateContactDto } from './dto/contact.dto.js';
 
 export interface ContactView {
   id: string;
-  customerId: string;
-  customerName: string;
+  customerId: string | null;
+  customerName: string | null;
   name: string;
   email: string | null;
   phone: string | null;
@@ -17,6 +21,12 @@ export interface ContactView {
   isPrimary: boolean;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface FindOrCreateContactInput {
+  tenantId: string;
+  phone: string;
+  name?: string | null;
 }
 
 const CONTACT_INCLUDE = {
@@ -78,29 +88,35 @@ export class ContactsService {
 
   async create(dto: CreateContactDto): Promise<ContactView> {
     const { tenantId } = this.tenantContext.requireContext();
-    await this.requireCustomer(tenantId, dto.customerId);
+    if (dto.customerId) {
+      await this.requireCustomer(tenantId, dto.customerId);
+    }
 
-    const contact = await this.prisma.contact.create({
-      data: {
-        tenantId,
-        customerId: dto.customerId,
-        name: dto.name.trim(),
-        email: normalizeEmail(dto.email),
-        phone: normalizeNullableString(dto.phone),
-        position: normalizeNullableString(dto.position),
-        isPrimary: dto.isPrimary ?? false,
-      },
-      include: CONTACT_INCLUDE,
-    });
+    try {
+      const contact = await this.prisma.contact.create({
+        data: {
+          tenantId,
+          customerId: dto.customerId ?? null,
+          name: dto.name.trim(),
+          email: normalizeEmail(dto.email),
+          phone: normalizePhone(dto.phone),
+          position: normalizeNullableString(dto.position),
+          isPrimary: dto.isPrimary ?? false,
+        },
+        include: CONTACT_INCLUDE,
+      });
 
-    return toContactView(contact);
+      return toContactView(contact);
+    } catch (error) {
+      throw mapPhoneConflict(error);
+    }
   }
 
   async update(id: string, dto: UpdateContactDto): Promise<ContactView> {
     const { tenantId } = this.tenantContext.requireContext();
     await this.requireContact(tenantId, id);
 
-    if (dto.customerId !== undefined) {
+    if (dto.customerId) {
       await this.requireCustomer(tenantId, dto.customerId);
     }
 
@@ -108,17 +124,21 @@ export class ContactsService {
     if (dto.customerId !== undefined) data.customerId = dto.customerId;
     if (dto.name !== undefined) data.name = dto.name.trim();
     if (dto.email !== undefined) data.email = normalizeEmail(dto.email);
-    if (dto.phone !== undefined) data.phone = normalizeNullableString(dto.phone);
+    if (dto.phone !== undefined) data.phone = normalizePhone(dto.phone);
     if (dto.position !== undefined) data.position = normalizeNullableString(dto.position);
     if (dto.isPrimary !== undefined) data.isPrimary = dto.isPrimary;
 
-    const contact = await this.prisma.contact.update({
-      where: { id },
-      data,
-      include: CONTACT_INCLUDE,
-    });
+    try {
+      const contact = await this.prisma.contact.update({
+        where: { id },
+        data,
+        include: CONTACT_INCLUDE,
+      });
 
-    return toContactView(contact);
+      return toContactView(contact);
+    } catch (error) {
+      throw mapPhoneConflict(error);
+    }
   }
 
   async remove(id: string): Promise<void> {
@@ -127,6 +147,46 @@ export class ContactsService {
 
     if (result.count === 0) {
       throw new ContactNotFoundError();
+    }
+  }
+
+  /**
+   * System lookup used by the WhatsApp webhook, where no tenant context exists.
+   * Finds the contact by normalized phone within the tenant or creates a basic one.
+   */
+  async findOrCreateByPhone(input: FindOrCreateContactInput): Promise<ContactView> {
+    const phone = normalizePhone(input.phone);
+    if (!phone) {
+      throw new ContactNotFoundError();
+    }
+
+    const existing = await this.prisma.contact.findFirst({
+      where: { tenantId: input.tenantId, phone },
+      include: CONTACT_INCLUDE,
+    });
+    if (existing) {
+      return toContactView(existing);
+    }
+
+    const name = normalizeNullableString(input.name) ?? phone;
+
+    try {
+      const contact = await this.prisma.contact.create({
+        data: { tenantId: input.tenantId, phone, name },
+        include: CONTACT_INCLUDE,
+      });
+      return toContactView(contact);
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        const raced = await this.prisma.contact.findFirst({
+          where: { tenantId: input.tenantId, phone },
+          include: CONTACT_INCLUDE,
+        });
+        if (raced) {
+          return toContactView(raced);
+        }
+      }
+      throw error;
     }
   }
 
@@ -157,7 +217,7 @@ function toContactView(contact: PrismaContact): ContactView {
   return {
     id: contact.id,
     customerId: contact.customerId,
-    customerName: contact.customer.name,
+    customerName: contact.customer?.name ?? null,
     name: contact.name,
     email: contact.email,
     phone: contact.phone,
@@ -182,4 +242,19 @@ function normalizeNullableString(value: string | null | undefined): string | nul
 
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+export function normalizePhone(value: string | null | undefined): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+
+  const digits = value.replace(/\D/g, '');
+  return digits.length > 0 ? digits : null;
+}
+
+function mapPhoneConflict(error: unknown): unknown {
+  if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+    return new ContactPhoneConflictError();
+  }
+  return error;
 }

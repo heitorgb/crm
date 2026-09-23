@@ -11,17 +11,9 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { ApiError } from '@/lib/api-client';
-import { useCustomers } from '@/features/customers/queries';
-import type { Contact } from '@/types/crm';
+import type { Contact, ContactInput } from '@/types/crm';
 import { useCreateContact, useUpdateContact } from './queries';
 
 interface EditableContact {
@@ -31,7 +23,7 @@ interface EditableContact {
   phone: string | null;
   position: string | null;
   isPrimary: boolean;
-  customerId?: string;
+  customerId?: string | null;
 }
 
 interface ContactFormProps {
@@ -43,12 +35,10 @@ interface ContactFormProps {
 
 export function ContactForm({ open, onOpenChange, contact, customerId }: ContactFormProps) {
   const isEditing = Boolean(contact);
-  const fixedCustomerId = customerId ?? contact?.customerId;
+  const fixedCustomerId = customerId ?? contact?.customerId ?? undefined;
   const createContact = useCreateContact();
   const updateContact = useUpdateContact();
-  const customersQuery = useCustomers({ perPage: 100, sort: 'name', order: 'asc' });
 
-  const [selectedCustomerId, setSelectedCustomerId] = useState(fixedCustomerId ?? '');
   const [name, setName] = useState(contact?.name ?? '');
   const [email, setEmail] = useState(contact?.email ?? '');
   const [phone, setPhone] = useState(contact?.phone ?? '');
@@ -61,23 +51,22 @@ export function ContactForm({ open, onOpenChange, contact, customerId }: Contact
   const handleSubmit = async (): Promise<void> => {
     setError(null);
 
-    const targetCustomerId = fixedCustomerId ?? selectedCustomerId;
-    if (!targetCustomerId) {
-      setError('Selecione o cliente deste contato.');
-      return;
-    }
     if (name.trim().length === 0) {
       setError('Informe o nome do contato.');
       return;
     }
+    if (phone.trim().length === 0) {
+      setError('Informe o telefone do contato.');
+      return;
+    }
 
-    const payload = {
-      customerId: targetCustomerId,
+    const payload: ContactInput = {
       name: name.trim(),
       email: email.trim().length > 0 ? email.trim() : null,
-      phone: phone.trim().length > 0 ? phone.trim() : null,
+      phone: phone.trim(),
       position: position.trim().length > 0 ? position.trim() : null,
       isPrimary,
+      ...(fixedCustomerId ? { customerId: fixedCustomerId } : {}),
     };
 
     try {
@@ -104,28 +93,19 @@ export function ContactForm({ open, onOpenChange, contact, customerId }: Contact
         </DialogHeader>
 
         <div className="grid gap-4">
-          {!fixedCustomerId ? (
-            <FormField id="contact-customer" label="Cliente" required>
-              <Select value={selectedCustomerId} onValueChange={setSelectedCustomerId}>
-                <SelectTrigger id="contact-customer">
-                  <SelectValue placeholder="Selecione um cliente" />
-                </SelectTrigger>
-                <SelectContent>
-                  {customersQuery.data?.data.map((customer) => (
-                    <SelectItem key={customer.id} value={customer.id}>
-                      {customer.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </FormField>
-          ) : null}
-
           <FormField id="contact-name" label="Nome" required>
             <Input id="contact-name" value={name} onChange={(event) => setName(event.target.value)} />
           </FormField>
 
           <div className="grid gap-4 sm:grid-cols-2">
+            <FormField id="contact-phone" label="Telefone" required>
+              <Input
+                id="contact-phone"
+                value={phone}
+                onChange={(event) => setPhone(event.target.value)}
+                placeholder="+55 11 99999-0000"
+              />
+            </FormField>
             <FormField id="contact-email" label="E-mail">
               <Input
                 id="contact-email"
@@ -134,16 +114,9 @@ export function ContactForm({ open, onOpenChange, contact, customerId }: Contact
                 onChange={(event) => setEmail(event.target.value)}
               />
             </FormField>
-            <FormField id="contact-phone" label="Telefone">
-              <Input
-                id="contact-phone"
-                value={phone}
-                onChange={(event) => setPhone(event.target.value)}
-              />
-            </FormField>
           </div>
 
-          <FormField id="contact-position" label="Cargo">
+          <FormField id="contact-position" label="Cargo / observação">
             <Input
               id="contact-position"
               value={position}

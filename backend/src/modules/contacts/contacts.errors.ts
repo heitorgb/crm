@@ -11,3 +11,9 @@ export class ContactCustomerNotFoundError extends AppException {
     super('CONTACT_CUSTOMER_NOT_FOUND', 'Customer not found for this tenant', 404);
   }
 }
+
+export class ContactPhoneConflictError extends AppException {
+  constructor() {
+    super('CONTACT_PHONE_CONFLICT', 'A contact with this phone already exists', 409);
+  }
+}

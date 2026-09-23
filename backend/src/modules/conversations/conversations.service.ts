@@ -5,10 +5,7 @@ import { TenantContextService } from '../../common/tenant-context/tenant-context
 import { PrismaService } from '../../infrastructure/prisma/prisma.service.js';
 import { RealtimeService } from '../../infrastructure/realtime/realtime.service.js';
 import { ConversationProcessingService } from './conversation-processing.service.js';
-import {
-  ConversationNotFoundError,
-  ConversationNotHumanOwnedError,
-} from './conversations.errors.js';
+import { ConversationNotFoundError } from './conversations.errors.js';
 import type {
   CreateConversationDto,
   ListConversationsQueryDto,
@@ -28,12 +25,11 @@ export interface ConversationView {
   whatsappInstanceId: string;
   instanceName: string;
   externalContactId: string | null;
-  leadId: string | null;
-  leadName: string | null;
-  leadPhone: string | null;
+  contactId: string | null;
+  contactName: string | null;
+  contactPhone: string | null;
   customerId: string | null;
   customerName: string | null;
-  contactId: string | null;
   lastMessageAt: Date | null;
   lastMessage: ConversationLastMessageView | null;
   createdAt: Date;
@@ -42,7 +38,7 @@ export interface ConversationView {
 
 const CONVERSATION_INCLUDE = {
   instance: { select: { name: true } },
-  lead: { select: { name: true, phone: true } },
+  contact: { select: { name: true, phone: true } },
   customer: { select: { name: true } },
   messages: {
     take: 1,
@@ -68,13 +64,14 @@ export class ConversationsService {
 
     if (query.status) where.status = query.status;
     if (query.whatsappInstanceId) where.whatsappInstanceId = query.whatsappInstanceId;
-    if (query.leadId) where.leadId = query.leadId;
+    if (query.contactId) where.contactId = query.contactId;
     if (query.customerId) where.customerId = query.customerId;
     if (query.search) {
       where.OR = [
         { subject: { contains: query.search, mode: 'insensitive' } },
-        { lead: { name: { contains: query.search, mode: 'insensitive' } } },
-        { lead: { phone: { contains: query.search, mode: 'insensitive' } } },
+        { contact: { name: { contains: query.search, mode: 'insensitive' } } },
+        { contact: { phone: { contains: query.search, mode: 'insensitive' } } },
+        { externalContactId: { contains: query.search, mode: 'insensitive' } },
       ];
     }
 
@@ -115,9 +112,8 @@ export class ConversationsService {
         tenantId,
         whatsappInstanceId: dto.whatsappInstanceId,
         externalContactId: dto.externalContactId ?? null,
-        leadId: dto.leadId ?? null,
-        customerId: dto.customerId ?? null,
         contactId: dto.contactId ?? null,
+        customerId: dto.customerId ?? null,
         subject: dto.subject ?? null,
       },
       include: CONVERSATION_INCLUDE,
@@ -132,9 +128,8 @@ export class ConversationsService {
 
     const data: Prisma.ConversationUncheckedUpdateInput = {};
     if (dto.subject !== undefined) data.subject = dto.subject;
-    if (dto.leadId !== undefined) data.leadId = dto.leadId;
-    if (dto.customerId !== undefined) data.customerId = dto.customerId;
     if (dto.contactId !== undefined) data.contactId = dto.contactId;
+    if (dto.customerId !== undefined) data.customerId = dto.customerId;
     if (dto.status !== undefined) {
       data.status = dto.status;
       data.closedAt = dto.status === ConversationStatus.CLOSED ? new Date() : null;
@@ -150,12 +145,12 @@ export class ConversationsService {
 
     await this.prisma.conversation.update({
       where: { id },
-      data: { status: ConversationStatus.HUMAN },
+      data: { status: ConversationStatus.OPEN, closedAt: null },
     });
 
     this.realtime.emitToTenant(tenantId, 'conversation.updated', {
       conversationId: id,
-      status: ConversationStatus.HUMAN,
+      status: ConversationStatus.OPEN,
     });
 
     return this.findOne(id);
@@ -183,8 +178,12 @@ export class ConversationsService {
     if (!conversation) {
       throw new ConversationNotFoundError();
     }
-    if (conversation.status !== ConversationStatus.HUMAN) {
-      throw new ConversationNotHumanOwnedError();
+
+    if (conversation.status === ConversationStatus.CLOSED) {
+      await this.prisma.conversation.update({
+        where: { id },
+        data: { status: ConversationStatus.OPEN, closedAt: null },
+      });
     }
 
     await this.processing.deliverText(tenantId, id, content);
@@ -220,12 +219,11 @@ function toConversationView(conversation: PrismaConversation): ConversationView 
     whatsappInstanceId: conversation.whatsappInstanceId,
     instanceName: conversation.instance.name,
     externalContactId: conversation.externalContactId,
-    leadId: conversation.leadId,
-    leadName: conversation.lead?.name ?? null,
-    leadPhone: conversation.lead?.phone ?? null,
+    contactId: conversation.contactId,
+    contactName: conversation.contact?.name ?? null,
+    contactPhone: conversation.contact?.phone ?? null,
     customerId: conversation.customerId,
     customerName: conversation.customer?.name ?? null,
-    contactId: conversation.contactId,
     lastMessageAt: conversation.lastMessageAt,
     lastMessage: lastMessage
       ? {

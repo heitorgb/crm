@@ -51,7 +51,7 @@ export function LoginPage() {
         active: true,
       },
     ]);
-    navigate('/dashboard', { replace: true });
+    navigate('/atendimento/conversas', { replace: true });
   };
 
   return (
@@ -70,21 +70,21 @@ export function LoginPage() {
 
         <div className="relative space-y-4">
           <h2 className="max-w-md text-3xl font-semibold leading-tight">
-            Qualificação de leads no WhatsApp, com o humano no momento certo.
+            Múltiplos WhatsApps, um chat centralizado e seus contatos.
           </h2>
           <p className="max-w-md text-sm text-white/70">
-            O bot conduz o primeiro atendimento, coleta o contexto e entrega os leads qualificados em
-            um resumo diário para o time comercial.
+            Conecte vários números, acompanhe todas as conversas em um só lugar e mantenha o
+            histórico organizado por contato.
           </p>
           <ul className="space-y-2 text-sm text-white/80">
             <li className="flex items-center gap-2">
-              <Sparkles className="size-4 text-emerald-400" /> Qualificação automática por IA
+              <Sparkles className="size-4 text-emerald-400" /> Vários WhatsApps em um só lugar
             </li>
             <li className="flex items-center gap-2">
               <Sparkles className="size-4 text-emerald-400" /> Isolamento total entre organizações
             </li>
             <li className="flex items-center gap-2">
-              <Sparkles className="size-4 text-emerald-400" /> Resumo em lote no horário definido
+              <Sparkles className="size-4 text-emerald-400" /> Histórico de conversas por contato
             </li>
           </ul>
         </div>

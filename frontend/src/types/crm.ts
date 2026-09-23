@@ -40,8 +40,8 @@ export interface CustomerDetail extends Omit<Customer, 'contactCount'> {
 
 export interface Contact {
   id: string;
-  customerId: string;
-  customerName: string;
+  customerId: string | null;
+  customerName: string | null;
   name: string;
   email: string | null;
   phone: string | null;
@@ -71,7 +71,7 @@ export interface CustomerInput {
 }
 
 export interface ContactInput {
-  customerId: string;
+  customerId?: string | null;
   name: string;
   email?: string | null;
   phone?: string | null;

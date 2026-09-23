@@ -97,10 +97,19 @@ export class ConversationsController {
 
     const file = await request.file();
     if (!file) {
-      throw new AppException('MEDIA_REQUIRED', 'No file was uploaded', 400);
+      throw new AppException('MEDIA_REQUIRED', 'Nenhum arquivo foi enviado.', 400);
     }
 
-    const buffer = await file.toBuffer();
+    let buffer: Buffer;
+    try {
+      buffer = await file.toBuffer();
+    } catch (error) {
+      if (isFileTooLargeError(error)) {
+        throw new AppException('MEDIA_TOO_LARGE', 'Arquivo maior que o permitido.', 413);
+      }
+      throw error;
+    }
+
     const caption = readCaption(file.fields);
 
     await this.conversations.sendHumanMedia(id, {
@@ -137,6 +146,16 @@ export class ConversationsController {
 
     await reply.send(file.buffer);
   }
+}
+
+function isFileTooLargeError(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) {
+    return false;
+  }
+  const candidate = error as { name?: string; code?: string };
+  return (
+    candidate.name === 'RequestFileTooLargeError' || candidate.code === 'FST_REQ_FILE_TOO_LARGE'
+  );
 }
 
 function readCaption(fields: unknown): string | undefined {

@@ -208,12 +208,12 @@ export class ConversationsService {
     }
 
     if (input.buffer.length === 0) {
-      throw new AppException('MEDIA_EMPTY', 'The uploaded file is empty', 400);
+      throw new AppException('MEDIA_EMPTY', 'Arquivo vazio.', 400);
     }
 
     const maxBytes = this.config.get('MEDIA_MAX_BYTES');
     if (input.buffer.length > maxBytes) {
-      throw new AppException('MEDIA_TOO_LARGE', 'The uploaded file is too large', 413);
+      throw new AppException('MEDIA_TOO_LARGE', 'Arquivo maior que o permitido.', 413);
     }
 
     if (conversation.status === ConversationStatus.CLOSED) {

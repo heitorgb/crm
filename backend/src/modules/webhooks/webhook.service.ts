@@ -302,6 +302,7 @@ function detectType(message: unknown): MessageType {
   if (message.audioMessage !== undefined) return MessageType.AUDIO;
   if (message.videoMessage !== undefined) return MessageType.VIDEO;
   if (message.documentMessage !== undefined) return MessageType.DOCUMENT;
+  if (message.stickerMessage !== undefined) return MessageType.STICKER;
   if (message.locationMessage !== undefined) return MessageType.LOCATION;
   if (message.contactMessage !== undefined) return MessageType.CONTACT;
   return MessageType.UNKNOWN;
@@ -312,7 +313,8 @@ function isMediaType(type: MessageType): boolean {
     type === MessageType.IMAGE ||
     type === MessageType.AUDIO ||
     type === MessageType.VIDEO ||
-    type === MessageType.DOCUMENT
+    type === MessageType.DOCUMENT ||
+    type === MessageType.STICKER
   );
 }
 

@@ -43,6 +43,7 @@ enum MessageType {
   DOCUMENT
   LOCATION
   CONTACT
+  STICKER
   UNKNOWN
 }
 

@@ -11,3 +11,4 @@ process.env.PUBLIC_API_URL ??= 'http://localhost:3000';
 process.env.RATE_LIMIT_ENABLED ??= 'false';
 process.env.STORAGE_PROVIDER ??= 'local';
 process.env.STORAGE_LOCAL_DIR ??= mkdtempSync(join(tmpdir(), 'orderup-storage-'));
+process.env.MEDIA_MAX_BYTES ??= '5000000';

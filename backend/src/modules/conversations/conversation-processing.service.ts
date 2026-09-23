@@ -18,6 +18,7 @@ import { STORAGE, type StorageService } from '../../infrastructure/storage/stora
 import {
   EvolutionClient,
   type EvolutionMediaType,
+  type EvolutionSendResult,
 } from '../whatsapp/evolution/evolution.client.js';
 import { MessagesService } from './messages.service.js';
 
@@ -96,13 +97,12 @@ export class ConversationProcessingService implements OnModuleInit {
     }
 
     const isImage = await this.media.isImage(input.buffer);
-    const caption = input.caption?.trim() ? input.caption.trim() : null;
+    const type = isImage ? MessageType.IMAGE : messageTypeForMime(input.mimeType);
+    const caption = type === MessageType.AUDIO ? null : (input.caption?.trim() || null);
 
     const stored = isImage
       ? await this.storeImage(tenantId, 'outbound', input.buffer, input.fileName)
       : await this.storeFile(tenantId, 'outbound', input.buffer, input.fileName, input.mimeType);
-
-    const type = isImage ? MessageType.IMAGE : messageTypeForMime(input.mimeType);
 
     const outbound = await this.messages.persistOutbound({
       tenantId,
@@ -195,15 +195,16 @@ export class ConversationProcessingService implements OnModuleInit {
         return;
       }
 
-      const isImage = await this.media.isImage(buffer);
+      const isSticker = message.type === MessageType.STICKER;
+      const isImage = !isSticker && (await this.media.isImage(buffer));
       const stored = isImage
         ? await this.storeImage(tenantId, messageId, buffer, content.fileName ?? 'image.jpg')
         : await this.storeFile(
             tenantId,
             messageId,
             buffer,
-            content.fileName ?? 'file',
-            content.mimeType ?? 'application/octet-stream',
+            content.fileName ?? (isSticker ? 'sticker.webp' : 'file'),
+            content.mimeType ?? (isSticker ? 'image/webp' : 'application/octet-stream'),
           );
 
       await this.messages.createAttachment({
@@ -258,20 +259,28 @@ export class ConversationProcessingService implements OnModuleInit {
         }
 
         const attachment = message.attachments[0];
-        const sent = attachment
-          ? await this.evolution.sendMedia(conversation.instance.instanceName, {
-              number: destination,
-              mediatype: mediaTypeForMessage(message.type),
-              media: (await this.storage.get(attachment.storageKey)).toString('base64'),
-              fileName: attachment.fileName,
-              mimetype: attachment.mimeType,
-              ...(message.content ? { caption: message.content } : {}),
-            })
-          : await this.evolution.sendText(
-              conversation.instance.instanceName,
-              destination,
-              message.content ?? '',
-            );
+        let sent: EvolutionSendResult;
+        if (attachment && message.type === MessageType.AUDIO) {
+          sent = await this.evolution.sendWhatsAppAudio(conversation.instance.instanceName, {
+            number: destination,
+            audio: (await this.storage.get(attachment.storageKey)).toString('base64'),
+          });
+        } else if (attachment) {
+          sent = await this.evolution.sendMedia(conversation.instance.instanceName, {
+            number: destination,
+            mediatype: mediaTypeForMessage(message.type),
+            media: (await this.storage.get(attachment.storageKey)).toString('base64'),
+            fileName: attachment.fileName,
+            mimetype: attachment.mimeType,
+            ...(message.content ? { caption: message.content } : {}),
+          });
+        } else {
+          sent = await this.evolution.sendText(
+            conversation.instance.instanceName,
+            destination,
+            message.content ?? '',
+          );
+        }
 
         await this.messages.markOutboundStatus(messageId, MessageStatus.SENT, sent.externalMessageId);
       } catch (error) {
@@ -302,20 +311,26 @@ export class ConversationProcessingService implements OnModuleInit {
         throw new Error('Evolution API not configured or destination missing');
       }
 
-      const sent = file
-        ? await this.evolution.sendMedia(conversation.instance.instanceName, {
-            number: destination,
-            mediatype: mediaTypeForMessage(type),
-            media: mediaOrText,
-            fileName: file.fileName,
-            mimetype: file.mimeType,
-            ...(caption ? { caption } : {}),
-          })
-        : await this.evolution.sendText(
-            conversation.instance.instanceName,
-            destination,
-            mediaOrText,
-          );
+      const sent =
+        file && type === MessageType.AUDIO
+          ? await this.evolution.sendWhatsAppAudio(conversation.instance.instanceName, {
+              number: destination,
+              audio: mediaOrText,
+            })
+          : file
+            ? await this.evolution.sendMedia(conversation.instance.instanceName, {
+                number: destination,
+                mediatype: mediaTypeForMessage(type),
+                media: mediaOrText,
+                fileName: file.fileName,
+                mimetype: file.mimeType,
+                ...(caption ? { caption } : {}),
+              })
+            : await this.evolution.sendText(
+                conversation.instance.instanceName,
+                destination,
+                mediaOrText,
+              );
 
       await this.messages.markOutboundStatus(messageId, MessageStatus.SENT, sent.externalMessageId);
     } catch {
@@ -453,10 +468,15 @@ function mediaTypeForMessage(type: MessageType): EvolutionMediaType {
   }
 }
 
+function normalizeMime(mimeType: string): string {
+  return mimeType.split(';')[0].trim().toLowerCase();
+}
+
 function messageTypeForMime(mimeType: string): MessageType {
-  if (mimeType.startsWith('image/')) return MessageType.IMAGE;
-  if (mimeType.startsWith('video/')) return MessageType.VIDEO;
-  if (mimeType.startsWith('audio/')) return MessageType.AUDIO;
+  const mime = normalizeMime(mimeType);
+  if (mime.startsWith('image/')) return MessageType.IMAGE;
+  if (mime.startsWith('video/')) return MessageType.VIDEO;
+  if (mime.startsWith('audio/')) return MessageType.AUDIO;
   return MessageType.DOCUMENT;
 }
 
@@ -469,10 +489,16 @@ function extensionForMime(mimeType: string): string {
     'application/pdf': 'pdf',
     'audio/mpeg': 'mp3',
     'audio/ogg': 'ogg',
+    'audio/opus': 'opus',
+    'audio/mp4': 'm4a',
+    'audio/aac': 'aac',
+    'audio/wav': 'wav',
+    'audio/webm': 'webm',
     'video/mp4': 'mp4',
+    'video/webm': 'webm',
     'text/plain': 'txt',
   };
-  return map[mimeType] ?? 'bin';
+  return map[normalizeMime(mimeType)] ?? 'bin';
 }
 
 function ensureExtension(fileName: string, extension: string): string {

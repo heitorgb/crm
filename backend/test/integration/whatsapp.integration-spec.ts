@@ -29,11 +29,15 @@ class FakeEvolution {
   configured = true;
   readonly sent: { instance: string; number: string; text: string }[] = [];
   readonly sentMedia: SentMedia[] = [];
+  readonly sentAudio: { instance: string; number: string; audio: string }[] = [];
   readonly created: string[] = [];
   readonly webhooks: { instance: string; url: string; events: string[] }[] = [];
   createInstanceError?: { status: number };
   mediaBase64?: string;
   mediaError?: { status: number };
+  mediaMimeType?: string;
+  mediaFileName?: string | null;
+  mediaSize?: number;
   private counter = 0;
 
   async createInstance(instanceName: string) {
@@ -73,6 +77,12 @@ class FakeEvolution {
     return { externalMessageId: `media-${this.counter}`, raw: {} };
   }
 
+  async sendWhatsAppAudio(instance: string, input: { number: string; audio: string }) {
+    this.counter += 1;
+    this.sentAudio.push({ ...input, instance });
+    return { externalMessageId: `audio-${this.counter}`, raw: {} };
+  }
+
   async getBase64FromMediaMessage() {
     if (this.mediaError) {
       throw new EvolutionRequestError('media unavailable', this.mediaError.status);
@@ -82,10 +92,10 @@ class FakeEvolution {
     }
     return {
       base64: this.mediaBase64,
-      mimeType: 'image/png',
-      fileName: 'photo.png',
+      mimeType: this.mediaMimeType ?? 'image/png',
+      fileName: this.mediaFileName === undefined ? 'photo.png' : this.mediaFileName,
       caption: null,
-      size: null,
+      size: this.mediaSize ?? null,
     };
   }
 }
@@ -113,11 +123,15 @@ describe('WhatsApp attendance (integration)', () => {
   beforeEach(async () => {
     evolution.sent.length = 0;
     evolution.sentMedia.length = 0;
+    evolution.sentAudio.length = 0;
     evolution.created.length = 0;
     evolution.webhooks.length = 0;
     evolution.createInstanceError = undefined;
     evolution.mediaBase64 = undefined;
     evolution.mediaError = undefined;
+    evolution.mediaMimeType = undefined;
+    evolution.mediaFileName = undefined;
+    evolution.mediaSize = undefined;
     ownerA = await seedTenant(app, prisma, { name: 'Wa Owner A', role: 'OWNER' });
     userA = await seedMember(app, prisma, ownerA.tenantId, { name: 'Wa User A', role: 'USER' });
     ownerB = await seedTenant(app, prisma, { name: 'Wa Owner B', role: 'OWNER' });
@@ -171,6 +185,38 @@ describe('WhatsApp attendance (integration)', () => {
         key: { remoteJid, fromMe: false, id: messageId },
         pushName: 'Contato Teste',
         message: { imageMessage: { mimetype: 'image/png', caption } },
+      },
+    };
+  }
+
+  function stickerPayload(
+    instanceName: string,
+    messageId: string,
+    remoteJid = '5511999999999@s.whatsapp.net',
+  ) {
+    return {
+      event: 'messages.upsert',
+      instance: instanceName,
+      data: {
+        key: { remoteJid, fromMe: false, id: messageId },
+        pushName: 'Contato Teste',
+        message: { stickerMessage: { mimetype: 'image/webp', isAnimated: false } },
+      },
+    };
+  }
+
+  function audioPayload(
+    instanceName: string,
+    messageId: string,
+    remoteJid = '5511999999999@s.whatsapp.net',
+  ) {
+    return {
+      event: 'messages.upsert',
+      instance: instanceName,
+      data: {
+        key: { remoteJid, fromMe: false, id: messageId },
+        pushName: 'Contato Teste',
+        message: { audioMessage: { mimetype: 'audio/ogg; codecs=opus', ptt: true } },
       },
     };
   }
@@ -732,6 +778,109 @@ describe('WhatsApp attendance (integration)', () => {
 
       const foreign = await app.inject({ method: 'GET', url, headers: authHeaders(ownerB) });
       expect(foreign.statusCode).toBe(404);
+    });
+
+    it('stores an inbound sticker as webp without converting', async () => {
+      const instanceName = `sticker-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      const sticker = await sharp({
+        create: { width: 512, height: 512, channels: 4, background: { r: 255, g: 0, b: 0, alpha: 0 } },
+      })
+        .webp()
+        .toBuffer();
+      evolution.mediaBase64 = sticker.toString('base64');
+      evolution.mediaMimeType = 'image/webp';
+      evolution.mediaFileName = 'sticker.webp';
+
+      await postWebhook(stickerPayload(instanceName, randomUUID()));
+
+      const message = await prisma.message.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId, type: 'STICKER' },
+      });
+      const attachment = await prisma.messageAttachment.findFirstOrThrow({
+        where: { messageId: message.id },
+      });
+      expect(attachment.mimeType).toBe('image/webp');
+      expect(attachment.storageKey.endsWith('.webp')).toBe(true);
+    });
+
+    it('stores an inbound audio message', async () => {
+      const instanceName = `audio-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      evolution.mediaBase64 = Buffer.from('OggS-fake-audio-content').toString('base64');
+      evolution.mediaMimeType = 'audio/ogg; codecs=opus';
+      evolution.mediaFileName = null;
+
+      await postWebhook(audioPayload(instanceName, randomUUID()));
+
+      const message = await prisma.message.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId, type: 'AUDIO' },
+      });
+      const attachment = await prisma.messageAttachment.findFirstOrThrow({
+        where: { messageId: message.id },
+      });
+      expect(attachment.mimeType).toContain('audio/ogg');
+      expect(attachment.storageKey.endsWith('.ogg')).toBe(true);
+    });
+
+    it('marks inbound media larger than the limit', async () => {
+      const instanceName = `big-in-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      evolution.mediaBase64 = Buffer.from('x').toString('base64');
+      evolution.mediaSize = Number(process.env.MEDIA_MAX_BYTES) + 1000;
+
+      await postWebhook(imagePayload(instanceName, randomUUID()));
+
+      const message = await prisma.message.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId, type: 'IMAGE' },
+      });
+      expect((message.metadata as { mediaError?: string }).mediaError).toBe('too_large');
+      const attachments = await prisma.messageAttachment.count({ where: { messageId: message.id } });
+      expect(attachments).toBe(0);
+    });
+
+    it('sends an uploaded audio file', async () => {
+      const conversationId = await seedConversation();
+      const audio = Buffer.from(`OggS${'0'.repeat(200)}`);
+      const { payload, contentType } = buildMultipart(audio, 'recado.ogg', 'audio/ogg');
+
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/conversations/${conversationId}/messages/media`,
+        headers: { ...authHeaders(ownerA), 'content-type': contentType },
+        payload,
+      });
+
+      expect(response.statusCode).toBe(201);
+      expect(evolution.sentAudio).toHaveLength(1);
+      expect(evolution.sentMedia).toHaveLength(0);
+
+      const outbound = await prisma.message.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId, conversationId, direction: 'OUTBOUND', type: 'AUDIO' },
+      });
+      expect(outbound.status).toBe('SENT');
+    });
+
+    it('rejects an upload larger than the limit', async () => {
+      const conversationId = await seedConversation();
+      const max = Number(process.env.MEDIA_MAX_BYTES);
+      const { payload, contentType } = buildMultipart(
+        Buffer.alloc(max + 1024, 1),
+        'grande.bin',
+        'application/octet-stream',
+      );
+
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/conversations/${conversationId}/messages/media`,
+        headers: { ...authHeaders(ownerA), 'content-type': contentType },
+        payload,
+      });
+
+      expect(response.statusCode).toBe(413);
+      expect(response.json().code).toBe('MEDIA_TOO_LARGE');
+      expect(response.json().message).toContain('maior que o permitido');
+      expect(evolution.sentMedia).toHaveLength(0);
     });
   });
 });

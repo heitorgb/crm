@@ -2,11 +2,13 @@ import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   MessageSquare,
+  Mic,
   PanelRightClose,
   PanelRightOpen,
   Paperclip,
   Send,
   Smartphone,
+  Trash2,
   XCircle,
 } from 'lucide-react';
 import { EmptyState } from '@/components/common/empty-state';
@@ -24,8 +26,9 @@ import {
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
+import { ApiError } from '@/lib/api-client';
 import { cn } from '@/lib/utils';
-import type { ConversationStatus } from '@/types/attendance';
+import type { ConversationMessage, ConversationStatus } from '@/types/attendance';
 import { useWhatsAppInstances } from '@/features/whatsapp/queries';
 import {
   useCloseConversation,
@@ -35,8 +38,17 @@ import {
   useSendConversationMedia,
   useSendConversationMessage,
 } from './queries';
-import { MessageImage } from './message-image';
+import { MessageMedia } from './message-media';
+import { useAudioRecorder } from './use-audio-recorder';
 import { useAttendanceRealtime } from './use-realtime';
+
+const MEDIA_TYPES: ConversationMessage['type'][] = [
+  'IMAGE',
+  'AUDIO',
+  'VIDEO',
+  'DOCUMENT',
+  'STICKER',
+];
 
 const statusTone: Record<ConversationStatus, StatusTone> = {
   OPEN: 'success',
@@ -50,6 +62,14 @@ const statusLabel: Record<ConversationStatus, string> = {
 
 function formatTime(value: string): string {
   return new Intl.DateTimeFormat('pt-BR', { timeStyle: 'short' }).format(new Date(value));
+}
+
+function formatDuration(totalSeconds: number): string {
+  const minutes = Math.floor(totalSeconds / 60)
+    .toString()
+    .padStart(2, '0');
+  const seconds = (totalSeconds % 60).toString().padStart(2, '0');
+  return `${minutes}:${seconds}`;
 }
 
 function contactLabel(
@@ -81,6 +101,7 @@ export function AttendancePage() {
   );
   const [panelOpen, setPanelOpen] = useState(true);
   const [draft, setDraft] = useState('');
+  const [mediaError, setMediaError] = useState<string | null>(null);
 
   const instancesQuery = useWhatsAppInstances({ perPage: 100 });
   const conversationsQuery = useConversations({
@@ -123,13 +144,38 @@ export function AttendancePage() {
     if (!file || !activeId) {
       return;
     }
-    await sendMedia.mutateAsync({
-      id: activeId,
-      file,
-      caption: draft.trim().length > 0 ? draft.trim() : undefined,
-    });
-    setDraft('');
+    setMediaError(null);
+    try {
+      await sendMedia.mutateAsync({
+        id: activeId,
+        file,
+        caption: draft.trim().length > 0 ? draft.trim() : undefined,
+      });
+      setDraft('');
+    } catch (error) {
+      setMediaError(
+        error instanceof ApiError ? error.message : 'Não foi possível enviar o arquivo.',
+      );
+    }
   };
+
+  const sendRecordedAudio = async (file: File): Promise<void> => {
+    if (!activeId) {
+      return;
+    }
+    setMediaError(null);
+    try {
+      await sendMedia.mutateAsync({ id: activeId, file });
+    } catch (error) {
+      setMediaError(
+        error instanceof ApiError ? error.message : 'Não foi possível enviar o áudio.',
+      );
+    }
+  };
+
+  const recorder = useAudioRecorder({
+    onComplete: (file) => void sendRecordedAudio(file),
+  });
 
   return (
     <div className="space-y-5">
@@ -294,46 +340,54 @@ export function AttendancePage() {
                     ))}
                   </div>
                 ) : (
-                  messagesQuery.data?.data.map((message) => (
-                    <div
-                      key={message.id}
-                      className={cn(
-                        'flex',
-                        message.direction === 'OUTBOUND' ? 'justify-end' : 'justify-start',
-                      )}
-                    >
+                  messagesQuery.data?.data.map((message) => {
+                    const isSticker = message.type === 'STICKER';
+                    const isMedia = MEDIA_TYPES.includes(message.type);
+                    return (
                       <div
+                        key={message.id}
                         className={cn(
-                          'max-w-[75%] rounded-lg px-3 py-2 text-sm shadow-sm',
-                          message.direction === 'OUTBOUND'
-                            ? 'bg-primary text-primary-foreground'
-                            : 'border border-border bg-card text-foreground',
+                          'flex',
+                          message.direction === 'OUTBOUND' ? 'justify-end' : 'justify-start',
                         )}
                       >
-                        {message.type === 'IMAGE' ? (
-                          <MessageImage
-                            conversationId={message.conversationId}
-                            message={message}
-                          />
-                        ) : (
-                          <p className="whitespace-pre-wrap">
-                            {message.content ?? `[${message.type.toLowerCase()}]`}
-                          </p>
-                        )}
-                        <span
+                        <div
                           className={cn(
-                            'mt-1 block text-[10px]',
-                            message.direction === 'OUTBOUND'
-                              ? 'text-primary-foreground/70'
-                              : 'text-muted-foreground',
+                            isSticker
+                              ? 'max-w-[50%]'
+                              : cn(
+                                  'max-w-[75%] rounded-lg px-3 py-2 text-sm shadow-sm',
+                                  message.direction === 'OUTBOUND'
+                                    ? 'bg-primary text-primary-foreground'
+                                    : 'border border-border bg-card text-foreground',
+                                ),
                           )}
                         >
-                          {formatTime(message.occurredAt)}
-                          {message.status === 'FAILED' ? ' · falha no envio' : ''}
-                        </span>
+                          {isMedia ? (
+                            <MessageMedia
+                              conversationId={message.conversationId}
+                              message={message}
+                            />
+                          ) : (
+                            <p className="whitespace-pre-wrap">
+                              {message.content ?? `[${message.type.toLowerCase()}]`}
+                            </p>
+                          )}
+                          <span
+                            className={cn(
+                              'mt-1 block text-[10px]',
+                              !isSticker && message.direction === 'OUTBOUND'
+                                ? 'text-primary-foreground/70'
+                                : 'text-muted-foreground',
+                            )}
+                          >
+                            {formatTime(message.occurredAt)}
+                            {message.status === 'FAILED' ? ' · falha no envio' : ''}
+                          </span>
+                        </div>
                       </div>
-                    </div>
-                  ))
+                    );
+                  })
                 )}
                 <div ref={bottomRef} />
               </div>
@@ -346,35 +400,76 @@ export function AttendancePage() {
                   className="hidden"
                   onChange={(event) => void handleMediaSelected(event)}
                 />
-                <div className="flex items-end gap-2">
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    onClick={() => mediaInputRef.current?.click()}
-                    disabled={sendMedia.isPending}
-                    aria-label="Enviar imagem"
-                  >
-                    <Paperclip />
-                  </Button>
-                  <Textarea
-                    rows={2}
-                    value={draft}
-                    onChange={(event) => setDraft(event.target.value)}
-                    placeholder="Escreva uma mensagem ou anexe uma imagem…"
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' && !event.shiftKey) {
-                        event.preventDefault();
-                        void handleSend();
-                      }
-                    }}
-                  />
-                  <Button
-                    onClick={() => void handleSend()}
-                    disabled={sendMessage.isPending || sendMedia.isPending}
-                  >
-                    <Send />
-                  </Button>
-                </div>
+                {mediaError || recorder.error ? (
+                  <p className="mb-2 text-xs font-medium text-danger">
+                    {mediaError ?? recorder.error}
+                  </p>
+                ) : null}
+                {recorder.recording ? (
+                  <div className="flex items-center gap-3">
+                    <span className="flex items-center gap-2 text-sm font-medium text-danger">
+                      <span className="size-2.5 animate-pulse rounded-full bg-danger" />
+                      Gravando {formatDuration(recorder.seconds)}
+                    </span>
+                    <div className="ml-auto flex items-center gap-2">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => recorder.cancel()}
+                        aria-label="Cancelar gravação"
+                      >
+                        <Trash2 />
+                      </Button>
+                      <Button
+                        size="icon"
+                        onClick={() => recorder.stop()}
+                        disabled={sendMedia.isPending}
+                        aria-label="Enviar áudio"
+                      >
+                        <Send />
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-end gap-2">
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      onClick={() => mediaInputRef.current?.click()}
+                      disabled={sendMedia.isPending}
+                      aria-label="Enviar imagem"
+                    >
+                      <Paperclip />
+                    </Button>
+                    <Textarea
+                      rows={2}
+                      value={draft}
+                      onChange={(event) => setDraft(event.target.value)}
+                      placeholder="Escreva uma mensagem ou anexe uma imagem…"
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' && !event.shiftKey) {
+                          event.preventDefault();
+                          void handleSend();
+                        }
+                      }}
+                    />
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      onClick={() => void recorder.start()}
+                      disabled={sendMedia.isPending || !canSend}
+                      aria-label="Gravar áudio"
+                    >
+                      <Mic />
+                    </Button>
+                    <Button
+                      onClick={() => void handleSend()}
+                      disabled={sendMessage.isPending || sendMedia.isPending}
+                    >
+                      <Send />
+                    </Button>
+                  </div>
+                )}
               </div>
             </>
           )}

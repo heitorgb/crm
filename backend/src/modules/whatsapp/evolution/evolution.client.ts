@@ -108,6 +108,19 @@ export class EvolutionClient {
     return { externalMessageId: extractMessageId(raw), raw };
   }
 
+  async sendWhatsAppAudio(
+    instanceName: string,
+    input: { number: string; audio: string },
+  ): Promise<EvolutionSendResult> {
+    const raw = await this.request(
+      'POST',
+      `/message/sendWhatsAppAudio/${encodeURIComponent(instanceName)}`,
+      { number: input.number, audio: input.audio },
+    );
+
+    return { externalMessageId: extractMessageId(raw), raw };
+  }
+
   async sendMedia(
     instanceName: string,
     input: EvolutionSendMediaInput,

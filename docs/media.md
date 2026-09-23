@@ -1,6 +1,6 @@
-# Mídia no Chat (imagens)
+# Mídia no Chat (imagens, áudio e figurinhas)
 
-Envio e recebimento de imagens no Chat, com otimização e persistência em disco.
+Envio e recebimento de mídia no Chat, com otimização e persistência em disco.
 
 ## Visão geral
 
@@ -21,7 +21,23 @@ Feita com **`sharp`**, antes de gravar:
 - Remove metadados (EXIF/GPS).
 - **O original não é mantido** — somente a versão otimizada e a miniatura.
 
-Não-imagens (documento/áudio/vídeo) são armazenadas como recebidas, respeitando `MEDIA_MAX_BYTES`.
+Não-imagens (áudio/vídeo/documento) são armazenadas como recebidas, respeitando `MEDIA_MAX_BYTES`.
+
+### Áudio
+
+- **Receber:** `audioMessage` (notas de voz PTT em OGG/Opus) é armazenado como está e exibido com um
+  player `<audio>` na conversa.
+- **Enviar:** o botão de **microfone grava a voz do operador** no navegador (`MediaRecorder`). Ao
+  concluir, o áudio é enviado como **nota de voz** via `sendWhatsAppAudio` (a Evolution converte para
+  o formato do WhatsApp por padrão). Durante a gravação há timer e opção de cancelar (descarta).
+- MIME com parâmetros (ex.: `audio/ogg; codecs=opus`) é normalizado para definir a extensão.
+
+### Figurinhas
+
+- **Receber:** `stickerMessage` vira `MessageType.STICKER`. O WebP é **preservado sem conversão**
+  (mantém transparência e animação) e exibido sem balão, com tamanho reduzido.
+- Não é gerado thumbnail para figurinhas.
+- Envio de figurinhas não é suportado (apenas recebimento/visualização).
 
 ## Armazenamento
 
@@ -48,10 +64,11 @@ MEDIA_THUMBNAIL_DIMENSION=256
 
 ## Comportamento e limites
 
-- Arquivo bruto acima de `MEDIA_MAX_BYTES`: envio responde `413 MEDIA_TOO_LARGE`; recebimento grava a
-  mensagem com `metadata.mediaError = 'too_large'` (sem binário).
+- Arquivo bruto acima de `MEDIA_MAX_BYTES`: o **envio** responde `413 MEDIA_TOO_LARGE` com a mensagem
+  “Arquivo maior que o permitido.” (exibida no composer); o **recebimento** grava a mensagem com
+  `metadata.mediaError = 'too_large'` (sem binário) e a UI mostra “Arquivo maior que o permitido”.
 - Falha ao buscar mídia na Evolution: mensagem fica com `metadata.mediaError` (`fetch_failed`) e a UI
-  mostra “Imagem indisponível”.
+  mostra “Mídia indisponível”.
 - O tipo real é validado pela decodificação (sharp), não apenas pelo `Content-Type`.
 - Chaves de armazenamento são geradas (`uuid`), nunca do nome enviado pelo cliente.
 
@@ -64,5 +81,5 @@ MEDIA_THUMBNAIL_DIMENSION=256
 
 - Backends `s3`/`minio` (a interface `StorageService` já prevê).
 - Retenção/expurgo de mídia (a rotina de LGPD saiu com o módulo de Compliance).
-- Upload de arquivos não-imagem pela UI (hoje a UI envia imagens; documentos continuam recebidos e
-  baixáveis).
+- Upload de vídeo/documento pela UI (hoje a UI envia imagens e áudio; documentos/vídeos continuam
+  recebidos e baixáveis).

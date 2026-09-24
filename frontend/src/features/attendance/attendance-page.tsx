@@ -91,7 +91,7 @@ function conversationLabel(
 }
 
 export function AttendancePage() {
-  useAttendanceRealtime();
+  const presence = useAttendanceRealtime();
 
   const [searchParams] = useSearchParams();
   const [search, setSearch] = useState('');
@@ -100,7 +100,7 @@ export function AttendancePage() {
   const [selectedId, setSelectedId] = useState<string | null>(
     searchParams.get('conversation'),
   );
-  const [panelOpen, setPanelOpen] = useState(true);
+  const [panelOpen, setPanelOpen] = useState(false);
   const [draft, setDraft] = useState('');
   const [mediaError, setMediaError] = useState<string | null>(null);
 
@@ -188,8 +188,8 @@ export function AttendancePage() {
         description="Chat centralizado de todos os WhatsApps conectados."
       />
 
-      <div className="grid gap-4 lg:grid-cols-[320px_1fr] xl:grid-cols-[320px_1fr_300px]">
-        <Card className="flex h-[70vh] flex-col overflow-hidden">
+      <div className={cn('grid gap-3 lg:grid-cols-[280px_minmax(0,1fr)]', panelOpen && 'xl:grid-cols-[280px_minmax(0,1fr)_260px]')}>
+        <Card className="flex h-[calc(100dvh-190px)] min-h-[400px] min-w-0 flex-col overflow-hidden">
           <div className="space-y-3 border-b border-border p-3">
             <SearchInput value={search} onChange={setSearch} placeholder="Buscar conversa" />
             <Select
@@ -260,7 +260,9 @@ export function AttendancePage() {
                     item.id === activeId ? 'bg-primary/5' : 'hover:bg-surface-hover',
                   )}
                 >
-                  <UserAvatar
+                  <SenderAvatar
+                    conversationId={item.id}
+                    jid={item.isGroup ? null : item.externalContactId}
                     name={conversationLabel(item)}
                     src={item.avatarUrl ?? undefined}
                     className="size-9 shrink-0"
@@ -275,11 +277,11 @@ export function AttendancePage() {
                       </span>
                     </div>
                     <p className="truncate text-xs text-muted-foreground">
-                      {item.lastMessage
+                      {presence[item.id] ?? (item.lastMessage
                         ? item.isGroup && item.lastMessage.senderName
                           ? `${item.lastMessage.senderName}: ${item.lastMessage.content ?? ''}`.trim()
                           : (item.lastMessage.content ?? 'Sem mensagens')
-                        : 'Sem mensagens'}
+                        : 'Sem mensagens')}
                     </p>
                     <div className="flex items-center gap-1.5 pt-1">
                       <StatusBadge tone={statusTone[item.status]}>
@@ -301,7 +303,7 @@ export function AttendancePage() {
           </div>
         </Card>
 
-        <Card className="flex h-[70vh] flex-col overflow-hidden">
+        <Card className="flex h-[calc(100dvh-190px)] min-h-[400px] min-w-0 flex-col overflow-hidden">
           {!activeId ? (
             <div className="flex flex-1 items-center justify-center p-6">
               <EmptyState
@@ -312,9 +314,11 @@ export function AttendancePage() {
             </div>
           ) : (
             <>
-              <div className="flex items-center justify-between gap-2 border-b border-border p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border p-3">
                 <div className="flex min-w-0 items-center gap-2">
-                  <UserAvatar
+                  <SenderAvatar
+                    conversationId={activeId}
+                    jid={conversation?.isGroup ? null : conversation?.externalContactId ?? null}
                     name={conversationLabel(conversation)}
                     src={conversation?.avatarUrl ?? undefined}
                     className="size-9 shrink-0"
@@ -323,13 +327,13 @@ export function AttendancePage() {
                     <p className="truncate text-sm font-semibold text-foreground">
                       {conversationLabel(conversation)}
                     </p>
-                    <p className="truncate text-xs text-muted-foreground">
+                    {presence[activeId] ? <p role="status" className="truncate text-xs text-primary">{presence[activeId]}</p> : <p className="truncate text-xs text-muted-foreground">
                       {conversation?.isGroup ? 'Grupo' : 'Contato'} · WhatsApp:{' '}
                       {conversation?.instanceName ?? '—'}
                       {conversation?.isGroup
                         ? ''
                         : ` · ${conversation?.contactPhone ?? conversation?.externalContactId ?? ''}`}
-                    </p>
+                    </p>}
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -362,7 +366,7 @@ export function AttendancePage() {
                 </div>
               </div>
 
-              <div className="flex-1 space-y-3 overflow-y-auto bg-muted/30 p-4">
+              <div className="min-h-0 min-w-0 flex-1 space-y-3 overflow-x-hidden overflow-y-auto bg-muted/30 p-3 sm:p-5">
                 {messagesQuery.isPending ? (
                   <div className="space-y-2">
                     {Array.from({ length: 4 }).map((_, index) => (
@@ -390,18 +394,18 @@ export function AttendancePage() {
                             name={message.senderName}
                           />
                         ) : null}
-                        <div className={cn('flex flex-col', message.direction === 'OUTBOUND' ? 'items-end' : 'items-start')}>
+                        <div className={cn('flex min-w-0 max-w-[85%] flex-col sm:max-w-[75%]', message.direction === 'OUTBOUND' ? 'items-end' : 'items-start')}>
                           {showSender && message.senderName ? (
-                            <span className="mb-0.5 px-1 text-[11px] font-medium text-muted-foreground">
+                            <span className="mb-0.5 max-w-full break-words px-1 text-[11px] font-medium text-muted-foreground">
                               {message.senderName}
                             </span>
                           ) : null}
                           <div
                             className={cn(
                               isSticker
-                                ? 'max-w-[50%]'
+                                ? 'max-w-full'
                                 : cn(
-                                    'max-w-[75%] rounded-lg px-3 py-2 text-sm shadow-sm',
+                                    'min-w-0 max-w-full rounded-lg px-3 py-2 text-sm shadow-sm [overflow-wrap:anywhere]',
                                     message.direction === 'OUTBOUND'
                                       ? 'bg-primary text-primary-foreground'
                                       : 'border border-border bg-card text-foreground',
@@ -420,7 +424,7 @@ export function AttendancePage() {
                             )}
                             <span
                               className={cn(
-                                'mt-1 block text-[10px]',
+                                'mt-1 block text-right text-[10px]',
                                 !isSticker && message.direction === 'OUTBOUND'
                                   ? 'text-primary-foreground/70'
                                   : 'text-muted-foreground',
@@ -522,7 +526,7 @@ export function AttendancePage() {
         </Card>
 
         {panelOpen ? (
-          <Card className="hidden h-[70vh] flex-col overflow-y-auto p-4 xl:flex">
+          <Card className="hidden h-[calc(100dvh-190px)] min-h-[400px] min-w-0 flex-col overflow-y-auto p-4 xl:flex">
             <p className="text-sm font-semibold text-foreground">
               {conversation?.isGroup ? 'Grupo' : 'Contato'}
             </p>

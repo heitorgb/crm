@@ -2,11 +2,7 @@ import { createHash } from 'node:crypto';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConversationStatus, MessageType, Prisma } from '@prisma/client';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service.js';
-import {
-  JOB_NAMES,
-  JOB_QUEUE,
-  type JobQueue,
-} from '../../infrastructure/queue/job-queue.types.js';
+import { JOB_NAMES, JOB_QUEUE, type JobQueue } from '../../infrastructure/queue/job-queue.types.js';
 import { RealtimeService } from '../../infrastructure/realtime/realtime.service.js';
 import { ContactsService } from '../contacts/contacts.service.js';
 import { WhatsAppDirectoryService } from '../whatsapp/whatsapp-directory.service.js';
@@ -50,6 +46,11 @@ export class WebhookService {
     if (!instance) {
       this.logger.warn(`Webhook for unknown or inactive instance: ${instanceName}`);
       return { accepted: false, ignored: 'unknown_instance' };
+    }
+
+    if (eventType === 'presence.update') {
+      await this.handlePresence(instance, payload);
+      return { accepted: true };
     }
 
     const externalEventId = computeEventId(payload, eventType, instanceName);
@@ -148,6 +149,40 @@ export class WebhookService {
       conversationId: conversation.id,
       messageId: persisted.id,
     };
+  }
+
+  private async handlePresence(
+    instance: ResolvedInstance,
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    const data = isRecord(payload.data) ? payload.data : null;
+    const remoteJid = readString(data?.id);
+    const presences = data && isRecord(data.presences) ? data.presences : null;
+    if (!remoteJid || !presences) return;
+
+    const conversation = await this.prisma.conversation.findFirst({
+      where: {
+        tenantId: instance.tenantId,
+        whatsappInstanceId: instance.id,
+        externalContactId: remoteJid,
+      },
+      select: { id: true },
+    });
+    if (!conversation) return;
+
+    for (const [participantId, presence] of Object.entries(presences)) {
+      const state = isRecord(presence) ? readString(presence.lastKnownPresence) : null;
+      if (
+        !state ||
+        !['composing', 'recording', 'paused', 'available', 'unavailable'].includes(state)
+      )
+        continue;
+      this.realtime.emitToTenant(instance.tenantId, 'conversation.presence', {
+        conversationId: conversation.id,
+        participantId,
+        state,
+      });
+    }
   }
 
   private async recordEvent(input: {

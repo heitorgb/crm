@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import sharp from 'sharp';
 import { PrismaService } from '../../src/infrastructure/prisma/prisma.service.js';
+import { RealtimeService } from '../../src/infrastructure/realtime/realtime.service.js';
 import { EvolutionRequestError } from '../../src/modules/whatsapp/evolution/evolution.client.js';
 import {
   authHeaders,
@@ -405,7 +406,7 @@ describe('WhatsApp attendance (integration)', () => {
 
       expect(evolution.created).toContain(instanceName);
       const webhook = evolution.webhooks.find((item) => item.instance === instanceName);
-      expect(webhook?.events).toEqual(['MESSAGES_UPSERT', 'GROUPS_UPSERT']);
+      expect(webhook?.events).toEqual(['MESSAGES_UPSERT', 'GROUPS_UPSERT', 'PRESENCE_UPDATE']);
       expect(webhook?.url).toContain('/api/webhooks/evolution?token=');
       expect(JSON.stringify(response.json())).not.toContain('super-secret-webhook');
     });
@@ -617,7 +618,9 @@ describe('WhatsApp attendance (integration)', () => {
       const instanceName = `group-reuse-${randomUUID()}`;
       await createInstance(ownerA, instanceName);
 
-      await postWebhook(groupPayload(instanceName, randomUUID(), 'Primeira', groupJid, participant));
+      await postWebhook(
+        groupPayload(instanceName, randomUUID(), 'Primeira', groupJid, participant),
+      );
       await postWebhook(groupPayload(instanceName, randomUUID(), 'Segunda', groupJid, participant));
 
       const conversations = await prisma.conversation.findMany({
@@ -735,6 +738,74 @@ describe('WhatsApp attendance (integration)', () => {
     });
   });
 
+  it('relays repeated presence transitions only to the owning tenant without persisting events', async () => {
+    const instanceName = `presence-${randomUUID()}`;
+    const jid = '5511999999999@s.whatsapp.net';
+    await createInstance(ownerA, instanceName);
+    await postWebhook(evolutionPayload(instanceName, randomUUID(), 'Olá', jid));
+    const conversation = await prisma.conversation.findFirstOrThrow({
+      where: { tenantId: ownerA.tenantId },
+    });
+    const emit = vi.spyOn(app.get(RealtimeService), 'emitToTenant');
+    try {
+      for (const state of ['composing', 'paused', 'composing', 'recording', 'unavailable']) {
+        const response = await postWebhook({
+          event: 'presence.update',
+          instance: instanceName,
+          data: { id: jid, presences: { [jid]: { lastKnownPresence: state } } },
+        });
+        expect(response.statusCode).toBe(200);
+        expect(emit).toHaveBeenLastCalledWith(ownerA.tenantId, 'conversation.presence', {
+          conversationId: conversation.id,
+          participantId: jid,
+          state,
+        });
+      }
+      expect(emit).toHaveBeenCalledTimes(5);
+      await postWebhook({
+        event: 'presence.update',
+        instance: instanceName,
+        data: {
+          id: 'unknown@s.whatsapp.net',
+          presences: { [jid]: { lastKnownPresence: 'composing' } },
+        },
+      });
+      await postWebhook({
+        event: 'presence.update',
+        instance: instanceName,
+        data: { id: jid, presences: null },
+      });
+      expect(emit).toHaveBeenCalledTimes(5);
+      expect(
+        await prisma.webhookEvent.count({
+          where: { tenantId: ownerA.tenantId, eventType: 'presence.update' },
+        }),
+      ).toBe(0);
+    } finally {
+      emit.mockRestore();
+    }
+  });
+
+  it('resolves direct contact photos with caching and tenant isolation', async () => {
+    const instanceName = `contact-avatar-${randomUUID()}`;
+    const jid = '5511999999999@s.whatsapp.net';
+    await createInstance(ownerA, instanceName);
+    await postWebhook(evolutionPayload(instanceName, randomUUID(), 'Olá', jid));
+    const conversation = await prisma.conversation.findFirstOrThrow({
+      where: { tenantId: ownerA.tenantId },
+    });
+    const url = `/api/conversations/${conversation.id}/participant-avatar?jid=${encodeURIComponent(jid)}`;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const response = await app.inject({ method: 'GET', url, headers: authHeaders(ownerA) });
+      expect(response.statusCode).toBe(200);
+      expect(response.json().url).toBe(evolution.avatarUrl);
+    }
+    expect(evolution.avatarLookups).toEqual([jid]);
+    const foreign = await app.inject({ method: 'GET', url, headers: authHeaders(ownerB) });
+    expect(foreign.statusCode).toBe(404);
+    expect(evolution.avatarLookups).toEqual([jid]);
+  });
+
   describe('conversations and messages', () => {
     async function seedConversation(): Promise<{
       conversationId: string;
@@ -796,8 +867,12 @@ describe('WhatsApp attendance (integration)', () => {
       const instanceB = `filter-b-${randomUUID()}`;
       await createInstance(ownerA, instanceA);
       await createInstance(ownerA, instanceB);
-      await postWebhook(evolutionPayload(instanceA, randomUUID(), 'a', '5511888888888@s.whatsapp.net'));
-      await postWebhook(evolutionPayload(instanceB, randomUUID(), 'b', '5511777777777@s.whatsapp.net'));
+      await postWebhook(
+        evolutionPayload(instanceA, randomUUID(), 'a', '5511888888888@s.whatsapp.net'),
+      );
+      await postWebhook(
+        evolutionPayload(instanceB, randomUUID(), 'b', '5511777777777@s.whatsapp.net'),
+      );
 
       const instanceList = await app.inject({
         method: 'GET',
@@ -885,9 +960,7 @@ describe('WhatsApp attendance (integration)', () => {
         .toBuffer();
       evolution.mediaBase64 = original.toString('base64');
 
-      const response = await postWebhook(
-        imagePayload(instanceName, randomUUID(), 'minha legenda'),
-      );
+      const response = await postWebhook(imagePayload(instanceName, randomUUID(), 'minha legenda'));
       expect(response.statusCode).toBe(200);
 
       const message = await prisma.message.findFirstOrThrow({
@@ -923,7 +996,9 @@ describe('WhatsApp attendance (integration)', () => {
         where: { tenantId: ownerA.tenantId, type: 'IMAGE' },
       });
       expect((message.metadata as { mediaError?: string }).mediaError).toBe('fetch_failed');
-      const attachments = await prisma.messageAttachment.count({ where: { messageId: message.id } });
+      const attachments = await prisma.messageAttachment.count({
+        where: { messageId: message.id },
+      });
       expect(attachments).toBe(0);
     });
 
@@ -999,7 +1074,12 @@ describe('WhatsApp attendance (integration)', () => {
       const instanceName = `sticker-${randomUUID()}`;
       await createInstance(ownerA, instanceName);
       const sticker = await sharp({
-        create: { width: 512, height: 512, channels: 4, background: { r: 255, g: 0, b: 0, alpha: 0 } },
+        create: {
+          width: 512,
+          height: 512,
+          channels: 4,
+          background: { r: 255, g: 0, b: 0, alpha: 0 },
+        },
       })
         .webp()
         .toBuffer();
@@ -1050,7 +1130,9 @@ describe('WhatsApp attendance (integration)', () => {
         where: { tenantId: ownerA.tenantId, type: 'IMAGE' },
       });
       expect((message.metadata as { mediaError?: string }).mediaError).toBe('too_large');
-      const attachments = await prisma.messageAttachment.count({ where: { messageId: message.id } });
+      const attachments = await prisma.messageAttachment.count({
+        where: { messageId: message.id },
+      });
       expect(attachments).toBe(0);
     });
 

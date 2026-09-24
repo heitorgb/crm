@@ -175,6 +175,27 @@ responde `409 CONVERSATION_NOT_HUMAN_OWNED`. O bot só responde enquanto a conve
 
 ## Filas e realtime
 
+### Presença e apresentação do chat
+
+- O webhook aceita `presence.update` da Evolution e publica `conversation.presence` somente na
+  sala do tenant da instância, após localizar a conversa por tenant, instância e JID.
+- Presença é transitória: não grava `WebhookEvent` nem passa pela deduplicação de mensagens.
+  Assim, sequências repetidas de digitação continuam aparecendo. A interface mostra
+  “digitando…”/“gravando áudio…” na lista e no cabeçalho, limpa ao desconectar e expira em 10 segundos.
+- Instâncias novas assinam `PRESENCE_UPDATE`. Nas já conectadas, executar **Reconfigurar webhook**
+  em Atendimento → WhatsApp para ativar esse evento. O indicador depende de a Evolution emitir
+  a presença do contato.
+- Fotos dos contatos são buscadas na lista e no cabeçalho pelo endpoint autenticado
+  `participant-avatar`, reutilizando o cache de 6 horas e a validação de vínculo com a conversa.
+  Se o WhatsApp não disponibilizar a foto, permanecem as iniciais.
+- O chat ocupa a largura disponível e altura baseada na janela; o painel de detalhes começa
+  recolhido. Os balões limitam a largura no contêiner externo e acomodam textos longos e mídias.
+- Não há dependências ou migrations novas. Testes: `npm test` e
+  `npm run test:e2e -- test/integration/whatsapp.integration-spec.ts` no backend com PostgreSQL e
+  Redis configurados. Execução local: `npm run start:dev` no backend e `npm run dev` no frontend.
+
+Referência do evento: [implementação da Evolution](https://github.com/EvolutionAPI/evolution-api/blob/main/src/api/integrations/channel/whatsapp/whatsapp.baileys.service.ts).
+
 - `QUEUE_DRIVER=bullmq` (produção/dev) usa BullMQ sobre `REDIS_URL`; `inline` processa no próprio
   request e é o padrão em `NODE_ENV=test`, mantendo os testes determinísticos.
 - Jobs carregam `tenantId` explícito: `whatsapp.message.process`, `whatsapp.message.send`,

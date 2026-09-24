@@ -8,6 +8,7 @@ import type { ConversationMessage } from '@/types/attendance';
 import { attachmentPath } from './services/attendance-service';
 import { mediaErrorLabel } from './media-message-utils';
 import { useAttachmentBlob } from './queries';
+import { AudioPlayer } from './audio-player';
 
 function useObjectUrl(blob: Blob | undefined): string | null {
   const url = useMemo(() => (blob ? URL.createObjectURL(blob) : null), [blob]);
@@ -80,7 +81,7 @@ function MessageImage({ conversationId, message }: MediaProps) {
         <DialogTrigger asChild>
           <button
             type="button"
-            className="block overflow-hidden rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="block max-w-full overflow-hidden rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             aria-label="Abrir imagem"
           >
             {previewUrl ? (
@@ -90,7 +91,7 @@ function MessageImage({ conversationId, message }: MediaProps) {
                 className="max-h-72 w-full max-w-xs object-cover"
               />
             ) : (
-              <Skeleton className="h-40 w-56" />
+              <Skeleton className="h-40 w-56 max-w-full" />
             )}
           </button>
         </DialogTrigger>
@@ -145,14 +146,15 @@ function MessageAudio({ conversationId, message }: MediaProps) {
   });
   const url = useObjectUrl(query.data);
 
+  if (query.isError) {
+    return <p role="alert" className="text-xs">Áudio indisponível.</p>;
+  }
   if (!url) {
-    return <Skeleton className="h-10 w-56" />;
+    return <Skeleton className="h-14 w-72 max-w-full" />;
   }
 
   return (
-    <audio controls src={url} className="h-10 w-56">
-      <track kind="captions" />
-    </audio>
+    <AudioPlayer key={url} src={url} fileName={attachment.fileName} />
   );
 }
 
@@ -182,7 +184,7 @@ function MessageFile({ conversationId, message }: MediaProps) {
   return (
     <div className="flex items-center gap-2">
       <FileText className="size-5 shrink-0" />
-      <span className="max-w-[12rem] truncate text-sm">{attachment.fileName}</span>
+      <span className="min-w-0 max-w-[12rem] truncate text-sm">{attachment.fileName}</span>
       <Button
         variant="ghost"
         size="icon"

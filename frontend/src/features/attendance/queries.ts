@@ -12,6 +12,8 @@ export const attendanceKeys = {
     ['attendance', 'conversations', params] as const,
   conversation: (id: string) => ['attendance', 'conversation', id] as const,
   messages: (id: string) => ['attendance', 'messages', id] as const,
+  participantAvatar: (conversationId: string, jid: string) =>
+    ['attendance', 'participant-avatar', conversationId, jid] as const,
   attachment: (
     conversationId: string,
     messageId: string,
@@ -46,6 +48,15 @@ export function useConversationMessages(id: string | undefined) {
   });
 }
 
+export function useParticipantAvatar(conversationId: string, jid: string | null) {
+  return useQuery({
+    queryKey: attendanceKeys.participantAvatar(conversationId, jid ?? ''),
+    queryFn: () => attendanceService.resolveParticipantAvatar(conversationId, jid as string),
+    enabled: Boolean(jid),
+    staleTime: 30 * 60 * 1000,
+  });
+}
+
 export function useTakeoverConversation() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -58,6 +69,14 @@ export function useCloseConversation() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => attendanceService.close(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: attendanceKeys.all }),
+  });
+}
+
+export function useRefreshGroup() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => attendanceService.refreshGroup(id),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: attendanceKeys.all }),
   });
 }

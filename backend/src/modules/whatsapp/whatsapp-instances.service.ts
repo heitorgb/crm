@@ -51,7 +51,7 @@ export interface ResolvedInstance {
   status: WhatsAppInstanceStatus;
 }
 
-const WEBHOOK_EVENTS = ['MESSAGES_UPSERT'];
+const WEBHOOK_EVENTS = ['MESSAGES_UPSERT', 'GROUPS_UPSERT'];
 
 @Injectable()
 export class WhatsAppInstancesService {

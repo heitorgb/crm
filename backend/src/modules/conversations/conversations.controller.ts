@@ -66,6 +66,12 @@ export class ConversationsController {
     return this.conversations.close(id);
   }
 
+  @Post(':id/refresh-group')
+  @HttpCode(200)
+  refreshGroup(@Param('id', ParseUUIDPipe) id: string) {
+    return this.conversations.refreshGroupMetadata(id);
+  }
+
   @Get(':id/messages')
   listMessages(@Param('id', ParseUUIDPipe) id: string, @Query() query: PaginationQueryDto) {
     return this.messages.listByConversation(
@@ -73,6 +79,17 @@ export class ConversationsController {
       query.page ?? DEFAULT_PAGE,
       query.perPage ?? DEFAULT_PER_PAGE,
     );
+  }
+
+  @Get(':id/participant-avatar')
+  resolveParticipantAvatar(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('jid') jid: string | undefined,
+  ) {
+    if (!jid) {
+      throw new AppException('JID_REQUIRED', 'O parâmetro jid é obrigatório.', 400);
+    }
+    return this.conversations.resolveParticipantAvatar(id, jid);
   }
 
   @Post(':id/messages')

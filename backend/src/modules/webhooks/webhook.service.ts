@@ -9,7 +9,11 @@ import {
 } from '../../infrastructure/queue/job-queue.types.js';
 import { RealtimeService } from '../../infrastructure/realtime/realtime.service.js';
 import { ContactsService } from '../contacts/contacts.service.js';
-import { WhatsAppInstancesService } from '../whatsapp/whatsapp-instances.service.js';
+import { WhatsAppDirectoryService } from '../whatsapp/whatsapp-directory.service.js';
+import {
+  WhatsAppInstancesService,
+  type ResolvedInstance,
+} from '../whatsapp/whatsapp-instances.service.js';
 
 export interface WebhookIngestResult {
   accepted: boolean;
@@ -26,6 +30,7 @@ export class WebhookService {
     private readonly prisma: PrismaService,
     private readonly instances: WhatsAppInstancesService,
     private readonly contacts: ContactsService,
+    private readonly directory: WhatsAppDirectoryService,
     private readonly realtime: RealtimeService,
     @Inject(JOB_QUEUE) private readonly queue: JobQueue,
   ) {}
@@ -59,6 +64,11 @@ export class WebhookService {
       return { accepted: true, ignored: 'duplicate_event' };
     }
 
+    if (eventType === 'groups.upsert' || eventType === 'groups.update') {
+      await this.handleGroupUpsert(instance, payload);
+      return { accepted: true };
+    }
+
     if (eventType !== 'messages.upsert') {
       return { accepted: true, ignored: 'unsupported_event' };
     }
@@ -72,23 +82,25 @@ export class WebhookService {
       return { accepted: true, ignored: 'outbound_or_missing_contact' };
     }
 
-    const phone = extractPhone(remoteJid);
+    const isGroup = isGroupJid(remoteJid);
+    const participant = readString(key?.participant);
     const pushName = readString(data?.pushName);
 
-    const contact = phone
-      ? await this.contacts.findOrCreateByPhone({
-          tenantId: instance.tenantId,
-          phone,
-          name: pushName,
-        })
-      : null;
+    const contact = isGroup
+      ? null
+      : await this.resolveContact(instance.tenantId, extractPhone(remoteJid), pushName);
 
     const conversation = await this.findOrCreateConversation(
       instance.tenantId,
       instance.id,
       remoteJid,
       contact?.id ?? null,
+      isGroup,
     );
+
+    if (isGroup) {
+      await this.ensureGroupMetadata(conversation, instance, remoteJid);
+    }
 
     const message = data?.message;
     const content = extractText(message);
@@ -101,9 +113,12 @@ export class WebhookService {
       content,
       type,
       externalMessageId,
+      senderId: isGroup ? participant : null,
+      senderName: isGroup ? pushName : null,
       metadata: {
         remoteJid,
         pushName,
+        ...(participant ? { participantJid: participant } : {}),
         instanceName,
       },
     });
@@ -165,26 +180,35 @@ export class WebhookService {
     whatsappInstanceId: string,
     externalContactId: string,
     contactId: string | null,
+    isGroup: boolean,
   ) {
     const existing = await this.prisma.conversation.findFirst({
       where: { tenantId, whatsappInstanceId, externalContactId },
-      select: { id: true, status: true, contactId: true },
+      select: { id: true, status: true, contactId: true, groupName: true, isGroup: true },
     });
 
     if (existing) {
-      if (existing.status === ConversationStatus.CLOSED || !existing.contactId) {
-        return this.prisma.conversation.update({
-          where: { id: existing.id },
-          data: {
-            ...(existing.status === ConversationStatus.CLOSED
-              ? { status: ConversationStatus.OPEN, closedAt: null }
-              : {}),
-            ...(existing.contactId ? {} : { contactId }),
-          },
-          select: { id: true, status: true },
-        });
+      const data: Prisma.ConversationUncheckedUpdateInput = {};
+      if (existing.status === ConversationStatus.CLOSED) {
+        data.status = ConversationStatus.OPEN;
+        data.closedAt = null;
       }
-      return existing;
+      if (!isGroup && !existing.contactId && contactId) {
+        data.contactId = contactId;
+      }
+      if (isGroup && !existing.isGroup) {
+        data.isGroup = true;
+      }
+
+      if (Object.keys(data).length === 0) {
+        return existing;
+      }
+
+      return this.prisma.conversation.update({
+        where: { id: existing.id },
+        data,
+        select: { id: true, status: true, groupName: true },
+      });
     }
 
     return this.prisma.conversation.create({
@@ -193,10 +217,86 @@ export class WebhookService {
         whatsappInstanceId,
         externalContactId,
         contactId,
+        isGroup,
         status: ConversationStatus.OPEN,
       },
-      select: { id: true, status: true },
+      select: { id: true, status: true, groupName: true },
     });
+  }
+
+  private async resolveContact(tenantId: string, phone: string | null, name: string | null) {
+    if (!phone) {
+      return null;
+    }
+    return this.contacts.findOrCreateByPhone({ tenantId, phone, name });
+  }
+
+  private async ensureGroupMetadata(
+    conversation: { id: string; groupName: string | null },
+    instance: ResolvedInstance,
+    groupJid: string,
+  ): Promise<void> {
+    if (conversation.groupName) {
+      return;
+    }
+
+    const info = await this.directory.resolveGroupInfo(instance.instanceName, groupJid);
+    if (!info) {
+      return;
+    }
+
+    const data: Prisma.ConversationUpdateInput = {};
+    if (info.name) data.groupName = info.name;
+    if (info.avatarUrl) data.avatarUrl = info.avatarUrl;
+    if (Object.keys(data).length === 0) {
+      return;
+    }
+
+    await this.prisma.conversation.update({ where: { id: conversation.id }, data });
+    this.realtime.emitToTenant(instance.tenantId, 'conversation.updated', {
+      conversationId: conversation.id,
+    });
+  }
+
+  private async handleGroupUpsert(
+    instance: ResolvedInstance,
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    const groups = toArray(payload.data).filter(isRecord);
+
+    for (const group of groups) {
+      const groupJid = readString(group.id) ?? readString(group.groupJid);
+      if (!groupJid) {
+        continue;
+      }
+
+      const conversation = await this.prisma.conversation.findFirst({
+        where: {
+          tenantId: instance.tenantId,
+          whatsappInstanceId: instance.id,
+          externalContactId: groupJid,
+        },
+        select: { id: true },
+      });
+      if (!conversation) {
+        continue;
+      }
+
+      const subject = readString(group.subject) ?? readString(group.name);
+      const pictureUrl =
+        readString(group.pictureUrl) ??
+        readString(group.profilePictureUrl) ??
+        readString(group.avatar);
+
+      const data: Prisma.ConversationUpdateInput = { isGroup: true };
+      if (subject) data.groupName = subject;
+      if (pictureUrl) data.avatarUrl = pictureUrl;
+
+      await this.prisma.conversation.update({ where: { id: conversation.id }, data });
+      this.realtime.emitToTenant(instance.tenantId, 'conversation.updated', {
+        conversationId: conversation.id,
+      });
+    }
   }
 
   private async persistInboundMessage(input: {
@@ -205,6 +305,8 @@ export class WebhookService {
     content: string | null;
     type: MessageType;
     externalMessageId: string | null;
+    senderId: string | null;
+    senderName: string | null;
     metadata: Record<string, unknown>;
   }) {
     try {
@@ -217,6 +319,8 @@ export class WebhookService {
           content: input.content,
           externalMessageId: input.externalMessageId,
           status: 'RECEIVED',
+          senderId: input.senderId,
+          senderName: input.senderName,
           metadata: input.metadata as Prisma.InputJsonValue,
         },
         select: { id: true },
@@ -260,6 +364,10 @@ function readInstanceName(payload: Record<string, unknown>): string | null {
   }
   const data = isRecord(payload.data) ? payload.data : null;
   return data ? readString(data.instance) : null;
+}
+
+function isGroupJid(remoteJid: string): boolean {
+  return remoteJid.endsWith('@g.us');
 }
 
 function extractPhone(remoteJid: string): string | null {
@@ -320,6 +428,13 @@ function isMediaType(type: MessageType): boolean {
 
 function readString(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+function toArray(value: unknown): unknown[] {
+  if (Array.isArray(value)) {
+    return value;
+  }
+  return value === undefined || value === null ? [] : [value];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

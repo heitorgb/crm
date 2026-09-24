@@ -24,6 +24,8 @@ export interface MessageView {
   content: string | null;
   externalMessageId: string | null;
   status: MessageStatus;
+  senderId: string | null;
+  senderName: string | null;
   metadata: Prisma.JsonValue;
   occurredAt: Date;
   createdAt: Date;
@@ -36,6 +38,8 @@ export interface PersistInboundInput {
   content: string | null;
   externalMessageId?: string | null;
   type?: MessageType;
+  senderId?: string | null;
+  senderName?: string | null;
   metadata?: Record<string, unknown>;
   occurredAt?: Date;
 }
@@ -152,6 +156,8 @@ export class MessagesService {
           content: input.content,
           externalMessageId: input.externalMessageId ?? null,
           status: MessageStatus.RECEIVED,
+          senderId: input.senderId ?? null,
+          senderName: input.senderName ?? null,
           metadata: (input.metadata ?? {}) as Prisma.InputJsonValue,
           ...(input.occurredAt ? { occurredAt: input.occurredAt } : {}),
         },
@@ -309,6 +315,8 @@ function toMessageView(message: PrismaMessage): MessageView {
     content: message.content,
     externalMessageId: message.externalMessageId,
     status: message.status,
+    senderId: message.senderId,
+    senderName: message.senderName,
     metadata: message.metadata,
     occurredAt: message.occurredAt,
     createdAt: message.createdAt,

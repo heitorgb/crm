@@ -33,6 +33,7 @@ export interface WhatsAppInstance {
 export interface ConversationLastMessage {
   content: string | null;
   direction: MessageDirection;
+  senderName: string | null;
   occurredAt: string;
 }
 
@@ -40,6 +41,9 @@ export interface Conversation {
   id: string;
   status: ConversationStatus;
   subject: string | null;
+  isGroup: boolean;
+  groupName: string | null;
+  avatarUrl: string | null;
   whatsappInstanceId: string;
   instanceName: string;
   externalContactId: string | null;
@@ -62,6 +66,8 @@ export interface ConversationMessage {
   content: string | null;
   externalMessageId: string | null;
   status: MessageStatus;
+  senderId: string | null;
+  senderName: string | null;
   metadata: Record<string, unknown> | null;
   occurredAt: string;
   createdAt: string;

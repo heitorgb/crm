@@ -32,12 +32,17 @@ class FakeEvolution {
   readonly sentAudio: { instance: string; number: string; audio: string }[] = [];
   readonly created: string[] = [];
   readonly webhooks: { instance: string; url: string; events: string[] }[] = [];
+  readonly groupLookups: string[] = [];
+  readonly avatarLookups: string[] = [];
   createInstanceError?: { status: number };
   mediaBase64?: string;
   mediaError?: { status: number };
   mediaMimeType?: string;
   mediaFileName?: string | null;
   mediaSize?: number;
+  groupSubject: string | null = 'Grupo Teste';
+  groupPictureUrl: string | null = 'https://cdn.example/group.jpg';
+  avatarUrl: string | null = 'https://cdn.example/avatar.jpg';
   private counter = 0;
 
   async createInstance(instanceName: string) {
@@ -98,6 +103,24 @@ class FakeEvolution {
       size: this.mediaSize ?? null,
     };
   }
+
+  async findGroupInfos(_instance: string, groupJid: string) {
+    this.groupLookups.push(groupJid);
+    if (!this.groupSubject && !this.groupPictureUrl) {
+      return null;
+    }
+    return {
+      groupJid,
+      subject: this.groupSubject,
+      pictureUrl: this.groupPictureUrl,
+      size: 3,
+    };
+  }
+
+  async fetchProfilePictureUrl(_instance: string, jid: string) {
+    this.avatarLookups.push(jid);
+    return this.avatarUrl;
+  }
 }
 
 const evolution = new FakeEvolution();
@@ -126,12 +149,17 @@ describe('WhatsApp attendance (integration)', () => {
     evolution.sentAudio.length = 0;
     evolution.created.length = 0;
     evolution.webhooks.length = 0;
+    evolution.groupLookups.length = 0;
+    evolution.avatarLookups.length = 0;
     evolution.createInstanceError = undefined;
     evolution.mediaBase64 = undefined;
     evolution.mediaError = undefined;
     evolution.mediaMimeType = undefined;
     evolution.mediaFileName = undefined;
     evolution.mediaSize = undefined;
+    evolution.groupSubject = 'Grupo Teste';
+    evolution.groupPictureUrl = 'https://cdn.example/group.jpg';
+    evolution.avatarUrl = 'https://cdn.example/avatar.jpg';
     ownerA = await seedTenant(app, prisma, { name: 'Wa Owner A', role: 'OWNER' });
     userA = await seedMember(app, prisma, ownerA.tenantId, { name: 'Wa User A', role: 'USER' });
     ownerB = await seedTenant(app, prisma, { name: 'Wa Owner B', role: 'OWNER' });
@@ -217,6 +245,37 @@ describe('WhatsApp attendance (integration)', () => {
         key: { remoteJid, fromMe: false, id: messageId },
         pushName: 'Contato Teste',
         message: { audioMessage: { mimetype: 'audio/ogg; codecs=opus', ptt: true } },
+      },
+    };
+  }
+
+  function groupPayload(
+    instanceName: string,
+    messageId: string,
+    text: string,
+    groupJid = '120363000000000000@g.us',
+    participant = '5511888888888@s.whatsapp.net',
+    pushName = 'Maria',
+  ) {
+    return {
+      event: 'messages.upsert',
+      instance: instanceName,
+      data: {
+        key: { remoteJid: groupJid, fromMe: false, id: messageId, participant },
+        pushName,
+        message: { conversation: text },
+      },
+    };
+  }
+
+  function groupUpsertPayload(instanceName: string, groupJid: string, subject: string) {
+    return {
+      event: 'groups.upsert',
+      instance: instanceName,
+      data: {
+        id: groupJid,
+        subject,
+        pictureUrl: 'https://cdn.example/updated.jpg',
       },
     };
   }
@@ -346,7 +405,7 @@ describe('WhatsApp attendance (integration)', () => {
 
       expect(evolution.created).toContain(instanceName);
       const webhook = evolution.webhooks.find((item) => item.instance === instanceName);
-      expect(webhook?.events).toEqual(['MESSAGES_UPSERT']);
+      expect(webhook?.events).toEqual(['MESSAGES_UPSERT', 'GROUPS_UPSERT']);
       expect(webhook?.url).toContain('/api/webhooks/evolution?token=');
       expect(JSON.stringify(response.json())).not.toContain('super-secret-webhook');
     });
@@ -517,6 +576,162 @@ describe('WhatsApp attendance (integration)', () => {
       expect(new Set(conversations.map((item) => item.contactId))).toEqual(
         new Set([contacts[0].id]),
       );
+    });
+  });
+
+  describe('groups', () => {
+    const groupJid = '120363111111111111@g.us';
+    const participant = '5511888888888@s.whatsapp.net';
+
+    it('creates a group conversation with name, avatar and message sender', async () => {
+      const instanceName = `group-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+
+      const response = await postWebhook(
+        groupPayload(instanceName, randomUUID(), 'Bom dia pessoal', groupJid, participant, 'Maria'),
+      );
+      expect(response.statusCode).toBe(200);
+      expect(response.json().accepted).toBe(true);
+
+      const conversation = await prisma.conversation.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId },
+      });
+      expect(conversation.isGroup).toBe(true);
+      expect(conversation.groupName).toBe('Grupo Teste');
+      expect(conversation.avatarUrl).toBe('https://cdn.example/group.jpg');
+      expect(conversation.contactId).toBeNull();
+      expect(conversation.externalContactId).toBe(groupJid);
+
+      const contacts = await prisma.contact.findMany({ where: { tenantId: ownerA.tenantId } });
+      expect(contacts).toHaveLength(0);
+
+      const message = await prisma.message.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId },
+      });
+      expect(message.senderId).toBe(participant);
+      expect(message.senderName).toBe('Maria');
+      expect(evolution.groupLookups).toContain(groupJid);
+    });
+
+    it('reuses the group conversation and does not re-fetch its name', async () => {
+      const instanceName = `group-reuse-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+
+      await postWebhook(groupPayload(instanceName, randomUUID(), 'Primeira', groupJid, participant));
+      await postWebhook(groupPayload(instanceName, randomUUID(), 'Segunda', groupJid, participant));
+
+      const conversations = await prisma.conversation.findMany({
+        where: { tenantId: ownerA.tenantId },
+      });
+      expect(conversations).toHaveLength(1);
+      expect(evolution.groupLookups).toHaveLength(1);
+    });
+
+    it('updates the group name and avatar from the groups webhook', async () => {
+      const instanceName = `group-upsert-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      await postWebhook(groupPayload(instanceName, randomUUID(), 'Olá', groupJid, participant));
+
+      const response = await postWebhook(
+        groupUpsertPayload(instanceName, groupJid, 'Grupo Renomeado'),
+      );
+      expect(response.statusCode).toBe(200);
+
+      const conversation = await prisma.conversation.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId },
+      });
+      expect(conversation.groupName).toBe('Grupo Renomeado');
+      expect(conversation.avatarUrl).toBe('https://cdn.example/updated.jpg');
+    });
+
+    it('refreshes an existing group conversation on demand', async () => {
+      const instanceName = `group-refresh-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      await postWebhook(groupPayload(instanceName, randomUUID(), 'Olá', groupJid, participant));
+
+      const conversation = await prisma.conversation.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId },
+      });
+
+      evolution.groupSubject = 'Nome Atualizado';
+
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/conversations/${conversation.id}/refresh-group`,
+        headers: authHeaders(ownerA),
+      });
+      expect(response.statusCode).toBe(200);
+      expect(response.json().groupName).toBe('Nome Atualizado');
+
+      const refreshed = await prisma.conversation.findUniqueOrThrow({
+        where: { id: conversation.id },
+      });
+      expect(refreshed.groupName).toBe('Nome Atualizado');
+      expect(refreshed.isGroup).toBe(true);
+    });
+
+    it('rejects refreshing a conversation that is not a group', async () => {
+      const instanceName = `group-invalid-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      await postWebhook(evolutionPayload(instanceName, randomUUID(), 'Oi'));
+
+      const conversation = await prisma.conversation.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId },
+      });
+
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/conversations/${conversation.id}/refresh-group`,
+        headers: authHeaders(ownerA),
+      });
+      expect(response.statusCode).toBe(400);
+      expect(response.json().code).toBe('NOT_A_GROUP');
+    });
+
+    it('sends a reply to the full group JID', async () => {
+      const instanceName = `group-send-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      await postWebhook(groupPayload(instanceName, randomUUID(), 'Olá', groupJid, participant));
+
+      const conversation = await prisma.conversation.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId },
+      });
+
+      const sent = await app.inject({
+        method: 'POST',
+        url: `/api/conversations/${conversation.id}/messages`,
+        headers: authHeaders(ownerA),
+        payload: { content: 'Respondendo no grupo' },
+      });
+      expect(sent.statusCode).toBe(201);
+      expect(evolution.sent).toHaveLength(1);
+      expect(evolution.sent[0].number).toBe(groupJid);
+    });
+
+    it('resolves a participant avatar only inside the owning tenant', async () => {
+      const instanceName = `group-avatar-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      await postWebhook(groupPayload(instanceName, randomUUID(), 'Olá', groupJid, participant));
+
+      const conversation = await prisma.conversation.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId },
+      });
+
+      const url = `/api/conversations/${conversation.id}/participant-avatar?jid=${encodeURIComponent(participant)}`;
+
+      const owned = await app.inject({ method: 'GET', url, headers: authHeaders(ownerA) });
+      expect(owned.statusCode).toBe(200);
+      expect(owned.json().url).toBe('https://cdn.example/avatar.jpg');
+
+      const foreign = await app.inject({ method: 'GET', url, headers: authHeaders(ownerB) });
+      expect(foreign.statusCode).toBe(404);
+
+      const unknown = await app.inject({
+        method: 'GET',
+        url: `/api/conversations/${conversation.id}/participant-avatar?jid=${encodeURIComponent('5599999999999@s.whatsapp.net')}`,
+        headers: authHeaders(ownerA),
+      });
+      expect(unknown.statusCode).toBe(404);
     });
   });
 

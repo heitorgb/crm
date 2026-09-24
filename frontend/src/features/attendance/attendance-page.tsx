@@ -15,6 +15,7 @@ import { EmptyState } from '@/components/common/empty-state';
 import { PageHeader } from '@/components/common/page-header';
 import { SearchInput } from '@/components/common/search-input';
 import { StatusBadge, type StatusTone } from '@/components/common/status-badge';
+import { UserAvatar } from '@/components/common/user-avatar';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import {
@@ -35,10 +36,12 @@ import {
   useConversation,
   useConversationMessages,
   useConversations,
+  useRefreshGroup,
   useSendConversationMedia,
   useSendConversationMessage,
 } from './queries';
 import { MessageMedia } from './message-media';
+import { SenderAvatar } from './sender-avatar';
 import { isMediaMessage, isMediaPending } from './media-message-utils';
 import { useAudioRecorder } from './use-audio-recorder';
 import { useAttendanceRealtime } from './use-realtime';
@@ -65,9 +68,11 @@ function formatDuration(totalSeconds: number): string {
   return `${minutes}:${seconds}`;
 }
 
-function contactLabel(
+function conversationLabel(
   conversation:
     | {
+        isGroup: boolean;
+        groupName: string | null;
         contactName: string | null;
         contactPhone: string | null;
         externalContactId: string | null;
@@ -76,6 +81,9 @@ function contactLabel(
 ): string {
   if (!conversation) {
     return 'Contato';
+  }
+  if (conversation.isGroup) {
+    return conversation.groupName ?? conversation.externalContactId ?? 'Grupo';
   }
   return (
     conversation.contactName ?? conversation.contactPhone ?? conversation.externalContactId ?? 'Contato'
@@ -109,6 +117,7 @@ export function AttendancePage() {
   const conversationQuery = useConversation(activeId ?? undefined);
   const messagesQuery = useConversationMessages(activeId ?? undefined);
   const closeConversation = useCloseConversation();
+  const refreshGroup = useRefreshGroup();
   const sendMessage = useSendConversationMessage();
   const sendMedia = useSendConversationMedia();
 
@@ -247,28 +256,44 @@ export function AttendancePage() {
                   type="button"
                   onClick={() => setSelectedId(item.id)}
                   className={cn(
-                    'w-full border-b border-border p-3 text-left transition-colors',
+                    'flex w-full gap-2 border-b border-border p-3 text-left transition-colors',
                     item.id === activeId ? 'bg-primary/5' : 'hover:bg-surface-hover',
                   )}
                 >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="truncate text-sm font-medium text-foreground">
-                      {contactLabel(item)}
-                    </span>
-                    <span className="shrink-0 text-[10px] text-muted-foreground">
-                      {item.lastMessageAt ? formatTime(item.lastMessageAt) : ''}
-                    </span>
-                  </div>
-                  <p className="truncate text-xs text-muted-foreground">
-                    {item.lastMessage?.content ?? 'Sem mensagens'}
-                  </p>
-                  <div className="flex items-center gap-1.5 pt-1">
-                    <StatusBadge tone={statusTone[item.status]}>
-                      {statusLabel[item.status]}
-                    </StatusBadge>
-                    <span className="truncate rounded-sm bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                      {item.instanceName}
-                    </span>
+                  <UserAvatar
+                    name={conversationLabel(item)}
+                    src={item.avatarUrl ?? undefined}
+                    className="size-9 shrink-0"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="truncate text-sm font-medium text-foreground">
+                        {conversationLabel(item)}
+                      </span>
+                      <span className="shrink-0 text-[10px] text-muted-foreground">
+                        {item.lastMessageAt ? formatTime(item.lastMessageAt) : ''}
+                      </span>
+                    </div>
+                    <p className="truncate text-xs text-muted-foreground">
+                      {item.lastMessage
+                        ? item.isGroup && item.lastMessage.senderName
+                          ? `${item.lastMessage.senderName}: ${item.lastMessage.content ?? ''}`.trim()
+                          : (item.lastMessage.content ?? 'Sem mensagens')
+                        : 'Sem mensagens'}
+                    </p>
+                    <div className="flex items-center gap-1.5 pt-1">
+                      <StatusBadge tone={statusTone[item.status]}>
+                        {statusLabel[item.status]}
+                      </StatusBadge>
+                      {item.isGroup ? (
+                        <span className="rounded-sm bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                          Grupo
+                        </span>
+                      ) : null}
+                      <span className="truncate rounded-sm bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                        {item.instanceName}
+                      </span>
+                    </div>
                   </div>
                 </button>
               ))
@@ -288,14 +313,24 @@ export function AttendancePage() {
           ) : (
             <>
               <div className="flex items-center justify-between gap-2 border-b border-border p-3">
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-semibold text-foreground">
-                    {contactLabel(conversation)}
-                  </p>
-                  <p className="truncate text-xs text-muted-foreground">
-                    WhatsApp: {conversation?.instanceName ?? '—'} ·{' '}
-                    {conversation?.contactPhone ?? conversation?.externalContactId ?? ''}
-                  </p>
+                <div className="flex min-w-0 items-center gap-2">
+                  <UserAvatar
+                    name={conversationLabel(conversation)}
+                    src={conversation?.avatarUrl ?? undefined}
+                    className="size-9 shrink-0"
+                  />
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-foreground">
+                      {conversationLabel(conversation)}
+                    </p>
+                    <p className="truncate text-xs text-muted-foreground">
+                      {conversation?.isGroup ? 'Grupo' : 'Contato'} · WhatsApp:{' '}
+                      {conversation?.instanceName ?? '—'}
+                      {conversation?.isGroup
+                        ? ''
+                        : ` · ${conversation?.contactPhone ?? conversation?.externalContactId ?? ''}`}
+                    </p>
+                  </div>
                 </div>
                 <div className="flex items-center gap-2">
                   {conversation ? (
@@ -338,47 +373,63 @@ export function AttendancePage() {
                   visibleMessages.map((message) => {
                     const isSticker = message.type === 'STICKER';
                     const isMedia = isMediaMessage(message);
+                    const showSender =
+                      conversation?.isGroup === true && message.direction === 'INBOUND';
                     return (
                       <div
                         key={message.id}
                         className={cn(
-                          'flex',
+                          'flex gap-2',
                           message.direction === 'OUTBOUND' ? 'justify-end' : 'justify-start',
                         )}
                       >
-                        <div
-                          className={cn(
-                            isSticker
-                              ? 'max-w-[50%]'
-                              : cn(
-                                  'max-w-[75%] rounded-lg px-3 py-2 text-sm shadow-sm',
-                                  message.direction === 'OUTBOUND'
-                                    ? 'bg-primary text-primary-foreground'
-                                    : 'border border-border bg-card text-foreground',
-                                ),
-                          )}
-                        >
-                          {isMedia ? (
-                            <MessageMedia
-                              conversationId={message.conversationId}
-                              message={message}
-                            />
-                          ) : (
-                            <p className="whitespace-pre-wrap">
-                              {message.content ?? `[${message.type.toLowerCase()}]`}
-                            </p>
-                          )}
-                          <span
+                        {showSender ? (
+                          <SenderAvatar
+                            conversationId={message.conversationId}
+                            jid={message.senderId}
+                            name={message.senderName}
+                          />
+                        ) : null}
+                        <div className={cn('flex flex-col', message.direction === 'OUTBOUND' ? 'items-end' : 'items-start')}>
+                          {showSender && message.senderName ? (
+                            <span className="mb-0.5 px-1 text-[11px] font-medium text-muted-foreground">
+                              {message.senderName}
+                            </span>
+                          ) : null}
+                          <div
                             className={cn(
-                              'mt-1 block text-[10px]',
-                              !isSticker && message.direction === 'OUTBOUND'
-                                ? 'text-primary-foreground/70'
-                                : 'text-muted-foreground',
+                              isSticker
+                                ? 'max-w-[50%]'
+                                : cn(
+                                    'max-w-[75%] rounded-lg px-3 py-2 text-sm shadow-sm',
+                                    message.direction === 'OUTBOUND'
+                                      ? 'bg-primary text-primary-foreground'
+                                      : 'border border-border bg-card text-foreground',
+                                  ),
                             )}
                           >
-                            {formatTime(message.occurredAt)}
-                            {message.status === 'FAILED' ? ' · falha no envio' : ''}
-                          </span>
+                            {isMedia ? (
+                              <MessageMedia
+                                conversationId={message.conversationId}
+                                message={message}
+                              />
+                            ) : (
+                              <p className="whitespace-pre-wrap">
+                                {message.content ?? `[${message.type.toLowerCase()}]`}
+                              </p>
+                            )}
+                            <span
+                              className={cn(
+                                'mt-1 block text-[10px]',
+                                !isSticker && message.direction === 'OUTBOUND'
+                                  ? 'text-primary-foreground/70'
+                                  : 'text-muted-foreground',
+                              )}
+                            >
+                              {formatTime(message.occurredAt)}
+                              {message.status === 'FAILED' ? ' · falha no envio' : ''}
+                            </span>
+                          </div>
                         </div>
                       </div>
                     );
@@ -472,35 +523,68 @@ export function AttendancePage() {
 
         {panelOpen ? (
           <Card className="hidden h-[70vh] flex-col overflow-y-auto p-4 xl:flex">
-            <p className="text-sm font-semibold text-foreground">Contato</p>
+            <p className="text-sm font-semibold text-foreground">
+              {conversation?.isGroup ? 'Grupo' : 'Contato'}
+            </p>
             {conversation ? (
-              <div className="mt-3 space-y-3 text-sm">
-                <div>
-                  <p className="text-xs text-muted-foreground">Nome</p>
-                  <p>{conversation.contactName ?? '—'}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Telefone</p>
-                  <p className="font-mono text-xs">
-                    {conversation.contactPhone ?? conversation.externalContactId ?? '—'}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">WhatsApp</p>
-                  <p className="text-xs">{conversation.instanceName}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Status</p>
-                  <StatusBadge tone={statusTone[conversation.status]}>
-                    {statusLabel[conversation.status]}
-                  </StatusBadge>
-                </div>
-                {conversation.contactId ? (
-                  <Button variant="outline" size="sm" asChild>
-                    <Link to={`/contatos/${conversation.contactId}`}>Ver contato</Link>
+              conversation.isGroup ? (
+                <div className="mt-3 space-y-3 text-sm">
+                  <div className="flex items-center gap-2">
+                    <UserAvatar
+                      name={conversationLabel(conversation)}
+                      src={conversation.avatarUrl ?? undefined}
+                      className="size-10"
+                    />
+                    <p className="font-medium">{conversation.groupName ?? '—'}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">WhatsApp</p>
+                    <p className="text-xs">{conversation.instanceName}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Status</p>
+                    <StatusBadge tone={statusTone[conversation.status]}>
+                      {statusLabel[conversation.status]}
+                    </StatusBadge>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void refreshGroup.mutateAsync(conversation.id)}
+                    disabled={refreshGroup.isPending}
+                  >
+                    {refreshGroup.isPending ? 'Atualizando…' : 'Atualizar dados do grupo'}
                   </Button>
-                ) : null}
-              </div>
+                </div>
+              ) : (
+                <div className="mt-3 space-y-3 text-sm">
+                  <div>
+                    <p className="text-xs text-muted-foreground">Nome</p>
+                    <p>{conversation.contactName ?? '—'}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Telefone</p>
+                    <p className="font-mono text-xs">
+                      {conversation.contactPhone ?? conversation.externalContactId ?? '—'}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">WhatsApp</p>
+                    <p className="text-xs">{conversation.instanceName}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Status</p>
+                    <StatusBadge tone={statusTone[conversation.status]}>
+                      {statusLabel[conversation.status]}
+                    </StatusBadge>
+                  </div>
+                  {conversation.contactId ? (
+                    <Button variant="outline" size="sm" asChild>
+                      <Link to={`/contatos/${conversation.contactId}`}>Ver contato</Link>
+                    </Button>
+                  ) : null}
+                </div>
+              )
             ) : (
               <p className="mt-3 text-xs text-muted-foreground">Nenhuma conversa selecionada.</p>
             )}

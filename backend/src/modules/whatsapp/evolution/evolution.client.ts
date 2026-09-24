@@ -53,6 +53,13 @@ export interface EvolutionMediaContent {
   size: number | null;
 }
 
+export interface EvolutionGroupInfo {
+  groupJid: string;
+  subject: string | null;
+  pictureUrl: string | null;
+  size: number | null;
+}
+
 @Injectable()
 export class EvolutionClient {
   private readonly logger = new Logger(EvolutionClient.name);
@@ -166,6 +173,43 @@ export class EvolutionClient {
       caption: readString(record.caption),
       size,
     };
+  }
+
+  async findGroupInfos(instanceName: string, groupJid: string): Promise<EvolutionGroupInfo | null> {
+    const raw = await this.request(
+      'GET',
+      `/group/findGroupInfos/${encodeURIComponent(instanceName)}?groupJid=${encodeURIComponent(groupJid)}`,
+    );
+
+    if (!isRecord(raw)) {
+      return null;
+    }
+
+    const subject = readString(raw.subject) ?? readString(raw.name);
+    const pictureUrl =
+      readString(raw.pictureUrl) ?? readString(raw.profilePictureUrl) ?? readString(raw.avatar);
+    const size = typeof raw.size === 'number' ? raw.size : null;
+
+    return {
+      groupJid: readString(raw.id) ?? readString(raw.groupJid) ?? groupJid,
+      subject,
+      pictureUrl,
+      size,
+    };
+  }
+
+  async fetchProfilePictureUrl(instanceName: string, jid: string): Promise<string | null> {
+    const raw = await this.request(
+      'POST',
+      `/chat/fetchProfilePictureUrl/${encodeURIComponent(instanceName)}`,
+      { number: jid },
+    );
+
+    if (!isRecord(raw)) {
+      return null;
+    }
+
+    return readString(raw.profilePictureUrl) ?? readString(raw.pictureUrl) ?? readString(raw.url);
   }
 
   private async request(method: string, path: string, body?: unknown): Promise<unknown> {

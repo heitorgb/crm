@@ -39,6 +39,11 @@ export const attendanceService = {
 
   getConversation: (id: string) => apiRequest<Conversation>(`/conversations/${id}`),
 
+  resolveParticipantAvatar: (id: string, jid: string) =>
+    apiRequest<{ url: string | null }>(
+      `/conversations/${id}/participant-avatar${toQueryString({ jid })}`,
+    ),
+
   listMessages: (id: string, page = 1, perPage = 50) =>
     apiRequest<PageResult<ConversationMessage>>(
       `/conversations/${id}/messages${toQueryString({ page, perPage })}`,
@@ -49,6 +54,9 @@ export const attendanceService = {
 
   close: (id: string) =>
     apiRequest<Conversation>(`/conversations/${id}/close`, { method: 'POST', body: {} }),
+
+  refreshGroup: (id: string) =>
+    apiRequest<Conversation>(`/conversations/${id}/refresh-group`, { method: 'POST', body: {} }),
 
   sendMessage: (id: string, content: string) =>
     apiRequest<{ ok: true }>(`/conversations/${id}/messages`, {

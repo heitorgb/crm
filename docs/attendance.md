@@ -26,10 +26,13 @@ Lead no WhatsApp
 - `WhatsAppInstance`: `tenantId`, `name`, `instanceName` (único global, chave de resolução do
   webhook), `externalInstanceId?`, `phone?`, `status`, `credentialsEncrypted?`, `active`.
 - `Conversation`: `tenantId`, `whatsappInstanceId`, `externalContactId?` (JID/número, chave de
-  dedupe por instância), `leadId?`, `customerId?`, `contactId?`, `status`, `subject?`,
-  `lastMessageAt?`, `closedAt?`.
+  dedupe por instância), `leadId?`, `customerId?`, `contactId?`, `status`, `subject?`, `isGroup`,
+  `groupName?` (assunto do grupo), `avatarUrl?` (foto do grupo), `lastMessageAt?`, `closedAt?`.
 - `Message`: `conversationId`, `direction`, `type`, `content?`, `externalMessageId?`
-  (`UNIQUE (tenantId, externalMessageId)` = idempotência), `status`, `metadata`, `occurredAt`.
+  (`UNIQUE (tenantId, externalMessageId)` = idempotência), `status`, `senderId?` (JID do
+  participante em grupos), `senderName?` (pushName), `metadata`, `occurredAt`.
+- `WhatsAppAvatar`: cache de foto de perfil por instância/JID (`tenantId`, `whatsappInstanceId`,
+  `jid`, `url?`, `fetchedAt`), `UNIQUE (whatsappInstanceId, jid)`.
 - `MessageAttachment`: **metadados** de mídia (`storageKey`, `fileName`, `mimeType`, `size`,
   `metadata`). Nenhum binário é gravado no PostgreSQL.
 - `Ticket`: `subject`, `status`, `priority`, `assigneeId?`, `conversationId?`, `leadId?`,
@@ -66,7 +69,29 @@ DELETE /instance/logout/{instanceName}
 GET    /instance/connectionState/{instanceName}
 POST   /message/sendText/{instanceName}   body { number, text }
 POST   /webhook/set/{instanceName}        body { webhook: { enabled, url, events, base64 } }
+GET    /group/findGroupInfos/{instanceName}?groupJid={jid}
+POST   /chat/fetchProfilePictureUrl/{instanceName}   body { number }
 ```
+
+`number` aceita tanto telefone (dígitos) quanto JID completo de grupo (`...@g.us`). O envio
+humano para grupos usa o JID completo; para contatos, apenas os dígitos.
+
+### Grupos
+
+- Mensagens de grupo são identificadas por `remoteJid` terminando em `@g.us`. O grupo é
+  armazenado na mesma `Conversation` (chave `externalContactId`), com `isGroup = true` e **sem**
+  `Contact`.
+- O remetente de cada mensagem é persistido em `senderId` (JID de `key.participant`) e
+  `senderName` (pushName), permitindo exibir nome e foto por mensagem.
+- Nome e foto do grupo: na primeira mensagem (`GET /group/findGroupInfos`) e via evento
+  `GROUPS_UPSERT` (atualizações). A foto do grupo fica em `Conversation.avatarUrl`.
+- Fotos de participantes são resolvidas sob demanda e cacheadas em `WhatsAppAvatar`
+  (`POST /chat/fetchProfilePictureUrl`). A Evolution pode retornar `null` por privacidade; nesse
+  caso a UI usa as iniciais.
+- Conversas de grupo criadas antes desta funcionalidade não têm nome/foto no banco. Elas são
+  atualizadas automaticamente no boot (`backfill` limitado, best-effort) e podem ser forçadas
+  pela ação **Atualizar dados do grupo** (`POST /api/conversations/:id/refresh-group`).
+- Instâncias existentes precisam de **Reconfigurar webhook** para receber `GROUPS_UPSERT`.
 
 ### Conectar um número (UI)
 
@@ -77,8 +102,9 @@ Em **Atendimento → WhatsApp** (`/atendimento/whatsapp`):
    existir, usa `GET /instance/connect`; retorna o **QR code** (base64) e/ou o **código de
    pareamento**.
 3. A tela exibe o QR, permite **gerar novo QR** e faz *poll* de status até **Conectado**.
-4. O **webhook é configurado automaticamente** (evento `MESSAGES_UPSERT`) com o token do segredo
-   (da instância ou `EVOLUTION_WEBHOOK_SECRET`); há também a ação **Reconfigurar webhook**.
+4. O **webhook é configurado automaticamente** (eventos `MESSAGES_UPSERT` e `GROUPS_UPSERT`) com o
+   token do segredo (da instância ou `EVOLUTION_WEBHOOK_SECRET`); há também a ação
+   **Reconfigurar webhook**.
 5. Desconectar/excluir a instância permanecem disponíveis.
 
 ### Requisitos de configuração
@@ -111,8 +137,10 @@ Em **Atendimento → WhatsApp** (`/atendimento/whatsapp`):
 | PATCH  | `/api/conversations/:id`                         | autenticado      |
 | POST   | `/api/conversations/:id/takeover`                | autenticado      |
 | POST   | `/api/conversations/:id/close`                   | autenticado      |
+| POST   | `/api/conversations/:id/refresh-group`           | autenticado      |
 | GET    | `/api/conversations/:id/messages`                | autenticado      |
 | POST   | `/api/conversations/:id/messages`                | autenticado      |
+| GET    | `/api/conversations/:id/participant-avatar`      | autenticado      |
 | GET    | `/api/tickets`                                   | autenticado      |
 | GET    | `/api/tickets/:id`                               | autenticado      |
 | POST   | `/api/tickets`                                   | autenticado      |

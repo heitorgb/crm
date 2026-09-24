@@ -7,6 +7,7 @@ import { TenantContextService } from '../../common/tenant-context/tenant-context
 import type { Env } from '../../config/env.validation.js';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service.js';
 import { RealtimeService } from '../../infrastructure/realtime/realtime.service.js';
+import { WhatsAppDirectoryService } from '../whatsapp/whatsapp-directory.service.js';
 import {
   ConversationProcessingService,
   type DeliverMediaInput,
@@ -21,6 +22,7 @@ import type {
 export interface ConversationLastMessageView {
   content: string | null;
   direction: MessageDirection;
+  senderName: string | null;
   occurredAt: Date;
 }
 
@@ -28,6 +30,9 @@ export interface ConversationView {
   id: string;
   status: ConversationStatus;
   subject: string | null;
+  isGroup: boolean;
+  groupName: string | null;
+  avatarUrl: string | null;
   whatsappInstanceId: string;
   instanceName: string;
   externalContactId: string | null;
@@ -49,7 +54,7 @@ const CONVERSATION_INCLUDE = {
   messages: {
     take: 1,
     orderBy: { occurredAt: 'desc' as const },
-    select: { content: true, direction: true, occurredAt: true },
+    select: { content: true, direction: true, senderName: true, occurredAt: true },
   },
 } satisfies Prisma.ConversationInclude;
 
@@ -61,6 +66,7 @@ export class ConversationsService {
     private readonly prisma: PrismaService,
     private readonly tenantContext: TenantContextService,
     private readonly processing: ConversationProcessingService,
+    private readonly directory: WhatsAppDirectoryService,
     private readonly realtime: RealtimeService,
     private readonly config: ConfigService<Env, true>,
   ) {}
@@ -76,6 +82,7 @@ export class ConversationsService {
     if (query.search) {
       where.OR = [
         { subject: { contains: query.search, mode: 'insensitive' } },
+        { groupName: { contains: query.search, mode: 'insensitive' } },
         { contact: { name: { contains: query.search, mode: 'insensitive' } } },
         { contact: { phone: { contains: query.search, mode: 'insensitive' } } },
         { externalContactId: { contains: query.search, mode: 'insensitive' } },
@@ -226,6 +233,80 @@ export class ConversationsService {
     await this.processing.deliverMedia(tenantId, id, input);
   }
 
+  /** Resolves the WhatsApp avatar of a participant that belongs to this conversation. */
+  async resolveParticipantAvatar(id: string, jid: string): Promise<{ url: string | null }> {
+    const { tenantId } = this.tenantContext.requireContext();
+    const conversation = await this.prisma.conversation.findFirst({
+      where: { id, tenantId },
+      select: {
+        id: true,
+        externalContactId: true,
+        whatsappInstanceId: true,
+        instance: { select: { instanceName: true } },
+      },
+    });
+
+    if (!conversation) {
+      throw new ConversationNotFoundError();
+    }
+
+    const participantMessage = await this.prisma.message.findFirst({
+      where: { tenantId, conversationId: id, senderId: jid },
+      select: { id: true },
+    });
+    const isParticipant =
+      conversation.externalContactId === jid || participantMessage !== null;
+
+    if (!isParticipant) {
+      throw new AppException('AVATAR_NOT_AVAILABLE', 'Participante não encontrado.', 404);
+    }
+
+    const url = await this.directory.resolveAvatar({
+      tenantId,
+      whatsappInstanceId: conversation.whatsappInstanceId,
+      instanceName: conversation.instance.instanceName,
+      jid,
+    });
+
+    return { url };
+  }
+
+  /** Re-resolves group name/avatar from Evolution for an existing conversation. */
+  async refreshGroupMetadata(id: string): Promise<ConversationView> {
+    const { tenantId } = this.tenantContext.requireContext();
+    const conversation = await this.prisma.conversation.findFirst({
+      where: { id, tenantId },
+      select: {
+        id: true,
+        externalContactId: true,
+        instance: { select: { instanceName: true } },
+      },
+    });
+
+    if (!conversation) {
+      throw new ConversationNotFoundError();
+    }
+
+    const groupJid = conversation.externalContactId;
+    if (!groupJid || !groupJid.endsWith('@g.us')) {
+      throw new AppException('NOT_A_GROUP', 'A conversa não é um grupo.', 400);
+    }
+
+    const info = await this.directory.resolveGroupInfo(
+      conversation.instance.instanceName,
+      groupJid,
+    );
+
+    const data: Prisma.ConversationUpdateInput = { isGroup: true };
+    if (info?.name) data.groupName = info.name;
+    if (info?.avatarUrl) data.avatarUrl = info.avatarUrl;
+
+    await this.prisma.conversation.update({ where: { id }, data });
+    this.realtime.emitToTenant(tenantId, 'conversation.updated', { conversationId: id });
+
+    return this.findOne(id);
+  }
+
   private async requireConversation(tenantId: string, id: string): Promise<void> {
     const conversation = await this.prisma.conversation.findFirst({
       where: { id, tenantId },
@@ -253,6 +334,9 @@ function toConversationView(conversation: PrismaConversation): ConversationView 
     id: conversation.id,
     status: conversation.status,
     subject: conversation.subject,
+    isGroup: conversation.isGroup,
+    groupName: conversation.groupName,
+    avatarUrl: conversation.avatarUrl,
     whatsappInstanceId: conversation.whatsappInstanceId,
     instanceName: conversation.instance.name,
     externalContactId: conversation.externalContactId,
@@ -266,6 +350,7 @@ function toConversationView(conversation: PrismaConversation): ConversationView 
       ? {
           content: lastMessage.content,
           direction: lastMessage.direction,
+          senderName: lastMessage.senderName,
           occurredAt: lastMessage.occurredAt,
         }
       : null,

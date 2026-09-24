@@ -275,7 +275,7 @@ export class ConversationProcessingService implements OnModuleInit {
       }
 
       const conversation = message.conversation;
-      const destination = normalizePhone(conversation.externalContactId ?? '');
+      const destination = deliveryDestination(conversation.externalContactId);
 
       try {
         if (!this.evolution.configured || !destination) {
@@ -328,7 +328,7 @@ export class ConversationProcessingService implements OnModuleInit {
     file: { mimeType: string; fileName: string } | null,
     caption: string | null,
   ): Promise<void> {
-    const destination = normalizePhone(conversation.externalContactId ?? '');
+    const destination = deliveryDestination(conversation.externalContactId);
 
     try {
       if (!this.evolution.configured || !destination) {
@@ -473,6 +473,11 @@ function asString(value: unknown): string | null {
 
 function normalizePhone(value: string): string {
   return value.replace(/\D/g, '');
+}
+
+function deliveryDestination(externalContactId: string | null): string {
+  const value = externalContactId ?? '';
+  return value.endsWith('@g.us') ? value : normalizePhone(value);
 }
 
 function decodeBase64(value: string): Buffer | null {

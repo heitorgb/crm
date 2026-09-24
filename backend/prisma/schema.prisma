@@ -69,6 +69,7 @@ model Tenant {
   tags               Tag[]
   customerTags       CustomerTag[]
   whatsappInstances  WhatsAppInstance[]
+  whatsappAvatars    WhatsAppAvatar[]
   conversations      Conversation[]
   messages           Message[]
   messageAttachments MessageAttachment[]
@@ -218,6 +219,7 @@ model WhatsAppInstance {
 
   tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   conversations Conversation[]
+  avatars       WhatsAppAvatar[]
 
   @@index([tenantId, status])
   @@index([tenantId, createdAt])
@@ -233,6 +235,9 @@ model Conversation {
   contactId          String?            @map("contact_id") @db.Uuid
   status             ConversationStatus @default(OPEN)
   subject            String?
+  isGroup            Boolean            @default(false) @map("is_group")
+  groupName          String?            @map("group_name")
+  avatarUrl          String?            @map("avatar_url")
   lastMessageAt      DateTime?          @map("last_message_at")
   closedAt           DateTime?          @map("closed_at")
   createdAt          DateTime           @default(now()) @map("created_at")
@@ -259,6 +264,8 @@ model Message {
   content           String?
   externalMessageId String?          @map("external_message_id")
   status            MessageStatus    @default(RECEIVED)
+  senderId          String?          @map("sender_id")
+  senderName        String?          @map("sender_name")
   metadata          Json             @default("{}")
   occurredAt        DateTime         @default(now()) @map("occurred_at")
   createdAt         DateTime         @default(now()) @map("created_at")
@@ -289,6 +296,24 @@ model MessageAttachment {
 
   @@index([tenantId, messageId])
   @@map("message_attachments")
+}
+
+model WhatsAppAvatar {
+  id                 String   @id @default(uuid()) @db.Uuid
+  tenantId           String   @map("tenant_id") @db.Uuid
+  whatsappInstanceId String   @map("whatsapp_instance_id") @db.Uuid
+  jid                String
+  url                String?
+  fetchedAt          DateTime @map("fetched_at")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  tenant   Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  instance WhatsAppInstance @relation(fields: [whatsappInstanceId], references: [id], onDelete: Cascade)
+
+  @@unique([whatsappInstanceId, jid])
+  @@index([tenantId])
+  @@map("whatsapp_avatars")
 }
 
 model WebhookEvent {

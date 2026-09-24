@@ -23,7 +23,40 @@ O arquivo de configuração do CLI é `backend/prisma7.config.ts`, que lê `DATA
 
 ## Modelagem atual (Implementado)
 
-Apenas a base de identidade e multi-tenancy. **Nenhuma entidade de CRM foi criada.**
+Base de identidade, multi-tenancy e núcleo do CRM. Detalhes de CRM em [`crm-core.md`](./crm-core.md).
+
+### Núcleo de CRM (Prompt 05)
+
+`Customer`, `Contact`, `Tag`, `CustomerTag` e `QualificationProfile` — todas com `tenantId`, índice
+apropriado e isolamento por aplicação. `Customer.document` é `UNIQUE (tenantId, document)`.
+`QualificationProfile` possui índice único parcial para garantir **um único perfil padrão ativo por
+tenant** (ver migration `20260921205850_crm_core`). Retenção de dado pessoal: sem job de expurgo
+nesta fase (Prompt 09), conforme a seção de LGPD abaixo.
+
+### Vendas e qualificação (Prompt 06)
+
+`Lead`, `LeadTag`, `Pipeline`, `PipelineStage`, `Deal`, `Task`, `Activity`,
+`LeadQualificationSession` e `LeadAnalysis` — todas com `tenantId` e índices para as consultas reais.
+Destaques: `Lead` único por `(tenantId, phone)`; `PipelineStage` único por `(pipelineId, position)`;
+`Activity` guarda `userId` sem FK para preservar auditoria. Detalhes em [`sales.md`](./sales.md).
+
+### Atendimento, WhatsApp e digest (Prompt 07)
+
+`WhatsAppInstance`, `Conversation`, `Message`, `MessageAttachment`, `Ticket`,
+`LeadDigestPreference`, `LeadDigestDelivery` e `WebhookEvent` — todas com `tenantId`.
+Idempotência: `Message` único por `(tenantId, externalMessageId)`, `WebhookEvent` por
+`(provider, externalEventId)` e `LeadDigestDelivery` por `(tenantUserId, periodStart)`.
+Credenciais de instância são criptografadas. Detalhes, retenção e endpoints em
+[`attendance.md`](./attendance.md).
+
+### LGPD e compliance (Prompt 09)
+
+`DataSubjectRequest` (trilha de direitos do titular e revisões do art. 20) e campos de conformidade
+em `Tenant` (`dpoName`, `dpoEmail`, `retentionConversationDays`, `retentionLeadDays`,
+`terms/dpaVersion/acceptedAt`) e `Lead` (`legalHold`, `anonymizedAt`, `consentRevokedAt`,
+`oppositionAt`); `Conversation.legalHold`; `LeadQualificationSession.reviewOutcome/reviewNotes/
+reviewResolvedAt/reviewResolvedBy`. Migration `20260921233422_lgpd_compliance`. Ver
+[`lgpd.md`](./lgpd.md) e [`lgpd-retencao.md`](./lgpd-retencao.md).
 
 ### `Tenant`
 
@@ -40,8 +73,9 @@ Apenas a base de identidade e multi-tenancy. **Nenhuma entidade de CRM foi criad
 | -------------- | ----------- | ----------------------- |
 | `id`           | `uuid` PK   |                         |
 | `email`        | `text` UNIQUE |                       |
-| `passwordHash` | `text`      | hash; nunca a senha     |
+| `passwordHash` | `text`      | hash Argon2id; nunca a senha |
 | `name`         | `text`      |                         |
+| `active`       | `boolean`   | default `true`; usuário inativo perde acesso |
 | `createdAt`    | `timestamp` |                         |
 | `updatedAt`    | `timestamp` |                         |
 
@@ -54,7 +88,8 @@ Apenas a base de identidade e multi-tenancy. **Nenhuma entidade de CRM foi criad
 | `id`        | `uuid` PK   | é o `membershipId` do tenant context |
 | `tenantId`  | `uuid` FK   | `ON DELETE CASCADE`                  |
 | `userId`    | `uuid` FK   | `ON DELETE CASCADE`                  |
-| `role`      | `text`      | papel do usuário no tenant           |
+| `role`      | enum `Role` | `OWNER` \| `ADMIN` \| `USER`         |
+| `active`    | `boolean`   | default `true`; soft delete do vínculo |
 | `createdAt` | `timestamp` |                                      |
 | `updatedAt` | `timestamp` |                                      |
 
@@ -62,9 +97,39 @@ Constraints e índices:
 
 - `UNIQUE (tenantId, userId)` — um vínculo por par.
 - índice em `userId` (o índice único já cobre buscas por `tenantId`).
+- Apenas membership `active = true` concede acesso (ver `MembershipsService`).
 
-`role` permanece `string` nesta fase. Transformá-lo em enum exigirá justificativa e uma migration
-própria quando os papéis forem definidos.
+### `RefreshToken`
+
+| Campo               | Tipo          | Observações                                      |
+| ------------------- | ------------- | ------------------------------------------------ |
+| `id`                | `uuid` PK     |                                                  |
+| `userId`            | `uuid` FK     | `ON DELETE CASCADE`                              |
+| `tenantId`          | `uuid` FK     | tenant ativo na emissão; `ON DELETE CASCADE`     |
+| `tokenHash`         | `text` UNIQUE | SHA-256 do token opaco (nunca o token puro)      |
+| `familyId`          | `uuid`        | agrupa a rotação; reuso revoga a família         |
+| `expiresAt`         | `timestamp`   |                                                  |
+| `revokedAt`         | `timestamp?`  | nulo enquanto válido                             |
+| `replacedByTokenId` | `uuid?`       | token que substituiu este na rotação             |
+| `userAgent`         | `text?`       | auditoria básica                                 |
+| `ipAddress`         | `text?`       | auditoria básica                                 |
+| `createdAt`         | `timestamp`   |                                                  |
+
+Índices: `UNIQUE (tokenHash)`, `userId`, `familyId`. Rotação/reuso detalhados em
+[`authentication.md`](./authentication.md).
+
+## Retenção e sensibilidade (LGPD — planejado)
+
+Padrões de schema para as próximas entidades de tenant (sem rotina de expurgo nesta fase):
+
+- Toda entidade que armazene dado pessoal de Lead/Customer/Contact deverá registrar, na
+  documentação do schema, um **prazo de retenção esperado**. O job de expurgo fica para o Prompt 09.
+- `dataSensitivityLevel` (`low` | `medium` | `high`) é um padrão que perfis/configurações de tenant
+  (ex.: futuro `QualificationProfile`) poderão carregar. Ele habilita controles proporcionais ao
+  risco — por exemplo, exigir revisão humana antes de decisão automatizada negativa em `high`.
+- Decisões automatizadas sobre um lead devem manter o **motivo objetivo** da decisão, legível ao
+  titular (viabiliza o art. 20 da LGPD).
+- `dataSensitivityLevel` é ortogonal a `tenantId`; não o substitui.
 
 ## Migrations
 
@@ -76,14 +141,15 @@ npm run prisma:deploy       # ambientes não interativos (CI/produção)
 npm run prisma:studio       # inspeção visual (opcional)
 ```
 
-As migrations ficam em `backend/prisma/migrations/` e **devem ser versionadas**.
+As migrations ficam em `backend/prisma/migrations/` e **devem ser versionadas** (inclui
+`20260921120000_add_active_to_tenant_users` e `20260921130000_auth_tokens_and_roles`).
 
 ## Planejado
 
-- RLS (Row Level Security) como defesa em profundidade. Ver
+- RLS (Row Level Security) como defesa em profundidade, tabela a tabela. Ver
   [`multi-tenancy.md`](./multi-tenancy.md).
 - Entidades de CRM por fase (Customer, Contact, Lead, Pipeline, Deal, Task...).
-- Estratégia de soft delete, se necessária.
+- Estratégia de soft delete por entidade, quando necessária (membership já usa `active`).
 
 ## Regras
 

@@ -1,4 +1,5 @@
 import { ArgumentsHost, Catch, ExceptionFilter, HttpException, HttpStatus } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import type { FastifyReply } from 'fastify';
 import { PinoLogger } from 'nestjs-pino';
 import { AppException } from './app.exception.js';
@@ -18,6 +19,13 @@ const HTTP_STATUS_TO_ERROR_CODE: Record<number, string> = {
   409: 'CONFLICT',
   422: 'UNPROCESSABLE_ENTITY',
   429: 'TOO_MANY_REQUESTS',
+};
+
+const PRISMA_KNOWN_ERRORS: Record<string, { statusCode: number; code: string; message: string }> = {
+  P2000: { statusCode: 400, code: 'VALIDATION_ERROR', message: 'Invalid value provided' },
+  P2002: { statusCode: 409, code: 'CONFLICT', message: 'Resource already exists' },
+  P2003: { statusCode: 409, code: 'CONFLICT', message: 'Related resource constraint violated' },
+  P2025: { statusCode: 404, code: 'NOT_FOUND', message: 'Resource not found' },
 };
 
 @Catch()
@@ -46,6 +54,13 @@ export class AllExceptionsFilter implements ExceptionFilter {
         message: exception.message,
         details: exception.details,
       };
+    }
+
+    if (exception instanceof Prisma.PrismaClientKnownRequestError) {
+      const mapped = PRISMA_KNOWN_ERRORS[exception.code];
+      if (mapped) {
+        return { ...mapped, details: null };
+      }
     }
 
     if (exception instanceof HttpException) {

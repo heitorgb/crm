@@ -13,6 +13,16 @@ export class TenantContextUnavailableError extends AppException {
   }
 }
 
+export class InvalidTenantContextError extends AppException {
+  constructor() {
+    super(
+      'INVALID_TENANT_CONTEXT',
+      'Tenant context must include tenantId, userId, membershipId and role',
+      500,
+    );
+  }
+}
+
 @Injectable()
 export class TenantContextService {
   private readonly storage = new AsyncLocalStorage<RequestContextStore>();
@@ -46,10 +56,35 @@ export class TenantContextService {
       throw new TenantContextUnavailableError();
     }
 
+    if (!isCompleteContext(context)) {
+      throw new InvalidTenantContextError();
+    }
+
     store.tenant = context;
+  }
+
+  clearContext(): void {
+    const store = this.storage.getStore();
+
+    if (store) {
+      store.tenant = undefined;
+    }
   }
 
   getRequestId(): string | undefined {
     return this.storage.getStore()?.requestId;
   }
+}
+
+function isCompleteContext(context: TenantContext): boolean {
+  return (
+    typeof context.tenantId === 'string' &&
+    context.tenantId.length > 0 &&
+    typeof context.userId === 'string' &&
+    context.userId.length > 0 &&
+    typeof context.membershipId === 'string' &&
+    context.membershipId.length > 0 &&
+    typeof context.role === 'string' &&
+    context.role.length > 0
+  );
 }

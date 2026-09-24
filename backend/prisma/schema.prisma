@@ -6,13 +6,74 @@ datasource db {
   provider = "postgresql"
 }
 
+enum Role {
+  OWNER
+  ADMIN
+  USER
+}
+
+enum CustomerStatus {
+  ACTIVE
+  INACTIVE
+  ARCHIVED
+}
+
+enum WhatsAppInstanceStatus {
+  CONNECTED
+  CONNECTING
+  DISCONNECTED
+  ERROR
+}
+
+enum ConversationStatus {
+  OPEN
+  CLOSED
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  AUDIO
+  VIDEO
+  DOCUMENT
+  LOCATION
+  CONTACT
+  STICKER
+  UNKNOWN
+}
+
+enum MessageStatus {
+  RECEIVED
+  PENDING
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
 model Tenant {
   id        String   @id @default(uuid()) @db.Uuid
   name      String
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  members TenantUser[]
+  members            TenantUser[]
+  refreshTokens      RefreshToken[]
+  customers          Customer[]
+  contacts           Contact[]
+  tags               Tag[]
+  customerTags       CustomerTag[]
+  whatsappInstances  WhatsAppInstance[]
+  whatsappAvatars    WhatsAppAvatar[]
+  conversations      Conversation[]
+  messages           Message[]
+  messageAttachments MessageAttachment[]
+  webhookEvents      WebhookEvent[]
 
   @@map("tenants")
 }
@@ -22,10 +83,12 @@ model User {
   email        String   @unique
   passwordHash String   @map("password_hash")
   name         String
+  active       Boolean  @default(true)
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
-  memberships TenantUser[]
+  memberships   TenantUser[]
+  refreshTokens RefreshToken[]
 
   @@map("users")
 }
@@ -34,7 +97,8 @@ model TenantUser {
   id        String   @id @default(uuid()) @db.Uuid
   tenantId  String   @map("tenant_id") @db.Uuid
   userId    String   @map("user_id") @db.Uuid
-  role      String
+  role      Role
+  active    Boolean  @default(true)
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -44,4 +108,227 @@ model TenantUser {
   @@unique([tenantId, userId])
   @@index([userId])
   @@map("tenant_users")
+}
+
+model RefreshToken {
+  id                String    @id @default(uuid()) @db.Uuid
+  userId            String    @map("user_id") @db.Uuid
+  tenantId          String    @map("tenant_id") @db.Uuid
+  tokenHash         String    @unique @map("token_hash")
+  familyId          String    @map("family_id") @db.Uuid
+  expiresAt         DateTime  @map("expires_at")
+  revokedAt         DateTime? @map("revoked_at")
+  replacedByTokenId String?   @map("replaced_by_token_id") @db.Uuid
+  userAgent         String?   @map("user_agent")
+  ipAddress         String?   @map("ip_address")
+  createdAt         DateTime  @default(now()) @map("created_at")
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([familyId])
+  @@map("refresh_tokens")
+}
+
+model Customer {
+  id        String         @id @default(uuid()) @db.Uuid
+  tenantId  String         @map("tenant_id") @db.Uuid
+  name      String
+  document  String?
+  status    CustomerStatus @default(ACTIVE)
+  createdAt DateTime       @default(now()) @map("created_at")
+  updatedAt DateTime       @updatedAt @map("updated_at")
+
+  tenant        Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  contacts      Contact[]
+  tags          CustomerTag[]
+  conversations Conversation[]
+
+  @@unique([tenantId, document])
+  @@index([tenantId, status])
+  @@index([tenantId, createdAt])
+  @@map("customers")
+}
+
+model Contact {
+  id         String   @id @default(uuid()) @db.Uuid
+  tenantId   String   @map("tenant_id") @db.Uuid
+  customerId String?  @map("customer_id") @db.Uuid
+  name       String
+  email      String?
+  phone      String?
+  position   String?
+  isPrimary  Boolean  @default(false) @map("is_primary")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer      Customer?      @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  conversations Conversation[]
+
+  @@unique([tenantId, phone])
+  @@index([tenantId, customerId])
+  @@index([tenantId, createdAt])
+  @@map("contacts")
+}
+
+model Tag {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  name      String
+  color     String?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  tenant    Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customers CustomerTag[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId, createdAt])
+  @@map("tags")
+}
+
+model CustomerTag {
+  customerId String   @map("customer_id") @db.Uuid
+  tagId      String   @map("tag_id") @db.Uuid
+  tenantId   String   @map("tenant_id") @db.Uuid
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  tag      Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@id([customerId, tagId])
+  @@index([tenantId, tagId])
+  @@map("customer_tags")
+}
+
+model WhatsAppInstance {
+  id                   String                @id @default(uuid()) @db.Uuid
+  tenantId             String                @map("tenant_id") @db.Uuid
+  name                 String
+  instanceName         String                @unique @map("instance_name")
+  externalInstanceId   String?               @map("external_instance_id")
+  phone                String?
+  status               WhatsAppInstanceStatus @default(DISCONNECTED)
+  credentialsEncrypted String?               @map("credentials_encrypted")
+  active               Boolean               @default(true)
+  createdAt            DateTime              @default(now()) @map("created_at")
+  updatedAt            DateTime              @updatedAt @map("updated_at")
+
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  conversations Conversation[]
+  avatars       WhatsAppAvatar[]
+
+  @@index([tenantId, status])
+  @@index([tenantId, createdAt])
+  @@map("whatsapp_instances")
+}
+
+model Conversation {
+  id                 String             @id @default(uuid()) @db.Uuid
+  tenantId           String             @map("tenant_id") @db.Uuid
+  whatsappInstanceId String             @map("whatsapp_instance_id") @db.Uuid
+  externalContactId  String?            @map("external_contact_id")
+  customerId         String?            @map("customer_id") @db.Uuid
+  contactId          String?            @map("contact_id") @db.Uuid
+  status             ConversationStatus @default(OPEN)
+  subject            String?
+  isGroup            Boolean            @default(false) @map("is_group")
+  groupName          String?            @map("group_name")
+  avatarUrl          String?            @map("avatar_url")
+  lastMessageAt      DateTime?          @map("last_message_at")
+  closedAt           DateTime?          @map("closed_at")
+  createdAt          DateTime           @default(now()) @map("created_at")
+  updatedAt          DateTime           @updatedAt @map("updated_at")
+
+  tenant   Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  instance WhatsAppInstance @relation(fields: [whatsappInstanceId], references: [id], onDelete: Cascade)
+  customer Customer?        @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  contact  Contact?         @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  messages Message[]
+
+  @@unique([whatsappInstanceId, externalContactId])
+  @@index([tenantId, status])
+  @@index([tenantId, lastMessageAt])
+  @@map("conversations")
+}
+
+model Message {
+  id                String           @id @default(uuid()) @db.Uuid
+  tenantId          String           @map("tenant_id") @db.Uuid
+  conversationId    String           @map("conversation_id") @db.Uuid
+  direction         MessageDirection
+  type              MessageType      @default(TEXT)
+  content           String?
+  externalMessageId String?          @map("external_message_id")
+  status            MessageStatus    @default(RECEIVED)
+  senderId          String?          @map("sender_id")
+  senderName        String?          @map("sender_name")
+  metadata          Json             @default("{}")
+  occurredAt        DateTime         @default(now()) @map("occurred_at")
+  createdAt         DateTime         @default(now()) @map("created_at")
+
+  tenant       Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  conversation Conversation        @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  attachments  MessageAttachment[]
+
+  @@unique([tenantId, externalMessageId])
+  @@index([tenantId, conversationId, occurredAt])
+  @@index([tenantId, createdAt])
+  @@map("messages")
+}
+
+model MessageAttachment {
+  id         String   @id @default(uuid()) @db.Uuid
+  tenantId   String   @map("tenant_id") @db.Uuid
+  messageId  String   @map("message_id") @db.Uuid
+  storageKey String   @map("storage_key")
+  fileName   String   @map("file_name")
+  mimeType   String   @map("mime_type")
+  size       Int
+  metadata   Json     @default("{}")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, messageId])
+  @@map("message_attachments")
+}
+
+model WhatsAppAvatar {
+  id                 String   @id @default(uuid()) @db.Uuid
+  tenantId           String   @map("tenant_id") @db.Uuid
+  whatsappInstanceId String   @map("whatsapp_instance_id") @db.Uuid
+  jid                String
+  url                String?
+  fetchedAt          DateTime @map("fetched_at")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  tenant   Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  instance WhatsAppInstance @relation(fields: [whatsappInstanceId], references: [id], onDelete: Cascade)
+
+  @@unique([whatsappInstanceId, jid])
+  @@index([tenantId])
+  @@map("whatsapp_avatars")
+}
+
+model WebhookEvent {
+  id              String    @id @default(uuid()) @db.Uuid
+  tenantId        String?   @map("tenant_id") @db.Uuid
+  provider        String    @default("evolution")
+  externalEventId String    @map("external_event_id")
+  eventType       String    @map("event_type")
+  payload         Json      @default("{}")
+  processedAt     DateTime? @map("processed_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+
+  @@unique([provider, externalEventId])
+  @@index([tenantId, createdAt])
+  @@map("webhook_events")
 }

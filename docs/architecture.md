@@ -22,21 +22,24 @@ claras entre módulos. A decisão está registrada em
 | Linguagem     | TypeScript `strict` (módulos NodeNext)      | Implementado |
 | Testes        | Vitest (unit + e2e/integração)              | Implementado |
 | CI            | GitHub Actions                              | Implementado |
-| Frontend      | React + Vite (TanStack Query, Zustand, shadcn/ui) | Futuro |
+| Frontend      | React 19 + Vite + Tailwind + shadcn/ui (TanStack Query, Zustand) | Implementado (fundação) |
 
 ## Estrutura do backend
 
 ```text
 backend/src/
 ├── common/                 # cross-cutting
-│   ├── errors/             # filtro global + AppException
+│   ├── errors/             # filtro global + AppException + erros conhecidos do Prisma
+│   ├── logging/            # logger estruturado + normalização de requestId
 │   └── tenant-context/     # AsyncLocalStorage (fundação)
-├── config/                 # validação e tipagem de ambiente
+├── config/                 # validação e tipagem de ambiente (APP/DATABASE/REDIS/LOGGING/AI)
 ├── infrastructure/         # Prisma e Redis
 │   ├── prisma/
 │   └── redis/
 ├── modules/                # módulos de negócio (por domínio)
-│   └── health/
+│   ├── auth/               # login, tokens, guards (autenticação/autorização)
+│   ├── health/
+│   └── memberships/        # membership multi-tenant / resolução de contexto
 ├── app.module.ts
 └── main.ts
 ```
@@ -49,16 +52,27 @@ forma cíclica; `infrastructure/` não contém regra de negócio; `common/` não
 1. Fastify recebe a requisição; `nestjs-pino` gera/propaga `requestId`.
 2. O middleware de tenant-context cria um `RequestStore` vazio em `AsyncLocalStorage` para toda a
    requisição (`src/common/tenant-context/`).
-3. Guards/serviços acessam o contexto via `TenantContextService`. **Ainda não há autenticação**, então
-   o contexto permanece vazio; o `TenantContext` será preenchido pelo guard de auth na fase de
-   autenticação (ver [`authentication.md`](./authentication.md)).
+3. `JwtAuthGuard` (global) valida o access token e a membership e preenche o `TenantContext` via
+   `TenantContextService`. `RolesGuard` aplica `@Roles(...)`. Rotas `@Public()` (health, login,
+   refresh, logout) são liberadas. Ver [`authentication.md`](./authentication.md).
 4. Erros são normalizados pelo filtro global (`statusCode`, `code`, `message`, `details`).
 
 ## Health check
 
-`GET /api/health` retorna `{ status: "ok", uptime, timestamp }`. É um **liveness** simples.
-Health check profundo (banco/Redis) está planejado e poderá usar `@nestjs/terminus` quando houver
-consumidor real.
+`GET /api/health` verifica **API, PostgreSQL e Redis**:
+
+```json
+{
+  "status": "ok",
+  "uptime": 12.34,
+  "timestamp": "2026-01-01T00:00:00.000Z",
+  "checks": { "api": "up", "database": "up", "redis": "up" }
+}
+```
+
+Retorna `200` quando tudo está `up` e `503` quando alguma dependência está `down`. Cada verificação
+tem timeout curto e **não expõe detalhes internos** (stack/mensagem do driver). É apropriado para
+liveness/readiness; não usa `@nestjs/terminus` nesta fase.
 
 ## Pontos considerados corretos
 
@@ -91,18 +105,26 @@ consumidor real.
 8. **UUID gerado pelo Prisma Client.** Os `id` usam `@default(uuid())` (geração client-side).
    Se houver necessidade de default no banco para inserts fora do Prisma, avaliar
    `dbgenerated("gen_random_uuid()")` em fase própria.
+9. **Config agrupada por domínio.** As variáveis são validadas por grupos (APP, DATABASE, REDIS,
+   LOGGING, AI). `AUTH` fica reservado para a fase de autenticação — nenhuma variável JWT é
+   validada antes de existir consumidor.
+10. **Segurança básica no bootstrap.** `@fastify/helmet`, CORS por origem (`CORS_ORIGINS`, sem `*`
+    em produção), `ValidationPipe` global (`whitelist`/`forbidNonWhitelisted`) e `bodyLimit` de 1 MB.
+11. **requestId seguro.** Entrada `x-request-id` só é aceita se casar com um padrão restrito; caso
+    contrário, um UUID é gerado. O id é devolvido no header `x-request-id` e propaga nos logs.
+12. **Erros conhecidos do Prisma** (ex.: `P2002`, `P2025`) são traduzidos para códigos estáveis; o
+    erro bruto do driver nunca chega ao cliente e stack trace não é exposta.
 
 ## Planejado
 
-- Autenticação/autorização JWT + refresh token com validação de membership.
 - Módulos de CRM (Customer, Contact, Lead, Pipeline, Deal, Task) — um por vez, em fases.
 - Multi-tenancy com RLS como defesa em profundidade.
 - Filas (BullMQ sobre Redis), realtime (Socket.IO) e IA — quando houver requisito.
 
 ## Futuro
 
-- Frontend React + Vite com TanStack Query, Zustand e shadcn/ui.
 - Integração WhatsApp (Evolution API), dashboards e relatórios.
+- Telas de CRM no frontend (Leads, Funil, Negócios, Clientes, Conversas) sobre a fundação já criada.
 
-> A identidade visual do frontend será definida a partir de https://orderup.com.br/ quando a fase
-> de frontend começar. Nenhuma cor/asset deve ser inventado antes da análise visual oficial.
+> A identidade visual do frontend é derivada de https://orderup.com.br/ (tokens, tipografia e logo
+> oficiais). Ver [`frontend.md`](./frontend.md).

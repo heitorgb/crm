@@ -39,6 +39,10 @@ jobs:
       NODE_ENV: test
       DATABASE_URL: postgresql://orderup:orderup@localhost:5432/orderup?schema=public
       REDIS_URL: redis://localhost:6379
+      JWT_ACCESS_SECRET: ci-test-access-secret-0123456789abcdef
+      CREDENTIALS_ENCRYPTION_KEY: ci-test-encryption-key-0123456789abcdef
+      EVOLUTION_WEBHOOK_SECRET: ci-test-webhook-secret
+      QUEUE_DRIVER: inline
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -70,6 +74,35 @@ jobs:
 
       - name: Integration/e2e tests
         run: npm run test:e2e
+
+      - name: Build
+        run: npm run build
+
+  frontend:
+    name: Frontend (lint, typecheck, build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
 
       - name: Build
         run: npm run build

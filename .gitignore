@@ -31,3 +31,9 @@ Thumbs.db
 
 # TypeScript
 *.tsbuildinfo
+
+# Media storage (local disk, runtime)
+/backend/storage/
+
+# Apresentações (material comercial)
+apresentacao/

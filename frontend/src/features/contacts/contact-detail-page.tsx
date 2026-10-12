@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { formatDateTime } from '@/lib/format';
 import { useConversations } from '@/features/attendance/queries';
+import { StartConversationDialog } from '@/features/attendance/start-conversation-dialog';
 import type { ConversationStatus } from '@/types/attendance';
 import { ContactForm } from './contact-form';
 import { useContact } from './queries';
@@ -28,6 +29,7 @@ export function ContactDetailPage() {
   const query = useContact(id);
   const conversationsQuery = useConversations({ contactId: id, perPage: 50 });
   const [editOpen, setEditOpen] = useState(false);
+  const [startOpen, setStartOpen] = useState(false);
 
   if (query.isPending) {
     return <PageLoader label="Carregando contato…" />;
@@ -76,6 +78,15 @@ export function ContactDetailPage() {
                 <ArrowLeft />
                 Voltar
               </Link>
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => setStartOpen(true)}
+              disabled={!contact.phone}
+              title={contact.phone ? undefined : 'Cadastre um telefone para iniciar'}
+            >
+              <MessageSquare />
+              Iniciar atendimento
             </Button>
             <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
               <Pencil />
@@ -155,6 +166,12 @@ export function ContactDetailPage() {
       </div>
 
       <ContactForm open={editOpen} onOpenChange={setEditOpen} contact={contact} />
+
+      <StartConversationDialog
+        open={startOpen}
+        onOpenChange={setStartOpen}
+        contact={{ id: contact.id, name: contact.name }}
+      />
     </div>
   );
 }

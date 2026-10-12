@@ -72,3 +72,11 @@ export class SendConversationMessageDto {
   @MaxLength(4000)
   content!: string;
 }
+
+export class StartConversationDto {
+  @IsUUID()
+  contactId!: string;
+
+  @IsUUID()
+  whatsappInstanceId!: string;
+}

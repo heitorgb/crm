@@ -65,6 +65,15 @@ export function useTakeoverConversation() {
   });
 }
 
+export function useStartConversation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { contactId: string; whatsappInstanceId: string }) =>
+      attendanceService.startConversation(input),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: attendanceKeys.all }),
+  });
+}
+
 export function useCloseConversation() {
   const queryClient = useQueryClient();
   return useMutation({

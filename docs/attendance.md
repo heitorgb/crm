@@ -141,6 +141,25 @@ CRM (sem dependências novas). A tela é **full-bleed**: `MainContent` deixa de 
 
 Reabrir usa `POST /api/conversations/:id/takeover` (já existente).
 
+### Iniciar atendimento a partir de um contato
+
+O operador pode iniciar uma conversa sem esperar que o contato escreva primeiro, a partir da lista ou
+do detalhe do contato (**Iniciar atendimento** → escolhe o WhatsApp de envio).
+
+`POST /api/conversations/start` (autenticado) com `{ contactId, whatsappInstanceId }`:
+
+- valida contato e instância **no tenant atual** (404 se não pertencerem);
+- contato sem telefone → `CONTACT_PHONE_REQUIRED` (400);
+- procura uma conversa existente daquele contato/instância (por `contactId` ou `externalContactId`
+  em `phone`, `phone@s.whatsapp.net`, `phone@c.us`) e, se achar, reaproveita (reabre se estava
+  `CLOSED` e vincula o `contactId` ausente);
+- senão cria a conversa com `externalContactId = <phone>@s.whatsapp.net` (mesma chave do webhook, o
+  que evita conversas duplicadas quando a resposta chegar) e `status = OPEN`;
+- é idempotente (chamar de novo devolve a mesma conversa).
+
+O frontend então abre `/atendimento/conversas?conversation=<id>`, onde o envio já funciona pelo
+fluxo humano existente.
+
 ## Endpoints
 
 | Método | Rota                                             | Papéis           |
@@ -158,6 +177,7 @@ Reabrir usa `POST /api/conversations/:id/takeover` (já existente).
 | GET    | `/api/conversations`                             | autenticado      |
 | GET    | `/api/conversations/:id`                         | autenticado      |
 | POST   | `/api/conversations`                             | autenticado      |
+| POST   | `/api/conversations/start`                       | autenticado      |
 | PATCH  | `/api/conversations/:id`                         | autenticado      |
 | POST   | `/api/conversations/:id/takeover`                | autenticado      |
 | POST   | `/api/conversations/:id/close`                   | autenticado      |

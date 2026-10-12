@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Contact as ContactIcon, History, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react';
+import { Contact as ContactIcon, History, MessageSquare, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import { ConfirmDialog } from '@/components/common/confirm-dialog';
 import { EmptyState } from '@/components/common/empty-state';
 import { PageHeader } from '@/components/common/page-header';
@@ -13,6 +13,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useDebouncedValue } from '@/lib/use-debounced-value';
 import type { Contact } from '@/types/crm';
+import { StartConversationDialog } from '@/features/attendance/start-conversation-dialog';
 import { ContactForm } from './contact-form';
 import { useContacts, useDeleteContact } from './queries';
 
@@ -25,6 +26,7 @@ export function ContactListPage() {
   const [formNonce, setFormNonce] = useState(0);
   const [editing, setEditing] = useState<Contact | null>(null);
   const [pendingDelete, setPendingDelete] = useState<Contact | null>(null);
+  const [startContact, setStartContact] = useState<Contact | null>(null);
 
   const debouncedSearch = useDebouncedValue(search, 350);
   const deleteContact = useDeleteContact();
@@ -148,6 +150,17 @@ export function ContactListPage() {
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center justify-end gap-1">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="size-8"
+                          onClick={() => setStartContact(contact)}
+                          disabled={!contact.phone}
+                          aria-label="Iniciar conversa"
+                          title={contact.phone ? 'Iniciar conversa' : 'Sem telefone cadastrado'}
+                        >
+                          <MessageSquare />
+                        </Button>
                         <Button variant="ghost" size="icon" className="size-8" asChild>
                           <Link to={`/contatos/${contact.id}`} aria-label="Ver histórico">
                             <History />
@@ -206,6 +219,14 @@ export function ContactListPage() {
         destructive
         loading={deleteContact.isPending}
         onConfirm={() => void confirmDelete()}
+      />
+
+      <StartConversationDialog
+        open={Boolean(startContact)}
+        onOpenChange={(open) => {
+          if (!open) setStartContact(null);
+        }}
+        contact={startContact ? { id: startContact.id, name: startContact.name } : null}
       />
     </div>
   );

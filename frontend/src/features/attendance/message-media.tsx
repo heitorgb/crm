@@ -75,7 +75,7 @@ function MessageImage({ conversationId, message }: MediaProps) {
   const fullUrl = useObjectUrl(fullQuery.data);
 
   return (
-    <div className="space-y-1.5">
+    <div>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogTrigger asChild>
           <button
@@ -106,7 +106,6 @@ function MessageImage({ conversationId, message }: MediaProps) {
           )}
         </DialogContent>
       </Dialog>
-      {message.content ? <p className="whitespace-pre-wrap text-sm">{message.content}</p> : null}
     </div>
   );
 }

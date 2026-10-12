@@ -14,6 +14,16 @@ const AttendancePage = lazy(() =>
 const WhatsAppPage = lazy(() =>
   import('@/features/whatsapp/whatsapp-page').then((module) => ({ default: module.WhatsAppPage })),
 );
+const AdminTenantsPage = lazy(() =>
+  import('@/features/admin/admin-tenants-page').then((module) => ({
+    default: module.AdminTenantsPage,
+  })),
+);
+const AdminTenantDetailPage = lazy(() =>
+  import('@/features/admin/tenant-detail-page').then((module) => ({
+    default: module.AdminTenantDetailPage,
+  })),
+);
 const ContactListPage = lazy(() =>
   import('@/features/contacts/contact-list-page').then((module) => ({
     default: module.ContactListPage,
@@ -45,6 +55,9 @@ export function AppRoutes() {
         >
           <Route path="/atendimento/conversas" element={<AttendancePage />} />
           <Route path="/atendimento/whatsapp" element={<WhatsAppPage />} />
+
+          <Route path="/admin/tenants" element={<AdminTenantsPage />} />
+          <Route path="/admin/tenants/:id" element={<AdminTenantDetailPage />} />
 
           <Route path="/contatos" element={<ContactListPage />} />
           <Route path="/contatos/:id" element={<ContactDetailPage />} />

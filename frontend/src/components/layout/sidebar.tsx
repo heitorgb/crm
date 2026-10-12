@@ -3,6 +3,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import { ChevronDown, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { isNavGroup, navigation, type NavGroup, type NavItem } from '@/config/navigation';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { useAuthStore } from '@/stores/auth-store';
 import { useUiStore } from '@/stores/ui-store';
 import { cn } from '@/lib/utils';
 
@@ -14,6 +15,8 @@ interface SidebarProps {
 
 export function Sidebar({ collapsed, onNavigate, className }: SidebarProps) {
   const toggleSidebar = useUiStore((state) => state.toggleSidebar);
+  const platformAdmin = useAuthStore((state) => state.platformAdmin);
+  const entries = navigation.filter((entry) => !entry.platformAdminOnly || platformAdmin);
 
   return (
     <div
@@ -38,7 +41,7 @@ export function Sidebar({ collapsed, onNavigate, className }: SidebarProps) {
       </div>
 
       <nav className="flex-1 space-y-1 overflow-y-auto scrollbar-thin px-2 py-3">
-        {navigation.map((entry) =>
+        {entries.map((entry) =>
           isNavGroup(entry) ? (
             <SidebarGroup key={entry.title} group={entry} collapsed={collapsed} onNavigate={onNavigate} />
           ) : (

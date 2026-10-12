@@ -128,9 +128,13 @@ frontend/
   `/clientes/tags` e `/settings/qualification-bot`.
 - Vendas (conectado à API): `/vendas/leads`, `/vendas/funil` (Kanban com drag and drop persistido),
   `/vendas/negocios`, `/tarefas` e `/settings/pipelines` (CRUD de pipelines/etapas).
-- Atendimento (conectado à API + Socket.IO): `/atendimento/conversas` (3 colunas, painel do cliente
-  recolhível), `/atendimento/tickets` e `/atendimento/whatsapp` (instâncias, conexão por QR code e
-  webhook).
+- Atendimento (conectado à API + Socket.IO): `/atendimento/conversas` (layout estilo WhatsApp Web em
+  tela cheia — lista, chat e painel de contato, com rolagem independente, alternância lista/chat no
+  mobile e painel de contato em `Sheet` abaixo de `xl`) e `/atendimento/whatsapp` (instâncias,
+  conexão por QR code e webhook).
+- Administração da plataforma (visível só para `isPlatformAdmin`): `/admin/tenants` (criar/listar
+  organizações) e `/admin/tenants/:id` (gerenciar membros, papéis e ativos). Ver
+  [`tenant-provisioning.md`](./tenant-provisioning.md).
 - Sidebar: Vendas, Clientes (Clientes, Contatos, Tags), Atendimento (Conversas, Tickets, WhatsApp),
   Tarefas, Relatórios e Configurações (Bot e Qualificação, Resumo de Leads, Pipelines). Relatórios
   ainda é placeholder.

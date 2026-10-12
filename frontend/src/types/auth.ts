@@ -35,6 +35,7 @@ export interface CurrentSession {
   role: Role;
   membershipId: string;
   memberships: Membership[];
+  isPlatformAdmin: boolean;
 }
 
 export interface LoginInput {

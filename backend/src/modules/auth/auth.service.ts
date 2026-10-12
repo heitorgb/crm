@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import type { Role } from '@prisma/client';
 import type { TenantContext } from '../../common/tenant-context/tenant-context.types.js';
+import { isPlatformAdminEmail } from '../../common/security/platform-admin.js';
 import type { Env } from '../../config/env.validation.js';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service.js';
 import { TenantAccessDeniedError } from '../memberships/memberships.errors.js';
@@ -35,6 +36,7 @@ export interface CurrentSession {
   role: Role;
   membershipId: string;
   memberships: UserMembership[];
+  isPlatformAdmin: boolean;
 }
 
 @Injectable()
@@ -110,6 +112,7 @@ export class AuthService {
 
     const memberships = await this.memberships.listActiveMembershipsForUser(user.id);
     const current = memberships.find((membership) => membership.tenantId === context.tenantId);
+    const allowlist = this.config.get('PLATFORM_ADMIN_EMAILS') ?? [];
 
     return {
       user: toPublicUser(user),
@@ -117,6 +120,7 @@ export class AuthService {
       role: current?.role ?? (context.role as Role),
       membershipId: context.membershipId,
       memberships,
+      isPlatformAdmin: isPlatformAdminEmail(user.email, allowlist),
     };
   }
 

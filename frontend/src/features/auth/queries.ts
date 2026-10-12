@@ -13,6 +13,7 @@ export const authKeys = {
 export function useLogin() {
   const setSession = useAuthStore((state) => state.setSession);
   const setMemberships = useAuthStore((state) => state.setMemberships);
+  const setPlatformAdmin = useAuthStore((state) => state.setPlatformAdmin);
   const navigate = useNavigate();
 
   return useMutation({
@@ -23,8 +24,10 @@ export function useLogin() {
       try {
         const current = await authService.me();
         setMemberships(current.memberships);
+        setPlatformAdmin(current.isPlatformAdmin);
       } catch {
         setMemberships([]);
+        setPlatformAdmin(false);
       }
 
       navigate('/atendimento/conversas', { replace: true });
@@ -63,6 +66,7 @@ export function useSwitchTenant() {
 export function useSessionSync() {
   const session = useAuthStore((state) => state.session);
   const setMemberships = useAuthStore((state) => state.setMemberships);
+  const setPlatformAdmin = useAuthStore((state) => state.setPlatformAdmin);
 
   const query = useQuery({
     queryKey: authKeys.me,
@@ -73,8 +77,9 @@ export function useSessionSync() {
   useEffect(() => {
     if (query.data) {
       setMemberships(query.data.memberships);
+      setPlatformAdmin(query.data.isPlatformAdmin);
     }
-  }, [query.data, setMemberships]);
+  }, [query.data, setMemberships, setPlatformAdmin]);
 
   return query;
 }

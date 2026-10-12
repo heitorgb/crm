@@ -26,7 +26,12 @@ Não-imagens (áudio/vídeo/documento) são armazenadas como recebidas, respeita
 ### Áudio
 
 - **Receber:** `audioMessage` (notas de voz PTT em OGG/Opus) é armazenado como está e exibido com um
-  player `<audio>` na conversa.
+  player próprio dentro do balão, com reproduzir/pausar, posição, tempo e velocidades 1×/1,5×/2×.
+  O elemento `<audio>` fornece a reprodução; os controles são responsivos e acessíveis por teclado.
+- **Player:** reprodução e barra ficam alinhadas na primeira linha; tempo, velocidade e download
+  ficam na segunda. A barra ocupa toda a largura disponível e permite buscar até o fim do áudio.
+- **Baixar áudio:** o botão usa o arquivo já carregado pela rota autenticada, preservando o nome
+  do anexo, sem uma nova requisição ou conversão.
 - **Enviar:** o botão de **microfone grava a voz do operador** no navegador (`MediaRecorder`). Ao
   concluir, o áudio é enviado como **nota de voz** via `sendWhatsAppAudio` (a Evolution converte para
   o formato do WhatsApp por padrão). Durante a gravação há timer e opção de cancelar (descarta).

@@ -24,6 +24,7 @@ Contatos (histórico de conversas por contato)
 - [docs/media.md](./docs/media.md) — envio/recebimento de imagens no Chat (otimização e storage).
 - [docs/development.md](./docs/development.md) — como rodar, testar e validar.
 - [docs/frontend.md](./docs/frontend.md) — frontend e design system.
+- [docs/deploy.md](./docs/deploy.md) — deploy contínuo (GitHub Actions + Docker Compose).
 - [docs/hardening.md](./docs/hardening.md) — auditoria de segurança/performance.
 - [docs/auditoria-mvp.md](./docs/auditoria-mvp.md) — auditoria do CRM e definição do MVP.
 - [docs/auditoria-etapa8.md](./docs/auditoria-etapa8.md) — análise de impacto da limpeza.
@@ -128,3 +129,14 @@ Em **Atendimento → WhatsApp**:
 4. As mensagens recebidas criam o **Contato** (por telefone) e a **Conversa** vinculada à instância.
 
 Detalhes técnicos em [docs/development.md](./docs/development.md).
+
+## Deploy
+
+O deploy é contínuo: cada `push` na branch `desenvolvimento` dispara o GitHub Actions, que conecta
+por SSH no servidor e executa `scripts/deploy.sh` (build das imagens, migrations e `up -d` via
+`docker-compose.prod.yml`).
+
+Configure os segredos `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_KEY` (e, opcionalmente,
+`DEPLOY_PORT`/`DEPLOY_PATH`) e garanta o repositório clonado em `/home/crm` com `backend/.env` e um
+`.env` na raiz (copiado de `.env.example`) para portas/credenciais do compose. Passo a passo em
+[docs/deploy.md](./docs/deploy.md).

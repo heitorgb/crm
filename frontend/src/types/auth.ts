@@ -43,3 +43,12 @@ export interface LoginInput {
   password: string;
   tenantId?: string;
 }
+
+export interface UpdateProfileInput {
+  name: string;
+}
+
+export interface ChangePasswordInput {
+  currentPassword: string;
+  newPassword: string;
+}

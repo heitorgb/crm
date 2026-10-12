@@ -53,3 +53,9 @@ export class ForbiddenRoleError extends AppException {
     super('FORBIDDEN', 'Insufficient role for this operation', 403);
   }
 }
+
+export class InvalidCurrentPasswordError extends AppException {
+  constructor() {
+    super('INVALID_CURRENT_PASSWORD', 'Current password is incorrect', 400);
+  }
+}

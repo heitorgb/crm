@@ -135,6 +135,8 @@ frontend/
 - Administração da plataforma (visível só para `isPlatformAdmin`): `/admin/tenants` (criar/listar
   organizações) e `/admin/tenants/:id` (gerenciar membros, papéis e ativos). Ver
   [`tenant-provisioning.md`](./tenant-provisioning.md).
+- Perfil e configurações: `/perfil` (dados pessoais + senha) e `/configuracoes` (abas Organização,
+  Equipe e Aparência). Ver [`settings.md`](./settings.md).
 - Sidebar: Vendas, Clientes (Clientes, Contatos, Tags), Atendimento (Conversas, Tickets, WhatsApp),
   Tarefas, Relatórios e Configurações (Bot e Qualificação, Resumo de Leads, Pipelines). Relatórios
   ainda é placeholder.

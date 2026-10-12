@@ -35,7 +35,12 @@ type CreateRefreshTokenData = Omit<
 
 function matches(row: RefreshTokenRow, where: Where): boolean {
   const record = row as unknown as Record<string, unknown>;
-  return Object.entries(where).every(([key, value]) => record[key] === value);
+  return Object.entries(where).every(([key, value]) => {
+    if (value !== null && typeof value === 'object' && 'not' in value) {
+      return record[key] !== (value as { not: unknown }).not;
+    }
+    return record[key] === value;
+  });
 }
 
 function createFakePrisma(): { rows: RefreshTokenRow[]; prisma: PrismaService } {
@@ -157,5 +162,20 @@ describe('RefreshTokenService', () => {
     await service.revoke(issued.token);
 
     expect(rows[0].revokedAt).not.toBeNull();
+  });
+
+  it('revokes all sessions for a user except the current one', async () => {
+    const { rows, prisma } = createFakePrisma();
+    const service = new RefreshTokenService(prisma, config);
+    const first = await service.issue('user-1', 'tenant-1', {});
+    const second = await service.issue('user-1', 'tenant-1', {});
+    await service.issue('user-2', 'tenant-1', {});
+
+    await service.revokeAllForUser('user-1', second.token);
+
+    expect(rows[0].revokedAt).not.toBeNull();
+    expect(rows[1].revokedAt).toBeNull();
+    expect(rows[2].revokedAt).toBeNull();
+    expect(first.token).not.toBe(second.token);
   });
 });

@@ -3,7 +3,15 @@ import { Prisma, Role } from '@prisma/client';
 import { TenantContextService } from '../../common/tenant-context/tenant-context.service.js';
 import type { TenantContext } from '../../common/tenant-context/tenant-context.types.js';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service.js';
-import { MembershipNotFoundError, TenantAccessDeniedError } from './memberships.errors.js';
+import { PasswordService } from '../auth/password.service.js';
+import type { CreateMemberDto, UpdateMemberDto } from './dto/member.dto.js';
+import {
+  LastOwnerRequiredError,
+  MemberPasswordRequiredError,
+  MembershipAlreadyExistsError,
+  MembershipNotFoundError,
+  TenantAccessDeniedError,
+} from './memberships.errors.js';
 
 export interface MembershipSummary {
   id: string;
@@ -42,11 +50,24 @@ const MEMBERSHIP_SELECT = {
   updatedAt: true,
 } satisfies Prisma.TenantUserSelect;
 
+const MEMBER_WITH_USER_SELECT = {
+  id: true,
+  userId: true,
+  role: true,
+  active: true,
+  user: { select: { name: true, email: true } },
+} satisfies Prisma.TenantUserSelect;
+
+type PrismaMemberWithUser = Prisma.TenantUserGetPayload<{
+  select: typeof MEMBER_WITH_USER_SELECT;
+}>;
+
 @Injectable()
 export class MembershipsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly tenantContext: TenantContextService,
+    private readonly passwords: PasswordService,
   ) {}
 
   async resolveContext(userId: string, tenantId: string): Promise<TenantContext> {
@@ -124,6 +145,81 @@ export class MembershipsService {
     }));
   }
 
+  async createMember(dto: CreateMemberDto): Promise<MemberWithUser> {
+    const { tenantId } = this.tenantContext.requireContext();
+    const email = dto.email.trim().toLowerCase();
+
+    const existing = await this.prisma.user.findUnique({
+      where: { email },
+      select: { id: true, name: true, email: true },
+    });
+
+    let user = existing;
+    if (!user) {
+      if (!dto.password) {
+        throw new MemberPasswordRequiredError();
+      }
+      const passwordHash = await this.passwords.hash(dto.password);
+      user = await this.prisma.user.create({
+        data: { email, name: dto.name.trim(), passwordHash },
+        select: { id: true, name: true, email: true },
+      });
+    }
+
+    const alreadyMember = await this.prisma.tenantUser.findUnique({
+      where: { tenantId_userId: { tenantId, userId: user.id } },
+      select: { id: true },
+    });
+    if (alreadyMember) {
+      throw new MembershipAlreadyExistsError();
+    }
+
+    try {
+      const membership = await this.prisma.tenantUser.create({
+        data: { tenantId, userId: user.id, role: dto.role, active: true },
+        select: MEMBER_WITH_USER_SELECT,
+      });
+      return toMemberWithUser(membership);
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new MembershipAlreadyExistsError();
+      }
+      throw error;
+    }
+  }
+
+  async updateMember(membershipId: string, dto: UpdateMemberDto): Promise<MemberWithUser> {
+    const { tenantId } = this.tenantContext.requireContext();
+    const membership = await this.prisma.tenantUser.findFirst({
+      where: { id: membershipId, tenantId },
+      select: { id: true, role: true, active: true },
+    });
+
+    if (!membership) {
+      throw new MembershipNotFoundError();
+    }
+
+    const losingOwner =
+      membership.role === Role.OWNER &&
+      membership.active &&
+      ((dto.role !== undefined && dto.role !== Role.OWNER) || dto.active === false);
+
+    if (losingOwner) {
+      await this.ensureNotLastOwner(tenantId, membershipId);
+    }
+
+    const updated = await this.prisma.tenantUser.update({
+      where: { id: membershipId },
+      data: {
+        ...(dto.role !== undefined ? { role: dto.role } : {}),
+        ...(dto.active !== undefined ? { active: dto.active } : {}),
+      },
+      select: MEMBER_WITH_USER_SELECT,
+    });
+
+    return toMemberWithUser(updated);
+  }
+
   async findMember(membershipId: string): Promise<MembershipSummary | null> {
     const { tenantId } = this.tenantContext.requireContext();
 
@@ -149,12 +245,40 @@ export class MembershipsService {
   async removeMember(membershipId: string): Promise<void> {
     const { tenantId } = this.tenantContext.requireContext();
 
-    const result = await this.prisma.tenantUser.deleteMany({
+    const membership = await this.prisma.tenantUser.findFirst({
       where: { id: membershipId, tenantId },
+      select: { id: true, role: true, active: true },
     });
 
-    if (result.count === 0) {
+    if (!membership) {
       throw new MembershipNotFoundError();
     }
+
+    if (membership.role === Role.OWNER && membership.active) {
+      await this.ensureNotLastOwner(tenantId, membershipId);
+    }
+
+    await this.prisma.tenantUser.delete({ where: { id: membershipId } });
   }
+
+  private async ensureNotLastOwner(tenantId: string, membershipId: string): Promise<void> {
+    const otherOwners = await this.prisma.tenantUser.count({
+      where: { tenantId, role: Role.OWNER, active: true, id: { not: membershipId } },
+    });
+
+    if (otherOwners === 0) {
+      throw new LastOwnerRequiredError();
+    }
+  }
+}
+
+function toMemberWithUser(member: PrismaMemberWithUser): MemberWithUser {
+  return {
+    id: member.id,
+    userId: member.userId,
+    name: member.user.name,
+    email: member.user.email,
+    role: member.role,
+    active: member.active,
+  };
 }

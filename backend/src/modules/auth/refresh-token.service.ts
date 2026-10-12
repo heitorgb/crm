@@ -83,6 +83,18 @@ export class RefreshTokenService {
     });
   }
 
+  /** Revokes every active refresh token for a user, optionally keeping the current session. */
+  async revokeAllForUser(userId: string, exceptRawToken?: string): Promise<void> {
+    await this.prisma.refreshToken.updateMany({
+      where: {
+        userId,
+        revokedAt: null,
+        ...(exceptRawToken ? { tokenHash: { not: this.hashToken(exceptRawToken) } } : {}),
+      },
+      data: { revokedAt: new Date() },
+    });
+  }
+
   private async createToken(
     userId: string,
     tenantId: string,

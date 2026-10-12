@@ -3,7 +3,6 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import { PageLoader } from '@/components/common/page-loader';
 import { AppLayout } from '@/components/layout/app-layout';
 import { LoginPage } from '@/features/auth/login-page';
-import { PlaceholderPage } from '@/features/placeholder/placeholder-page';
 import { ProtectedRoute } from './protected-route';
 
 const AttendancePage = lazy(() =>
@@ -39,6 +38,12 @@ const NotFoundPage = lazy(() =>
     default: module.NotFoundPage,
   })),
 );
+const ProfilePage = lazy(() =>
+  import('@/features/profile/profile-page').then((module) => ({ default: module.ProfilePage })),
+);
+const SettingsPage = lazy(() =>
+  import('@/features/settings/settings-page').then((module) => ({ default: module.SettingsPage })),
+);
 
 export function AppRoutes() {
   return (
@@ -62,10 +67,8 @@ export function AppRoutes() {
           <Route path="/contatos" element={<ContactListPage />} />
           <Route path="/contatos/:id" element={<ContactDetailPage />} />
 
-          <Route
-            path="/configuracoes"
-            element={<PlaceholderPage title="Configurações" description="Configurações do CRM." />}
-          />
+          <Route path="/perfil" element={<ProfilePage />} />
+          <Route path="/configuracoes" element={<SettingsPage />} />
         </Route>
 
         <Route path="/" element={<Navigate to="/atendimento/conversas" replace />} />

@@ -35,10 +35,20 @@ export interface CurrentSession {
   role: Role;
   membershipId: string;
   memberships: Membership[];
+  isPlatformAdmin: boolean;
 }
 
 export interface LoginInput {
   email: string;
   password: string;
   tenantId?: string;
+}
+
+export interface UpdateProfileInput {
+  name: string;
+}
+
+export interface ChangePasswordInput {
+  currentPassword: string;
+  newPassword: string;
 }

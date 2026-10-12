@@ -7,20 +7,19 @@ import { AuthService } from './auth.service.js';
 import { AuthCookieService } from './auth-cookie.service.js';
 import { JwtAuthGuard } from './guards/jwt-auth.guard.js';
 import { RolesGuard } from './guards/roles.guard.js';
-import { PasswordService } from './password.service.js';
+import { PasswordModule } from './password.module.js';
 import { RefreshTokenService } from './refresh-token.service.js';
 
 @Module({
-  imports: [JwtModule.register({}), MembershipsModule],
+  imports: [JwtModule.register({}), MembershipsModule, PasswordModule],
   controllers: [AuthController],
   providers: [
     AuthService,
     AuthCookieService,
-    PasswordService,
     RefreshTokenService,
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: RolesGuard },
   ],
-  exports: [AuthService],
+  exports: [AuthService, PasswordModule],
 })
 export class AuthModule {}

@@ -6,10 +6,10 @@ import { attendanceKeys } from './queries';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
-export function useAttendanceRealtime(): Record<string, string> {
+export function useAttendanceRealtime(): { connected: boolean } {
   const queryClient = useQueryClient();
   const token = useAuthStore((state) => state.session?.accessToken);
-  const [presence, setPresence] = useState<{ token: string; labels: Record<string, string> } | null>(null);
+  const [connected, setConnected] = useState(true);
 
   useEffect(() => {
     if (!token) {
@@ -56,7 +56,12 @@ export function useAttendanceRealtime(): Record<string, string> {
       void queryClient.invalidateQueries({ queryKey: attendanceKeys.all });
     };
 
-    socket.on('connect', invalidate);
+    socket.on('connect', () => {
+      setConnected(true);
+      invalidate();
+    });
+    socket.on('disconnect', () => setConnected(false));
+    socket.on('connect_error', () => setConnected(false));
     socket.on('message.created', invalidate);
     socket.on('conversation.updated', invalidate);
 
@@ -66,5 +71,6 @@ export function useAttendanceRealtime(): Record<string, string> {
       socket.disconnect();
     };
   }, [token, queryClient]);
-  return presence?.token === token ? presence?.labels ?? {} : {};
+
+  return { connected };
 }

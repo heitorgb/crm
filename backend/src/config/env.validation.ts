@@ -49,6 +49,19 @@ const authEnvSchema = z.object({
   AUTH_COOKIE_DOMAIN: optionalEnv(z.string().min(1)),
 });
 
+// PLATFORM ADMIN (allowlist de e-mails com acesso à área /admin)
+const adminEnvSchema = z.object({
+  PLATFORM_ADMIN_EMAILS: z
+    .string()
+    .default('')
+    .transform((value) =>
+      value
+        .split(',')
+        .map((email) => email.trim().toLowerCase())
+        .filter((email) => email.length > 0),
+    ),
+});
+
 // LOGGING
 const loggingEnvSchema = z.object({
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
@@ -92,6 +105,7 @@ export const envSchema = appEnvSchema
   .merge(databaseEnvSchema)
   .merge(redisEnvSchema)
   .merge(authEnvSchema)
+  .merge(adminEnvSchema)
   .merge(loggingEnvSchema)
   .merge(aiEnvSchema)
   .merge(integrationEnvSchema)

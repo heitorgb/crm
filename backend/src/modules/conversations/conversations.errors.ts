@@ -27,3 +27,15 @@ export class WhatsAppInstanceInactiveError extends AppException {
     super('WHATSAPP_INSTANCE_INACTIVE', 'WhatsApp instance is inactive', 409);
   }
 }
+
+export class WhatsAppInstanceNotFoundError extends AppException {
+  constructor() {
+    super('WHATSAPP_INSTANCE_NOT_FOUND', 'WhatsApp instance not found', 404);
+  }
+}
+
+export class ContactPhoneRequiredError extends AppException {
+  constructor() {
+    super('CONTACT_PHONE_REQUIRED', 'Contact has no phone to start a conversation', 400);
+  }
+}

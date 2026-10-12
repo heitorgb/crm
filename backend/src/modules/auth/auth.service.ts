@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import type { Role } from '@prisma/client';
 import type { TenantContext } from '../../common/tenant-context/tenant-context.types.js';
+import { isPlatformAdminEmail } from '../../common/security/platform-admin.js';
 import type { Env } from '../../config/env.validation.js';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service.js';
 import { TenantAccessDeniedError } from '../memberships/memberships.errors.js';
@@ -11,13 +12,14 @@ import { MembershipsService } from '../memberships/memberships.service.js';
 import type { UserMembership } from '../memberships/memberships.service.js';
 import {
   InvalidCredentialsError,
+  InvalidCurrentPasswordError,
   InvalidRefreshTokenError,
   NoActiveMembershipError,
   TenantRequiredError,
   UserInactiveError,
 } from './auth.errors.js';
 import type { IssuedSession, PublicUser, RequestMetadata } from './auth.types.js';
-import type { LoginDto } from './dto/auth.dto.js';
+import type { ChangePasswordDto, LoginDto, UpdateProfileDto } from './dto/auth.dto.js';
 import { PasswordService } from './password.service.js';
 import { RefreshTokenService } from './refresh-token.service.js';
 
@@ -35,6 +37,7 @@ export interface CurrentSession {
   role: Role;
   membershipId: string;
   memberships: UserMembership[];
+  isPlatformAdmin: boolean;
 }
 
 @Injectable()
@@ -110,6 +113,7 @@ export class AuthService {
 
     const memberships = await this.memberships.listActiveMembershipsForUser(user.id);
     const current = memberships.find((membership) => membership.tenantId === context.tenantId);
+    const allowlist = this.config.get('PLATFORM_ADMIN_EMAILS') ?? [];
 
     return {
       user: toPublicUser(user),
@@ -117,6 +121,7 @@ export class AuthService {
       role: current?.role ?? (context.role as Role),
       membershipId: context.membershipId,
       memberships,
+      isPlatformAdmin: isPlatformAdminEmail(user.email, allowlist),
     };
   }
 
@@ -144,6 +149,41 @@ export class AuthService {
     }
 
     return this.issueSession(user, membership, meta);
+  }
+
+  async updateProfile(context: TenantContext, dto: UpdateProfileDto): Promise<PublicUser> {
+    const user = await this.prisma.user.findUnique({ where: { id: context.userId } });
+
+    if (!user || !user.active) {
+      throw new UserInactiveError();
+    }
+
+    const updated = await this.prisma.user.update({
+      where: { id: user.id },
+      data: { name: dto.name.trim() },
+    });
+
+    return toPublicUser(updated);
+  }
+
+  async changePassword(
+    context: TenantContext,
+    dto: ChangePasswordDto,
+    currentRefreshToken: string | undefined,
+  ): Promise<void> {
+    const user = await this.prisma.user.findUnique({ where: { id: context.userId } });
+
+    if (!user || !user.active) {
+      throw new UserInactiveError();
+    }
+
+    if (!(await this.passwords.verify(user.passwordHash, dto.currentPassword))) {
+      throw new InvalidCurrentPasswordError();
+    }
+
+    const passwordHash = await this.passwords.hash(dto.newPassword);
+    await this.prisma.user.update({ where: { id: user.id }, data: { passwordHash } });
+    await this.refreshTokens.revokeAllForUser(user.id, currentRefreshToken);
   }
 
   private async selectMembership(userId: string, tenantId?: string): Promise<UserMembership> {

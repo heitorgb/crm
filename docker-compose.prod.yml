@@ -1,0 +1,91 @@
+# Stack de produção do OrderUp CRM.
+#
+# Uso no servidor (a partir da raiz do repositório):
+#   docker compose -f docker-compose.prod.yml build
+#   docker compose -f docker-compose.prod.yml run --rm migrate
+#   docker compose -f docker-compose.prod.yml up -d postgres redis backend frontend
+#
+# Segredos de aplicação ficam em `backend/.env` (NÃO versionado).
+# Variáveis do compose (opcionais): POSTGRES_*, HTTP_PORT, BACKEND_PORT.
+#
+# A Evolution API é um serviço externo e NÃO faz parte deste compose.
+
+name: orderup-crm
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: orderup-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-orderup}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-orderup}
+      POSTGRES_DB: ${POSTGRES_DB:-orderup}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-orderup} -d ${POSTGRES_DB:-orderup}']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: orderup-redis
+    restart: unless-stopped
+    command: ['redis-server', '--appendonly', 'yes']
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # Aplica migrations e encerra. Rodado explicitamente pelo script de deploy.
+  migrate:
+    build:
+      context: ./backend
+      target: build
+    env_file:
+      - ./backend/.env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-orderup}:${POSTGRES_PASSWORD:-orderup}@postgres:5432/${POSTGRES_DB:-orderup}?schema=public
+    command: ['npm', 'run', 'prisma:deploy']
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: 'no'
+
+  backend:
+    build:
+      context: ./backend
+    env_file:
+      - ./backend/.env
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      API_PREFIX: api
+      DATABASE_URL: postgresql://${POSTGRES_USER:-orderup}:${POSTGRES_PASSWORD:-orderup}@postgres:5432/${POSTGRES_DB:-orderup}?schema=public
+      REDIS_URL: redis://redis:6379
+    ports:
+      - '${BACKEND_PORT:-4100}:3000'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - '${HTTP_PORT:-80}:80'
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:

@@ -149,9 +149,9 @@ describe('Tenant isolation (integration)', () => {
     });
 
     it('A -> A delete is allowed', async () => {
-      await runAs(contextOf(data.memberA), () => memberships.removeMember(data.memberA.id));
+      await runAs(contextOf(data.memberA), () => memberships.removeMember(data.inactiveMemberA.id));
 
-      const removed = await prisma.tenantUser.findUnique({ where: { id: data.memberA.id } });
+      const removed = await prisma.tenantUser.findUnique({ where: { id: data.inactiveMemberA.id } });
       expect(removed).toBeNull();
     });
   });

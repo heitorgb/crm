@@ -50,7 +50,7 @@ export function UserMenu() {
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
         <DropdownMenuItem asChild>
-          <Link to="/configuracoes">
+          <Link to="/perfil">
             <User />
             Meu perfil
           </Link>

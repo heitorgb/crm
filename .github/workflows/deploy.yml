@@ -1,0 +1,35 @@
+name: Deploy (desenvolvimento)
+
+on:
+  push:
+    branches: [desenvolvimento]
+  workflow_dispatch:
+
+# Nunca roda dois deploys ao mesmo tempo; enfileira o próximo.
+concurrency:
+  group: deploy-desenvolvimento
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy via SSH
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          APP_DIR: ${{ vars.DEPLOY_PATH }}
+          DEPLOY_BRANCH: desenvolvimento
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ secrets.DEPLOY_PORT || '22' }}
+          envs: APP_DIR,DEPLOY_BRANCH
+          script_stop: true
+          command_timeout: 30m
+          script: |
+            set -e
+            APP_DIR="${APP_DIR:-/home/crm}"
+            cd "$APP_DIR"
+            bash scripts/deploy.sh

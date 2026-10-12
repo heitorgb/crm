@@ -39,6 +39,9 @@ export const attendanceService = {
 
   getConversation: (id: string) => apiRequest<Conversation>(`/conversations/${id}`),
 
+  startConversation: (input: { contactId: string; whatsappInstanceId: string }) =>
+    apiRequest<Conversation>('/conversations/start', { method: 'POST', body: input }),
+
   resolveParticipantAvatar: (id: string, jid: string) =>
     apiRequest<{ url: string | null }>(
       `/conversations/${id}/participant-avatar${toQueryString({ jid })}`,

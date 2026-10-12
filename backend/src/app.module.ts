@@ -19,7 +19,9 @@ import { QueueModule } from './infrastructure/queue/queue.module.js';
 import { RealtimeModule } from './infrastructure/realtime/realtime.module.js';
 import { HealthModule } from './modules/health/health.module.js';
 import { AuthModule } from './modules/auth/auth.module.js';
+import { AdminModule } from './modules/admin/admin.module.js';
 import { MembershipsModule } from './modules/memberships/memberships.module.js';
+import { TenantsModule } from './modules/tenants/tenants.module.js';
 import { CustomersModule } from './modules/customers/customers.module.js';
 import { ContactsModule } from './modules/contacts/contacts.module.js';
 import { TagsModule } from './modules/tags/tags.module.js';
@@ -55,6 +57,8 @@ import { WebhooksModule } from './modules/webhooks/webhooks.module.js';
     HealthModule,
     MembershipsModule,
     AuthModule,
+    AdminModule,
+    TenantsModule,
     CustomersModule,
     ContactsModule,
     TagsModule,

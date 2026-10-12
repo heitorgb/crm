@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, Post, Req, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Patch, Post, Req, Res, UseGuards } from '@nestjs/common';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { RateLimit } from '../../common/http/rate-limit/rate-limit.decorator.js';
 import { RateLimitGuard } from '../../common/http/rate-limit/rate-limit.guard.js';
@@ -8,7 +8,13 @@ import { AuthService } from './auth.service.js';
 import { AuthCookieService } from './auth-cookie.service.js';
 import { Public } from './decorators/auth.decorators.js';
 import { CurrentTenant } from './decorators/current-tenant.decorator.js';
-import { LoginDto, RefreshDto, SwitchTenantDto } from './dto/auth.dto.js';
+import {
+  ChangePasswordDto,
+  LoginDto,
+  RefreshDto,
+  SwitchTenantDto,
+  UpdateProfileDto,
+} from './dto/auth.dto.js';
 
 interface AuthResponse {
   accessToken: string;
@@ -76,6 +82,25 @@ export class AuthController {
   @Get('me')
   me(@CurrentTenant() context: TenantContext) {
     return this.auth.me(context);
+  }
+
+  @Patch('me')
+  updateProfile(
+    @CurrentTenant() context: TenantContext,
+    @Body() dto: UpdateProfileDto,
+  ): Promise<{ id: string; name: string; email: string }> {
+    return this.auth.updateProfile(context, dto);
+  }
+
+  @Post('change-password')
+  @HttpCode(204)
+  async changePassword(
+    @CurrentTenant() context: TenantContext,
+    @Body() dto: ChangePasswordDto,
+    @Req() request: FastifyRequest,
+  ): Promise<void> {
+    const currentToken = this.cookies.read(request);
+    await this.auth.changePassword(context, dto, currentToken);
   }
 
   @Post('switch-tenant')

@@ -24,6 +24,7 @@ import {
   CreateConversationDto,
   ListConversationsQueryDto,
   SendConversationMessageDto,
+  StartConversationDto,
   UpdateConversationDto,
 } from './dto/conversation.dto.js';
 
@@ -47,6 +48,12 @@ export class ConversationsController {
   @Post()
   create(@Body() dto: CreateConversationDto) {
     return this.conversations.create(dto);
+  }
+
+  @Post('start')
+  @HttpCode(200)
+  startFromContact(@Body() dto: StartConversationDto) {
+    return this.conversations.startFromContact(dto);
   }
 
   @Patch(':id')

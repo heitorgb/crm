@@ -51,6 +51,18 @@ E-mail: admin@orderup.local
 Senha:  admin12345
 ```
 
+### Admin da plataforma (criar novas organizações)
+
+Para acessar **Administração → Organizações** (`/admin/tenants`) e criar novos tenants/usuários,
+inclua o e-mail em `PLATFORM_ADMIN_EMAILS` no `backend/.env` e reinicie o backend:
+
+```env
+PLATFORM_ADMIN_EMAILS=admin@orderup.local
+```
+
+Sem essa variável, a área administrativa fica indisponível para todos. Detalhes em
+[`tenant-provisioning.md`](./tenant-provisioning.md).
+
 ## 3. Frontend
 
 ```bash

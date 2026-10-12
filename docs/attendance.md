@@ -117,6 +117,49 @@ Em **Atendimento → WhatsApp** (`/atendimento/whatsapp`):
 - `EVOLUTION_WEBHOOK_SECRET` (ou o `webhookSecret` por instância) é o token validado no webhook.
 - A URL retornada pela API nunca inclui o token (segredo não vaza para o frontend nem para logs).
 
+## Tela de atendimento (UI)
+
+`/atendimento/conversas` reproduz a experiência do WhatsApp Web usando os tokens e componentes do
+CRM (sem dependências novas). A tela é **full-bleed**: `MainContent` deixa de aplicar
+`max-width`/padding para essa rota, então ela ocupa 100% da largura e da altura da área de conteúdo
+(sem card externo nem *page header*), com rolagem independente na lista e no histórico.
+
+- **Lista (esquerda)**: busca, filtros por instância e status, avatar, prévia da última mensagem
+  (com remetente em grupos e rótulo "Mídia" quando não há texto), horário relativo (Hoje/Ontem/data)
+  e indicadores de status/grupo/instância. Estados de carregamento (skeleton), erro (com retry) e
+  lista vazia (convite para conectar o WhatsApp).
+- **Chat (centro)**: cabeçalho com avatar, nome, telefone/instância e menu de ações (encerrar/reabrir,
+  atualizar grupo, ver contato). Histórico com papel de parede sutil, separadores de dia (Hoje/Ontem)
+  e balões assimétricos — enviados em verde da marca com *ticks* de status
+  (`PENDING`/`SENT`/`DELIVERED`/`READ`/`FAILED`) e recebidos em card. Nome e foto por remetente em
+  grupos. Compositor com anexo (imagem/vídeo/áudio/PDF), texto autoexpansível, gravação de áudio e
+  envio por `Enter`.
+- **Painel de contato (direita)**: dados do contato/grupo, cliente, assunto e ações. Em telas menores
+  vira um `Sheet`; no mobile a lista e o chat se alternam (botão voltar no cabeçalho do chat).
+- **Tempo real**: eventos Socket.IO invalidam as queries; um aviso "Reconectando ao servidor…" é
+  exibido quando o socket cai. `refetchInterval` segue como fallback.
+
+Reabrir usa `POST /api/conversations/:id/takeover` (já existente).
+
+### Iniciar atendimento a partir de um contato
+
+O operador pode iniciar uma conversa sem esperar que o contato escreva primeiro, a partir da lista ou
+do detalhe do contato (**Iniciar atendimento** → escolhe o WhatsApp de envio).
+
+`POST /api/conversations/start` (autenticado) com `{ contactId, whatsappInstanceId }`:
+
+- valida contato e instância **no tenant atual** (404 se não pertencerem);
+- contato sem telefone → `CONTACT_PHONE_REQUIRED` (400);
+- procura uma conversa existente daquele contato/instância (por `contactId` ou `externalContactId`
+  em `phone`, `phone@s.whatsapp.net`, `phone@c.us`) e, se achar, reaproveita (reabre se estava
+  `CLOSED` e vincula o `contactId` ausente);
+- senão cria a conversa com `externalContactId = <phone>@s.whatsapp.net` (mesma chave do webhook, o
+  que evita conversas duplicadas quando a resposta chegar) e `status = OPEN`;
+- é idempotente (chamar de novo devolve a mesma conversa).
+
+O frontend então abre `/atendimento/conversas?conversation=<id>`, onde o envio já funciona pelo
+fluxo humano existente.
+
 ## Endpoints
 
 | Método | Rota                                             | Papéis           |
@@ -134,6 +177,7 @@ Em **Atendimento → WhatsApp** (`/atendimento/whatsapp`):
 | GET    | `/api/conversations`                             | autenticado      |
 | GET    | `/api/conversations/:id`                         | autenticado      |
 | POST   | `/api/conversations`                             | autenticado      |
+| POST   | `/api/conversations/start`                       | autenticado      |
 | PATCH  | `/api/conversations/:id`                         | autenticado      |
 | POST   | `/api/conversations/:id/takeover`                | autenticado      |
 | POST   | `/api/conversations/:id/close`                   | autenticado      |

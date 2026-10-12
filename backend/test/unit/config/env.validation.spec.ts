@@ -172,4 +172,14 @@ describe('validateEnv', () => {
     expect(validateEnv({ ...baseEnv, RATE_LIMIT_ENABLED: 'false' }).RATE_LIMIT_ENABLED).toBe(false);
     expect(validateEnv({ ...baseEnv, RATE_LIMIT_ENABLED: 'true' }).RATE_LIMIT_ENABLED).toBe(true);
   });
+
+  it('parses PLATFORM_ADMIN_EMAILS into a normalized list', () => {
+    expect(validateEnv({ ...baseEnv }).PLATFORM_ADMIN_EMAILS).toEqual([]);
+    expect(
+      validateEnv({
+        ...baseEnv,
+        PLATFORM_ADMIN_EMAILS: ' Admin@OrderUp.local, ops@x.com ,',
+      }).PLATFORM_ADMIN_EMAILS,
+    ).toEqual(['admin@orderup.local', 'ops@x.com']);
+  });
 });

@@ -12,10 +12,16 @@ import {
   ConversationProcessingService,
   type DeliverMediaInput,
 } from './conversation-processing.service.js';
-import { ConversationNotFoundError } from './conversations.errors.js';
+import {
+  ContactPhoneRequiredError,
+  ConversationNotFoundError,
+  WhatsAppInstanceNotFoundError,
+} from './conversations.errors.js';
+import { ContactNotFoundError } from '../contacts/contacts.errors.js';
 import type {
   CreateConversationDto,
   ListConversationsQueryDto,
+  StartConversationDto,
   UpdateConversationDto,
 } from './dto/conversation.dto.js';
 
@@ -134,6 +140,86 @@ export class ConversationsService {
     });
 
     return toConversationView(conversation);
+  }
+
+  /**
+   * Starts (or resumes) a conversation with a registered contact from the
+   * operator side, without waiting for an inbound WhatsApp message.
+   */
+  async startFromContact(dto: StartConversationDto): Promise<ConversationView> {
+    const { tenantId } = this.tenantContext.requireContext();
+
+    const contact = await this.prisma.contact.findFirst({
+      where: { id: dto.contactId, tenantId },
+      select: { id: true, phone: true },
+    });
+    if (!contact) {
+      throw new ContactNotFoundError();
+    }
+    if (!contact.phone) {
+      throw new ContactPhoneRequiredError();
+    }
+
+    const instance = await this.prisma.whatsAppInstance.findFirst({
+      where: { id: dto.whatsappInstanceId, tenantId },
+      select: { id: true },
+    });
+    if (!instance) {
+      throw new WhatsAppInstanceNotFoundError();
+    }
+
+    const jid = `${contact.phone}@s.whatsapp.net`;
+    const variants = Array.from(new Set([contact.phone, jid, `${contact.phone}@c.us`]));
+
+    const existing = await this.prisma.conversation.findFirst({
+      where: {
+        tenantId,
+        whatsappInstanceId: instance.id,
+        OR: [{ contactId: contact.id }, { externalContactId: { in: variants } }],
+      },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true, status: true, contactId: true },
+    });
+
+    if (existing) {
+      const data: Prisma.ConversationUncheckedUpdateInput = {};
+      if (existing.status === ConversationStatus.CLOSED) {
+        data.status = ConversationStatus.OPEN;
+        data.closedAt = null;
+      }
+      if (!existing.contactId) {
+        data.contactId = contact.id;
+      }
+      if (Object.keys(data).length > 0) {
+        await this.prisma.conversation.update({ where: { id: existing.id }, data });
+      }
+      return this.findOne(existing.id);
+    }
+
+    try {
+      const created = await this.prisma.conversation.create({
+        data: {
+          tenantId,
+          whatsappInstanceId: instance.id,
+          externalContactId: jid,
+          contactId: contact.id,
+          status: ConversationStatus.OPEN,
+        },
+        select: { id: true },
+      });
+      return this.findOne(created.id);
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        const raced = await this.prisma.conversation.findFirst({
+          where: { tenantId, whatsappInstanceId: instance.id, externalContactId: jid },
+          select: { id: true },
+        });
+        if (raced) {
+          return this.findOne(raced.id);
+        }
+      }
+      throw error;
+    }
   }
 
   async update(id: string, dto: UpdateConversationDto): Promise<ConversationView> {

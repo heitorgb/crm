@@ -21,7 +21,9 @@ User → POST /auth/login (email, senha, tenantId opcional)
 | POST   | `/api/auth/login`      | sim     | Autentica e emite access + refresh.                |
 | POST   | `/api/auth/refresh`    | sim     | Rotaciona o refresh token e emite novo access.     |
 | POST   | `/api/auth/logout`     | sim     | Revoga o refresh token e limpa o cookie.           |
-| GET    | `/api/auth/me`         | não     | Retorna usuário, tenant ativo, role e memberships. |
+| GET    | `/api/auth/me`         | não     | Retorna usuário, tenant ativo, role, memberships e `isPlatformAdmin`. |
+| PATCH  | `/api/auth/me`         | não     | Atualiza o **nome** do usuário.                    |
+| POST   | `/api/auth/change-password` | não | Troca a senha (valida a atual) e revoga as outras sessões. |
 | POST   | `/api/auth/switch-tenant` | não  | Troca o tenant ativo, validando membership.        |
 
 O `refreshToken` **não** vai no corpo das respostas; trafega em cookie HttpOnly. Clientes de API
@@ -76,6 +78,10 @@ Claims mínimas:
   exigem access token válido e membership ativa, preenchendo o `TenantContext`.
 - **`RolesGuard`** (autorização, global): aplica `@Roles(...)`. Sem `@Roles`, apenas exige
   autenticação. A role vem do `TenantContext` (banco), nunca do cliente.
+- **`PlatformAdminGuard`** (autorização administrativa, por controller): exige que o e-mail do
+  usuário autenticado esteja em `PLATFORM_ADMIN_EMAILS`; usado apenas em `AdminController`
+  (`/api/admin/*`). Não concede acesso cross-tenant a nenhuma outra rota. Ver
+  [`tenant-provisioning.md`](./tenant-provisioning.md).
 - Decorators: `@Public()`, `@Roles(OWNER, ADMIN)`, `@CurrentTenant()`.
 
 ### Roles (enum `Role`)
@@ -118,7 +124,7 @@ AUTH_COOKIE_DOMAIN       # opcional
 
 ## Fora de escopo
 
-- Recuperação de senha, MFA e convites.
+- Alteração de e-mail, recuperação de senha, MFA e convites.
 - RBAC granular por recurso (apenas roles base + endpoint-level).
 - Rate limiting de autenticação.
 - Identidade do bot via webhook (entra na fase de bot/WhatsApp).

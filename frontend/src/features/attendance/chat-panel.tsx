@@ -39,10 +39,10 @@ const SCROLL_BOTTOM_THRESHOLD = 96;
 
 function areGrouped(
   previous: ConversationMessage | undefined,
-  message: ConversationMessage,
+  message: ConversationMessage | undefined,
   isGroup: boolean,
 ): boolean {
-  if (!previous) {
+  if (!previous || !message) {
     return false;
   }
   if (previous.direction !== message.direction) {

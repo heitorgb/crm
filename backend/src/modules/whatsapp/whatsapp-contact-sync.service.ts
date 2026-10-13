@@ -1,4 +1,5 @@
 import { Inject, Injectable, Logger, type OnModuleInit } from '@nestjs/common';
+import { phoneFromJid } from '../../common/whatsapp/jid.js';
 import {
   JOB_NAMES,
   JOB_QUEUE,
@@ -11,8 +12,6 @@ import {
   type WhatsAppContactInput,
 } from '../contacts/contacts.service.js';
 import { EvolutionClient } from './evolution/evolution.client.js';
-
-const MAX_DIGITS = 15;
 
 @Injectable()
 export class WhatsAppContactSyncService implements OnModuleInit {
@@ -78,14 +77,4 @@ export class WhatsAppContactSyncService implements OnModuleInit {
 
     return this.contacts.importFromWhatsApp(tenantId, contacts);
   }
-}
-
-/** Only individual, dialable numbers are importable; groups and LIDs are skipped. */
-function phoneFromJid(jid: string): string | null {
-  const [localPart] = jid.split('@');
-  const digits = localPart.replace(/\D/g, '');
-  if (digits.length < 7 || digits.length > MAX_DIGITS) {
-    return null;
-  }
-  return digits;
 }

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConversationStatus, MessageType, Prisma } from '@prisma/client';
+import { isGroupJid, phoneFromJid } from '../../common/whatsapp/jid.js';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service.js';
 import { JOB_NAMES, JOB_QUEUE, type JobQueue } from '../../infrastructure/queue/job-queue.types.js';
 import { RealtimeService } from '../../infrastructure/realtime/realtime.service.js';
@@ -89,7 +90,7 @@ export class WebhookService {
 
     const contact = isGroup
       ? null
-      : await this.resolveContact(instance.tenantId, extractPhone(remoteJid), pushName);
+      : await this.resolveContact(instance.tenantId, phoneFromJid(remoteJid), pushName);
 
     const conversation = await this.findOrCreateConversation(
       instance.tenantId,
@@ -399,16 +400,6 @@ export function readInstanceName(payload: Record<string, unknown>): string | nul
   }
   const data = isRecord(payload.data) ? payload.data : null;
   return data ? readString(data.instance) : null;
-}
-
-function isGroupJid(remoteJid: string): boolean {
-  return remoteJid.endsWith('@g.us');
-}
-
-function extractPhone(remoteJid: string): string | null {
-  const [number] = remoteJid.split('@');
-  const digits = number.replace(/\D/g, '');
-  return digits.length > 0 ? digits : null;
 }
 
 function extractText(message: unknown): string | null {

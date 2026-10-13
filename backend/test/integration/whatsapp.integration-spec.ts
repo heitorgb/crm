@@ -549,6 +549,9 @@ describe('WhatsApp attendance (integration)', () => {
         { jid: '120363000000000000@g.us', name: 'Grupo', avatarUrl: null },
         { jid: 'status@broadcast', name: 'Status', avatarUrl: null },
         { jid: 'abc@lid', name: 'Lid', avatarUrl: null },
+        { jid: '75209205874877@lid', name: 'Lid Numérico', avatarUrl: null },
+        { jid: '867051314767696@bot', name: 'Meta AI', avatarUrl: null },
+        { jid: '120363410064967646@newsletter', name: 'Newsletter', avatarUrl: null },
         { jid: '5511955555555@s.whatsapp.net', name: 'Válido', avatarUrl: null },
       ];
 
@@ -557,6 +560,24 @@ describe('WhatsApp attendance (integration)', () => {
       const contacts = await prisma.contact.findMany({ where: { tenantId: ownerA.tenantId } });
       expect(contacts).toHaveLength(1);
       expect(contacts[0].phone).toBe('5511955555555');
+    });
+
+    it('removes orphan contacts left by a previous bad import and reimports them', async () => {
+      await prisma.contact.create({
+        data: { tenantId: ownerA.tenantId, phone: '669880924186', name: 'Mãe' },
+      });
+      evolution.addressBook = [
+        { jid: '5511988888888@s.whatsapp.net', name: 'Mãe', avatarUrl: null },
+      ];
+
+      await connectAndSync(ownerA, `sync-heal-${randomUUID()}`);
+
+      const contacts = await prisma.contact.findMany({
+        where: { tenantId: ownerA.tenantId },
+        orderBy: { phone: 'asc' },
+      });
+      expect(contacts).toHaveLength(1);
+      expect(contacts[0]).toMatchObject({ phone: '5511988888888', name: 'Mãe' });
     });
 
     it('never imports contacts into another tenant', async () => {

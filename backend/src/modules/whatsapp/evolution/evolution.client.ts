@@ -219,7 +219,7 @@ export class EvolutionClient {
         : [];
 
     return list.filter(isRecord).flatMap((entry) => {
-      const jid = readString(entry.id) ?? readString(entry.remoteJid);
+      const jid = readString(entry.remoteJid) ?? readString(entry.id);
       if (!jid) {
         return [];
       }

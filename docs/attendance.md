@@ -170,9 +170,10 @@ CRM (sem dependências novas). A tela é **full-bleed**: `MainContent` deixa de 
   atendente no topo do balão e guardam `senderId`/`senderName` para rastreabilidade. O padrão é
   configurável em Configurações → Atendimento (ver [`settings.md`](./settings.md)).
 - **Respostas citadas (menções)**: mensagens que citam outra exibem, no topo do balão, um bloco com
-  barra lateral colorida, o autor citado (**Você** quando foi enviada por nós) e um resumo (texto ou
-  rótulo do tipo de mídia), no estilo do WhatsApp Web. Ao passar o mouse sobre uma mensagem aparece o
-  botão **Responder**; ao responder, o compositor mostra a prévia da citação (com botão de cancelar) e
+  barra lateral colorida (cor por remetente, ou cor da marca quando a citada é nossa), o autor citado
+  (**Você** quando foi enviada por nós) e um resumo com ícone do tipo de mídia (ex.: microfone para
+  áudio), no estilo do WhatsApp Web. Ao passar o mouse sobre uma mensagem aparece o botão
+  **Responder**; ao responder, o compositor mostra a prévia da citação (com botão de cancelar) e
   a mensagem é enviada com a referência à original (`quoted` na Evolution). O backend persiste o
   contexto em `Message.metadata.quoted` (`externalId`, `authorName`, `authorJid`, `fromMe`, `content`,
   `type` e `messageId` local quando resolvido): no inbound, lendo `contextInfo.quotedMessage` do

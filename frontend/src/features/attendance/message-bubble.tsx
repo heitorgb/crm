@@ -1,7 +1,25 @@
-import { AlertCircle, Check, CheckCheck, Clock, Reply } from 'lucide-react';
+import {
+  AlertCircle,
+  Check,
+  CheckCheck,
+  Clock,
+  FileText,
+  Image as ImageIcon,
+  MapPin,
+  Mic,
+  Reply,
+  Sticker,
+  UserRound,
+  Video,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import type { ConversationMessage, MessageStatus, QuotedMessage } from '@/types/attendance';
+import type {
+  ConversationMessage,
+  MessageStatus,
+  MessageType,
+  QuotedMessage,
+} from '@/types/attendance';
 import {
   formatBubbleTime,
   messageSnippet,
@@ -128,17 +146,68 @@ export function MessageBubble({ conversationId, message, isGroup, onReply }: Mes
   );
 }
 
+const QUOTED_COLOR_CLASSES = [
+  'border-sky-400 text-sky-500 dark:text-sky-400',
+  'border-emerald-400 text-emerald-600 dark:text-emerald-400',
+  'border-amber-400 text-amber-600 dark:text-amber-400',
+  'border-rose-400 text-rose-500 dark:text-rose-400',
+  'border-violet-400 text-violet-500 dark:text-violet-400',
+  'border-teal-400 text-teal-600 dark:text-teal-400',
+];
+
+function quotedColorClass(quoted: QuotedMessage): string {
+  if (quoted.fromMe) {
+    return 'border-primary text-primary';
+  }
+  const key = quoted.authorJid ?? quoted.authorName ?? '';
+  let hash = 0;
+  for (let index = 0; index < key.length; index += 1) {
+    hash = (hash * 31 + key.charCodeAt(index)) >>> 0;
+  }
+  return QUOTED_COLOR_CLASSES[hash % QUOTED_COLOR_CLASSES.length];
+}
+
+function QuotedTypeIcon({ type }: { type: MessageType }) {
+  const className = 'size-3.5 shrink-0';
+  switch (type) {
+    case 'AUDIO':
+      return <Mic className={className} />;
+    case 'IMAGE':
+      return <ImageIcon className={className} />;
+    case 'VIDEO':
+      return <Video className={className} />;
+    case 'DOCUMENT':
+      return <FileText className={className} />;
+    case 'STICKER':
+      return <Sticker className={className} />;
+    case 'LOCATION':
+      return <MapPin className={className} />;
+    case 'CONTACT':
+      return <UserRound className={className} />;
+    default:
+      return null;
+  }
+}
+
 function QuoteBlock({ quoted, isOutbound }: { quoted: QuotedMessage; isOutbound: boolean }) {
+  const hasMediaIcon = quoted.type !== 'TEXT' && quoted.type !== 'UNKNOWN';
+
   return (
     <div
       className={cn(
-        'mb-1 flex flex-col rounded-md border-l-4 border-primary px-2 py-1 text-left',
-        isOutbound ? 'bg-black/5' : 'bg-surface',
+        'mb-1 flex flex-col rounded-md border-l-4 px-2 py-1 text-left',
+        quotedColorClass(quoted),
+        isOutbound ? 'bg-black/10' : 'bg-surface',
       )}
     >
-      <span className="text-[11px] font-semibold text-primary">{quotedAuthorLabel(quoted)}</span>
-      <span className="line-clamp-3 whitespace-pre-wrap break-words text-[11px] leading-snug text-muted-foreground">
-        {messageSnippet(quoted.content, quoted.type)}
+      <span className="text-[11px] font-semibold leading-tight">
+        {quotedAuthorLabel(quoted)}
+      </span>
+      <span className="flex items-center gap-1">
+        {hasMediaIcon ? <QuotedTypeIcon type={quoted.type} /> : null}
+        <span className="line-clamp-3 whitespace-pre-wrap break-words text-[11px] leading-snug text-muted-foreground">
+          {messageSnippet(quoted.content, quoted.type)}
+        </span>
       </span>
     </div>
   );
@@ -149,7 +218,7 @@ function ReplyButton({ onClick }: { onClick: () => void }) {
     <Button
       variant="ghost"
       size="icon"
-      className="size-7 shrink-0 text-muted-foreground opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:focus-visible:opacity-100"
+      className="size-8 shrink-0 rounded-full text-foreground/60 transition-colors hover:bg-surface-hover hover:text-foreground"
       onClick={onClick}
       aria-label="Responder"
     >

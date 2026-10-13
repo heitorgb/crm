@@ -7,6 +7,7 @@ import { PageHeader } from '@/components/common/page-header';
 import { Pagination } from '@/components/common/pagination';
 import { SearchInput } from '@/components/common/search-input';
 import { StatusBadge } from '@/components/common/status-badge';
+import { UserAvatar } from '@/components/common/user-avatar';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -127,15 +128,24 @@ export function ContactListPage() {
                 {query.data.data.map((contact) => (
                   <TableRow key={contact.id}>
                     <TableCell>
-                      <Link
-                        to={`/contatos/${contact.id}`}
-                        className="font-medium text-foreground hover:text-primary"
-                      >
-                        {contact.name}
-                      </Link>
-                      {contact.email ? (
-                        <div className="text-xs text-muted-foreground">{contact.email}</div>
-                      ) : null}
+                      <div className="flex items-center gap-2">
+                        <UserAvatar
+                          name={contact.name}
+                          src={contact.avatarUrl ?? undefined}
+                          className="size-8"
+                        />
+                        <div className="min-w-0">
+                          <Link
+                            to={`/contatos/${contact.id}`}
+                            className="font-medium text-foreground hover:text-primary"
+                          >
+                            {contact.name}
+                          </Link>
+                          {contact.email ? (
+                            <div className="text-xs text-muted-foreground">{contact.email}</div>
+                          ) : null}
+                        </div>
+                      </div>
                     </TableCell>
                     <TableCell className="hidden font-mono text-xs lg:table-cell">
                       {contact.phone ?? '—'}

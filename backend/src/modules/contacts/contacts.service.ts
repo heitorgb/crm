@@ -18,6 +18,7 @@ export interface ContactView {
   email: string | null;
   phone: string | null;
   position: string | null;
+  avatarUrl: string | null;
   isPrimary: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -28,6 +29,19 @@ export interface FindOrCreateContactInput {
   phone: string;
   name?: string | null;
 }
+
+export interface WhatsAppContactInput {
+  phone: string;
+  name?: string | null;
+  avatarUrl?: string | null;
+}
+
+export interface ImportContactsResult {
+  created: number;
+  updated: number;
+}
+
+const IMPORT_BATCH_SIZE = 500;
 
 const CONTACT_INCLUDE = {
   customer: { select: { name: true } },
@@ -190,6 +204,82 @@ export class ContactsService {
     }
   }
 
+  /**
+   * System import used to bring the WhatsApp address book into the CRM. Tenant is
+   * always explicit (like the webhook path, there is no request context). Existing
+   * contacts are preserved: a name is only replaced when it is still the phone
+   * placeholder, and the avatar is only filled when empty.
+   */
+  async importFromWhatsApp(
+    tenantId: string,
+    contacts: WhatsAppContactInput[],
+  ): Promise<ImportContactsResult> {
+    const deduped = new Map<string, { name: string | null; avatarUrl: string | null }>();
+    for (const contact of contacts) {
+      const phone = normalizePhone(contact.phone);
+      if (!phone) {
+        continue;
+      }
+      const name = normalizeNullableString(contact.name) ?? null;
+      const avatarUrl = normalizeNullableString(contact.avatarUrl) ?? null;
+      const previous = deduped.get(phone);
+      deduped.set(phone, {
+        name: previous?.name ?? name,
+        avatarUrl: previous?.avatarUrl ?? avatarUrl,
+      });
+    }
+
+    if (deduped.size === 0) {
+      return { created: 0, updated: 0 };
+    }
+
+    const existing = await this.prisma.contact.findMany({
+      where: { tenantId, phone: { in: [...deduped.keys()] } },
+      select: { id: true, phone: true, name: true, avatarUrl: true },
+    });
+    const existingByPhone = new Map(existing.map((contact) => [contact.phone as string, contact]));
+
+    const toCreate: Prisma.ContactCreateManyInput[] = [];
+    const toUpdate: { id: string; data: Prisma.ContactUpdateInput }[] = [];
+
+    for (const [phone, incoming] of deduped) {
+      const current = existingByPhone.get(phone);
+      if (!current) {
+        toCreate.push({
+          tenantId,
+          phone,
+          name: incoming.name ?? phone,
+          avatarUrl: incoming.avatarUrl,
+        });
+        continue;
+      }
+
+      const data: Prisma.ContactUpdateInput = {};
+      if (incoming.avatarUrl && !current.avatarUrl) {
+        data.avatarUrl = incoming.avatarUrl;
+      }
+      if (incoming.name && (current.name === phone || current.name.trim().length === 0)) {
+        data.name = incoming.name;
+      }
+      if (Object.keys(data).length > 0) {
+        toUpdate.push({ id: current.id, data });
+      }
+    }
+
+    let created = 0;
+    for (let index = 0; index < toCreate.length; index += IMPORT_BATCH_SIZE) {
+      const batch = toCreate.slice(index, index + IMPORT_BATCH_SIZE);
+      const result = await this.prisma.contact.createMany({ data: batch, skipDuplicates: true });
+      created += result.count;
+    }
+
+    for (const update of toUpdate) {
+      await this.prisma.contact.update({ where: { id: update.id }, data: update.data });
+    }
+
+    return { created, updated: toUpdate.length };
+  }
+
   private async requireContact(tenantId: string, id: string): Promise<void> {
     const existing = await this.prisma.contact.findFirst({
       where: { id, tenantId },
@@ -222,6 +312,7 @@ function toContactView(contact: PrismaContact): ContactView {
     email: contact.email,
     phone: contact.phone,
     position: contact.position,
+    avatarUrl: contact.avatarUrl,
     isPrimary: contact.isPrimary,
     createdAt: contact.createdAt,
     updatedAt: contact.updatedAt,

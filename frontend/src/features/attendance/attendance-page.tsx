@@ -40,15 +40,16 @@ function useMinWidth(query: string): boolean {
 
 export function AttendancePage() {
   const { connected } = useAttendanceRealtime();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const isDesktop = useMinWidth('(min-width: 1280px)');
 
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState<ConversationStatus | 'ALL'>('ALL');
   const [instanceId, setInstanceId] = useState<string>('ALL');
-  const [selectedId, setSelectedId] = useState<string | null>(searchParams.get('conversation'));
   const [panelOpen, setPanelOpen] = useState(true);
   const [infoOpen, setInfoOpen] = useState(false);
+
+  const selectedId = searchParams.get('conversation');
 
   const instancesQuery = useWhatsAppInstances({ perPage: 100 });
   const conversationsQuery = useConversations({
@@ -58,7 +59,7 @@ export function AttendancePage() {
     whatsappInstanceId: instanceId === 'ALL' ? undefined : instanceId,
   });
   const conversations = conversationsQuery.data?.data ?? [];
-  const activeId = selectedId ?? conversations[0]?.id ?? null;
+  const activeId = selectedId;
 
   const conversationQuery = useConversation(activeId ?? undefined);
   const messagesQuery = useConversationMessages(activeId ?? undefined);
@@ -72,7 +73,23 @@ export function AttendancePage() {
   );
   const mobileChatView = selectedId !== null;
 
-  const handleSelect = (id: string): void => setSelectedId(id);
+  const handleSelect = (id: string): void => {
+    setSearchParams({ conversation: id }, { replace: true });
+  };
+  const handleDeselect = (): void => {
+    setSearchParams({}, { replace: true });
+  };
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape' && !event.defaultPrevented && searchParams.get('conversation')) {
+        setSearchParams({}, { replace: true });
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [searchParams, setSearchParams]);
+
   const handleToggleInfo = (): void => {
     if (isDesktop) {
       setPanelOpen((value) => !value);
@@ -108,12 +125,12 @@ export function AttendancePage() {
             status={status}
             onStatusChange={(value) => {
               setStatus(value);
-              setSelectedId(null);
+              handleDeselect();
             }}
             instanceId={instanceId}
             onInstanceChange={(value) => {
               setInstanceId(value);
-              setSelectedId(null);
+              handleDeselect();
             }}
             instances={instancesQuery.data?.data ?? []}
           />
@@ -140,7 +157,7 @@ export function AttendancePage() {
               messagesPending={messagesQuery.isPending}
               messagesError={messagesQuery.isError}
               onRetryMessages={() => void messagesQuery.refetch()}
-              onBack={() => setSelectedId(null)}
+              onBack={handleDeselect}
               onToggleInfo={handleToggleInfo}
               closePending={closeConversation.isPending}
               onClose={() => {

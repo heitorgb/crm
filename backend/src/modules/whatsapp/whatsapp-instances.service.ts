@@ -8,6 +8,7 @@ import type { Env } from '../../config/env.validation.js';
 import { EncryptionService } from '../../infrastructure/crypto/encryption.service.js';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service.js';
 import { EvolutionClient, EvolutionRequestError } from './evolution/evolution.client.js';
+import { WhatsAppContactSyncService } from './whatsapp-contact-sync.service.js';
 import type {
   CreateWhatsAppInstanceDto,
   ListWhatsAppInstancesQueryDto,
@@ -62,6 +63,7 @@ export class WhatsAppInstancesService implements OnModuleInit {
     private readonly tenantContext: TenantContextService,
     private readonly encryption: EncryptionService,
     private readonly evolution: EvolutionClient,
+    private readonly contactSync: WhatsAppContactSyncService,
     private readonly config: ConfigService<Env, true>,
   ) {}
 
@@ -70,6 +72,33 @@ export class WhatsAppInstancesService implements OnModuleInit {
       return;
     }
     void this.reconcileWebhooks();
+    void this.reconcileContacts();
+  }
+
+  /**
+   * Imports the address book of every already connected instance at boot, so
+   * numbers connected before this feature existed get their contacts pulled
+   * automatically without any manual action.
+   */
+  private async reconcileContacts(): Promise<void> {
+    if (!this.evolution.configured) {
+      return;
+    }
+
+    try {
+      const instances = await this.prisma.whatsAppInstance.findMany({
+        where: { active: true, status: WhatsAppInstanceStatus.CONNECTED },
+        select: { tenantId: true, instanceName: true },
+      });
+
+      for (const instance of instances) {
+        await this.contactSync.enqueue(instance);
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Contact reconciliation failed: ${error instanceof Error ? error.message : 'unknown'}`,
+      );
+    }
   }
 
   /**
@@ -235,6 +264,15 @@ export class WhatsAppInstancesService implements OnModuleInit {
       where: { id },
       data: { status },
     });
+
+    // First time the link turns CONNECTED, pull the WhatsApp address book.
+    if (status === WhatsAppInstanceStatus.CONNECTED && instance.status !== status) {
+      await this.contactSync.enqueue({
+        tenantId: instance.tenantId,
+        instanceName: instance.instanceName,
+      });
+    }
+
     return { status: updated.status };
   }
 

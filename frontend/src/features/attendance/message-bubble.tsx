@@ -2,6 +2,7 @@ import { AlertCircle, Check, CheckCheck, Clock } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { ConversationMessage, MessageStatus } from '@/types/attendance';
 import { formatBubbleTime } from './attendance-utils';
+import { LinkifiedText } from './linkified-text';
 import { isMediaMessage } from './media-message-utils';
 import { MessageMedia } from './message-media';
 import { SenderAvatar } from './sender-avatar';
@@ -68,12 +69,16 @@ export function MessageBubble({ conversationId, message, isGroup }: MessageBubbl
           {isMedia ? (
             <MessageMedia conversationId={conversationId} message={message} />
           ) : (
-            <p className="whitespace-pre-wrap break-words">
-              {message.content ?? `[${message.type.toLowerCase()}]`}
-            </p>
+            <LinkifiedText
+              text={message.content ?? `[${message.type.toLowerCase()}]`}
+              className="whitespace-pre-wrap break-words"
+            />
           )}
           {isMedia && message.content ? (
-            <p className="whitespace-pre-wrap break-words px-1.5 pt-1">{message.content}</p>
+            <LinkifiedText
+              text={message.content}
+              className="whitespace-pre-wrap break-words px-1.5 pt-1"
+            />
           ) : null}
           <div
             className={cn(

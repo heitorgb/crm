@@ -1,6 +1,9 @@
-# Evolution API — serviço externo de WhatsApp (NÃO faz parte do compose principal).
+# Evolution API — serviço de WhatsApp (compose separado, sobreposto ao de produção no deploy).
 #
-# Suba junto com a infra do CRM:
+# O deploy contínuo sobe este arquivo junto do compose de produção:
+#   docker compose -f docker-compose.prod.yml -f docker-compose.evolution.yml up -d
+#
+# Também pode ser subido junto com a infra local do CRM:
 #   docker compose -f docker-compose.yml -f docker-compose.evolution.yml up -d
 #
 # Ou isolado:

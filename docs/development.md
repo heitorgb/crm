@@ -65,7 +65,7 @@ npm run start:dev           # watch mode: http://localhost:3000/api/health
 
 ```text
 Tenant: OrderUp Demo
-E-mail: admin@orderup.local
+E-mail: admin@orderup.com.br
 Senha:  admin12345
 ```
 

@@ -7,6 +7,7 @@
 #   DEPLOY_BRANCH  branch a implantar                     (default: desenvolvimento)
 #   GIT_REMOTE     remote do git                          (default: origin)
 #   COMPOSE_FILE   arquivo compose de produção            (default: docker-compose.prod.yml)
+#   EVOLUTION_COMPOSE_FILE  compose da Evolution API      (default: docker-compose.evolution.yml)
 #
 # Pré-requisitos no servidor: git, docker, docker compose (v2) e o repositório
 # já clonado em APP_DIR com o remote configurado, além de backend/.env preenchido.
@@ -17,6 +18,8 @@ APP_DIR="${APP_DIR:-/home/crm}"
 DEPLOY_BRANCH="${DEPLOY_BRANCH:-desenvolvimento}"
 GIT_REMOTE="${GIT_REMOTE:-origin}"
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.prod.yml}"
+EVOLUTION_COMPOSE_FILE="${EVOLUTION_COMPOSE_FILE:-docker-compose.evolution.yml}"
+COMPOSE_FILES=(-f "$COMPOSE_FILE" -f "$EVOLUTION_COMPOSE_FILE")
 
 log() { printf '\n\033[1;32m[deploy]\033[0m %s\n' "$*"; }
 fail() { printf '\n\033[1;31m[deploy:erro]\033[0m %s\n' "$*" >&2; exit 1; }
@@ -39,18 +42,20 @@ log "HEAD em $(git rev-parse --short HEAD) — $(git log -1 --pretty=%s)"
 [ -f backend/.env ] || fail "backend/.env ausente em $APP_DIR/backend/.env (crie a partir de backend/.env.example)."
 
 log "Construindo imagens (backend, migrate, frontend)"
-docker compose -f "$COMPOSE_FILE" build
+docker compose "${COMPOSE_FILES[@]}" build
 
 log "Aplicando migrations do banco"
-docker compose -f "$COMPOSE_FILE" run --rm migrate
+docker compose "${COMPOSE_FILES[@]}" run --rm migrate
 
-log "Subindo serviços"
-docker compose -f "$COMPOSE_FILE" up -d --remove-orphans postgres redis backend frontend
+log "Subindo serviços (CRM + Evolution)"
+docker compose "${COMPOSE_FILES[@]}" up -d --remove-orphans \
+  postgres redis backend frontend \
+  evolution-postgres evolution-redis evolution
 
 log "Removendo imagens órfãs"
 docker image prune -f >/dev/null
 
 log "Status dos serviços"
-docker compose -f "$COMPOSE_FILE" ps
+docker compose "${COMPOSE_FILES[@]}" ps
 
 log "Deploy concluído com sucesso (commit $(git rev-parse --short HEAD))."

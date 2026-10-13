@@ -6,6 +6,7 @@ import { ApiError } from '@/lib/api-client';
 import { useAttendanceStore } from '@/stores/attendance-store';
 import type { ConversationMessage } from '@/types/attendance';
 import { messageSnippet } from './attendance-utils';
+import { EmojiPicker } from './emoji-picker';
 import { MediaPreviewDialog } from './media-preview-dialog';
 import { useSendConversationMedia, useSendConversationMessage } from './queries';
 import { useAudioRecorder } from './use-audio-recorder';
@@ -32,6 +33,8 @@ export function MessageComposer({ conversationId, replyTo, onCancelReply }: Mess
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const selectionRef = useRef({ start: 0, end: 0 });
+  const pendingCaretRef = useRef<number | null>(null);
 
   const sendMessage = useSendConversationMessage();
   const sendMedia = useSendConversationMedia();
@@ -47,6 +50,21 @@ export function MessageComposer({ conversationId, replyTo, onCancelReply }: Mess
     }
     element.style.height = 'auto';
     element.style.height = `${Math.min(element.scrollHeight, MAX_COMPOSER_HEIGHT)}px`;
+  }, [draft]);
+
+  useEffect(() => {
+    if (pendingCaretRef.current === null) {
+      return;
+    }
+    const element = textareaRef.current;
+    if (!element) {
+      return;
+    }
+    const caret = pendingCaretRef.current;
+    pendingCaretRef.current = null;
+    selectionRef.current = { start: caret, end: caret };
+    element.focus();
+    element.setSelectionRange(caret, caret);
   }, [draft]);
 
   useEffect(() => {
@@ -93,6 +111,20 @@ export function MessageComposer({ conversationId, replyTo, onCancelReply }: Mess
         caught instanceof ApiError ? caught.message : 'Não foi possível enviar a mensagem.',
       );
     }
+  };
+
+  const handleEmojiSelect = (emoji: string): void => {
+    const element = textareaRef.current;
+    const focused = element !== null && document.activeElement === element;
+    const selection = focused
+      ? { start: element.selectionStart, end: element.selectionEnd }
+      : selectionRef.current;
+    const start = Math.max(0, Math.min(selection.start, draft.length));
+    const end = Math.max(start, Math.min(selection.end, draft.length));
+    const caret = start + emoji.length;
+    selectionRef.current = { start: caret, end: caret };
+    pendingCaretRef.current = caret;
+    setDraft(draft.slice(0, start) + emoji + draft.slice(end));
   };
 
   const handleFileSelected = (event: ChangeEvent<HTMLInputElement>): void => {
@@ -231,11 +263,18 @@ export function MessageComposer({ conversationId, replyTo, onCancelReply }: Mess
           >
             <Paperclip />
           </Button>
+          <EmojiPicker onSelect={handleEmojiSelect} />
           <Textarea
             ref={textareaRef}
             rows={1}
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
+            onSelect={(event) => {
+              selectionRef.current = {
+                start: event.currentTarget.selectionStart,
+                end: event.currentTarget.selectionEnd,
+              };
+            }}
             placeholder="Mensagem"
             className="max-h-40 min-h-[42px] flex-1 resize-none rounded-2xl border-border bg-surface py-2.5"
             onKeyDown={(event) => {

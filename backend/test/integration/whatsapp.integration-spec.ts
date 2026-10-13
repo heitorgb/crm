@@ -411,21 +411,24 @@ describe('WhatsApp attendance (integration)', () => {
       expect(JSON.stringify(response.json())).not.toContain('super-secret-webhook');
     });
 
-    it('falls back to an existing Evolution instance', async () => {
-      const instanceName = `existing-${randomUUID()}`;
-      const instanceId = await createInstance(ownerA, instanceName);
-      evolution.createInstanceError = { status: 409 };
+    it.each([400, 403, 409])(
+      'falls back to an existing Evolution instance when create returns %i',
+      async (status) => {
+        const instanceName = `existing-${randomUUID()}`;
+        const instanceId = await createInstance(ownerA, instanceName);
+        evolution.createInstanceError = { status };
 
-      const response = await app.inject({
-        method: 'POST',
-        url: `/api/whatsapp/instances/${instanceId}/connect`,
-        headers: authHeaders(ownerA),
-      });
+        const response = await app.inject({
+          method: 'POST',
+          url: `/api/whatsapp/instances/${instanceId}/connect`,
+          headers: authHeaders(ownerA),
+        });
 
-      expect(response.statusCode).toBe(201);
-      expect(response.json().code).toBe('2@existing');
-      expect(evolution.created).not.toContain(instanceName);
-    });
+        expect(response.statusCode).toBe(201);
+        expect(response.json().code).toBe('2@existing');
+        expect(evolution.created).not.toContain(instanceName);
+      },
+    );
 
     it('restricts webhook configuration to OWNER/ADMIN and masks the secret', async () => {
       const instanceId = await createInstance(ownerA, `wh-${randomUUID()}`);

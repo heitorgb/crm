@@ -3,7 +3,6 @@ import { MessageSquare, Smartphone } from 'lucide-react';
 import { EmptyState } from '@/components/common/empty-state';
 import { SearchInput } from '@/components/common/search-input';
 import { StatusBadge } from '@/components/common/status-badge';
-import { UserAvatar } from '@/components/common/user-avatar';
 import { Button } from '@/components/ui/button';
 import {
   Select,
@@ -22,6 +21,7 @@ import {
   conversationStatusTone,
   formatListTime,
 } from './attendance-utils';
+import { SenderAvatar } from './sender-avatar';
 
 interface ConversationListProps {
   conversations: Conversation[];
@@ -136,9 +136,11 @@ export function ConversationList({
                   active ? 'bg-primary/10' : 'hover:bg-surface-hover',
                 )}
               >
-                <UserAvatar
+                <SenderAvatar
+                  conversationId={item.id}
+                  jid={item.isGroup ? null : item.externalContactId}
                   name={conversationLabel(item)}
-                  src={item.avatarUrl ?? undefined}
+                  src={item.avatarUrl}
                   className="size-12"
                 />
                 <div className="min-w-0 flex-1">

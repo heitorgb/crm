@@ -2,7 +2,6 @@ import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { RefreshCw } from 'lucide-react';
 import { StatusBadge } from '@/components/common/status-badge';
-import { UserAvatar } from '@/components/common/user-avatar';
 import { Button } from '@/components/ui/button';
 import type { Conversation } from '@/types/attendance';
 import {
@@ -10,6 +9,7 @@ import {
   conversationStatusLabel,
   conversationStatusTone,
 } from './attendance-utils';
+import { SenderAvatar } from './sender-avatar';
 
 interface ContactPanelProps {
   conversation: Conversation | null;
@@ -43,9 +43,11 @@ export function ContactPanel({
 
       <div className="flex-1 overflow-y-auto scrollbar-thin">
         <div className="flex flex-col items-center gap-3 border-b border-border px-4 py-7 text-center">
-          <UserAvatar
+          <SenderAvatar
+            conversationId={conversation.id}
+            jid={isGroup ? null : conversation.externalContactId}
             name={conversationLabel(conversation)}
-            src={conversation.avatarUrl ?? undefined}
+            src={conversation.avatarUrl}
             className="size-24 text-lg"
           />
           <div className="min-w-0 space-y-1">

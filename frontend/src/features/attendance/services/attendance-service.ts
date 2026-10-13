@@ -58,6 +58,12 @@ export const attendanceService = {
   close: (id: string) =>
     apiRequest<Conversation>(`/conversations/${id}/close`, { method: 'POST', body: {} }),
 
+  pin: (id: string) =>
+    apiRequest<Conversation>(`/conversations/${id}/pin`, { method: 'POST', body: {} }),
+
+  unpin: (id: string) =>
+    apiRequest<Conversation>(`/conversations/${id}/unpin`, { method: 'POST', body: {} }),
+
   refreshGroup: (id: string) =>
     apiRequest<Conversation>(`/conversations/${id}/refresh-group`, { method: 'POST', body: {} }),
 

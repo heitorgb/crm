@@ -7,7 +7,7 @@ import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { useNotificationStore } from '@/stores/notification-store';
-import type { ConversationStatus } from '@/types/attendance';
+import type { Conversation, ConversationStatus } from '@/types/attendance';
 import { useWhatsAppInstances } from '@/features/whatsapp/queries';
 import { ChatPanel } from './chat-panel';
 import { ContactPanel } from './contact-panel';
@@ -19,6 +19,7 @@ import {
   useConversationMessages,
   useConversations,
   useRefreshGroup,
+  useSetConversationPinned,
   useTakeoverConversation,
 } from './queries';
 import { useAttendanceRealtime } from './use-realtime';
@@ -67,6 +68,7 @@ export function AttendancePage() {
   const closeConversation = useCloseConversation();
   const reopenConversation = useTakeoverConversation();
   const refreshGroup = useRefreshGroup();
+  const setPinned = useSetConversationPinned();
   const markRead = useNotificationStore((state) => state.markRead);
 
   const conversation = conversationQuery.data ?? null;
@@ -80,6 +82,10 @@ export function AttendancePage() {
   };
   const handleDeselect = (): void => {
     setSearchParams({}, { replace: true });
+  };
+
+  const handleTogglePin = (conversation: Conversation): void => {
+    setPinned.mutate({ id: conversation.id, pinned: !conversation.isPinned });
   };
 
   useEffect(() => {
@@ -141,6 +147,8 @@ export function AttendancePage() {
               handleDeselect();
             }}
             instances={instancesQuery.data?.data ?? []}
+            onTogglePin={handleTogglePin}
+            pinPendingId={setPinned.isPending ? (setPinned.variables?.id ?? null) : null}
           />
         </div>
 

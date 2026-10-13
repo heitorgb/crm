@@ -43,6 +43,7 @@ export interface ConversationView {
   isGroup: boolean;
   groupName: string | null;
   avatarUrl: string | null;
+  isPinned: boolean;
   whatsappInstanceId: string;
   instanceName: string;
   externalContactId: string | null;
@@ -103,7 +104,12 @@ export class ConversationsService {
       this.prisma.conversation.count({ where }),
       this.prisma.conversation.findMany({
         where,
-        orderBy: { lastMessageAt: 'desc' },
+        orderBy: [
+          { isPinned: 'desc' },
+          { lastMessageAt: { sort: 'desc', nulls: 'last' } },
+          { createdAt: 'desc' },
+          { id: 'desc' },
+        ],
         skip: skipOf(query.page, query.perPage),
         take: query.perPage,
         include: CONVERSATION_INCLUDE,
@@ -268,6 +274,36 @@ export class ConversationsService {
       where: { id },
       data: { status: ConversationStatus.CLOSED, closedAt: new Date() },
     });
+
+    return this.findOne(id);
+  }
+
+  /** Pins a conversation to the top of the inbox (tenant-scoped, idempotent). */
+  async pin(id: string): Promise<ConversationView> {
+    return this.setPinned(id, true);
+  }
+
+  /** Removes the pinned flag from a conversation (tenant-scoped, idempotent). */
+  async unpin(id: string): Promise<ConversationView> {
+    return this.setPinned(id, false);
+  }
+
+  private async setPinned(id: string, isPinned: boolean): Promise<ConversationView> {
+    const { tenantId } = this.tenantContext.requireContext();
+    const conversation = await this.prisma.conversation.findFirst({
+      where: { id, tenantId },
+      select: { id: true, isPinned: true },
+    });
+
+    if (!conversation) {
+      throw new ConversationNotFoundError();
+    }
+
+    if (conversation.isPinned !== isPinned) {
+      await this.prisma.conversation.update({ where: { id }, data: { isPinned } });
+    }
+
+    this.realtime.emitToTenant(tenantId, 'conversation.updated', { conversationId: id });
 
     return this.findOne(id);
   }
@@ -491,6 +527,7 @@ function toConversationView(conversation: PrismaConversation): ConversationView 
     isGroup: conversation.isGroup,
     groupName: conversation.groupName,
     avatarUrl: conversation.avatarUrl,
+    isPinned: conversation.isPinned,
     whatsappInstanceId: conversation.whatsappInstanceId,
     instanceName: conversation.instance.name,
     externalContactId: conversation.externalContactId,

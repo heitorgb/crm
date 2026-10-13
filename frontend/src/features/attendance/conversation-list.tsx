@@ -1,9 +1,15 @@
 import { Link } from 'react-router-dom';
-import { MessageSquare, Smartphone } from 'lucide-react';
+import { MessageSquare, MoreVertical, Pin, PinOff, Smartphone } from 'lucide-react';
 import { EmptyState } from '@/components/common/empty-state';
 import { SearchInput } from '@/components/common/search-input';
 import { StatusBadge } from '@/components/common/status-badge';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import {
   Select,
   SelectContent,
@@ -38,6 +44,8 @@ interface ConversationListProps {
   instanceId: string;
   onInstanceChange: (value: string) => void;
   instances: WhatsAppInstance[];
+  onTogglePin: (conversation: Conversation) => void;
+  pinPendingId: string | null;
 }
 
 export function ConversationList({
@@ -54,6 +62,8 @@ export function ConversationList({
   instanceId,
   onInstanceChange,
   instances,
+  onTogglePin,
+  pinPendingId,
 }: ConversationListProps) {
   const unreadCounts = useNotificationStore((state) => state.unreadCounts);
 
@@ -130,62 +140,103 @@ export function ConversationList({
           conversations.map((item) => {
             const active = item.id === activeId;
             const unread = unreadCounts[item.id] ?? 0;
+            const pinPending = pinPendingId === item.id;
             return (
-              <button
+              <div
                 key={item.id}
-                type="button"
-                onClick={() => onSelect(item.id)}
-                className={cn(
-                  'flex w-full gap-3 border-b border-border/70 px-3 py-3 text-left transition-colors',
-                  active ? 'bg-primary/10' : 'hover:bg-surface-hover',
-                )}
+                className="group relative border-b border-border/70"
               >
-                <SenderAvatar
-                  conversationId={item.id}
-                  jid={item.isGroup ? null : item.externalContactId}
-                  name={conversationLabel(item)}
-                  src={item.avatarUrl}
-                  className="size-12"
-                />
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-start gap-2">
-                    <div className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-medium text-foreground">
-                        {conversationLabel(item)}
-                      </span>
-                      <p className="mt-0.5 truncate text-[13px] text-muted-foreground">
-                        {conversationPreview(item)}
-                      </p>
+                <button
+                  type="button"
+                  onClick={() => onSelect(item.id)}
+                  className={cn(
+                    'flex w-full gap-3 px-3 py-3 text-left transition-colors',
+                    active ? 'bg-primary/10' : 'hover:bg-surface-hover',
+                  )}
+                >
+                  <SenderAvatar
+                    conversationId={item.id}
+                    jid={item.isGroup ? null : item.externalContactId}
+                    name={conversationLabel(item)}
+                    src={item.avatarUrl}
+                    className="size-12"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-start gap-2">
+                      <div className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-medium text-foreground">
+                          {conversationLabel(item)}
+                        </span>
+                        <p className="mt-0.5 truncate text-[13px] text-muted-foreground">
+                          {conversationPreview(item)}
+                        </p>
+                      </div>
+                      <div className="flex shrink-0 flex-col items-end gap-1">
+                        <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                          {item.isPinned ? (
+                            <Pin
+                              className="size-3.5 shrink-0 text-primary"
+                              aria-label="Conversa fixada"
+                            />
+                          ) : null}
+                          {item.lastMessageAt ? formatListTime(item.lastMessageAt) : ''}
+                        </span>
+                        {unread > 0 ? (
+                          <span
+                            className="inline-flex min-w-5 items-center justify-center rounded-full bg-success px-1.5 py-0.5 text-[11px] font-semibold leading-none text-success-foreground"
+                            aria-label={`${unread} mensagem${unread > 1 ? 's' : ''} não lida${unread > 1 ? 's' : ''}`}
+                          >
+                            {unread > 99 ? '99+' : unread}
+                          </span>
+                        ) : null}
+                      </div>
                     </div>
-                    <div className="flex shrink-0 flex-col items-end gap-1">
-                      <span className="text-[11px] text-muted-foreground">
-                        {item.lastMessageAt ? formatListTime(item.lastMessageAt) : ''}
-                      </span>
-                      {unread > 0 ? (
-                        <span
-                          className="inline-flex min-w-5 items-center justify-center rounded-full bg-success px-1.5 py-0.5 text-[11px] font-semibold leading-none text-success-foreground"
-                          aria-label={`${unread} mensagem${unread > 1 ? 's' : ''} não lida${unread > 1 ? 's' : ''}`}
-                        >
-                          {unread > 99 ? '99+' : unread}
+                    <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                      <StatusBadge tone={conversationStatusTone[item.status]}>
+                        {conversationStatusLabel[item.status]}
+                      </StatusBadge>
+                      {item.isGroup ? (
+                        <span className="rounded-sm bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                          Grupo
                         </span>
                       ) : null}
+                      <span className="max-w-[9rem] truncate rounded-sm bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                        {item.instanceName}
+                      </span>
                     </div>
                   </div>
-                  <div className="mt-1.5 flex flex-wrap items-center gap-1">
-                    <StatusBadge tone={conversationStatusTone[item.status]}>
-                      {conversationStatusLabel[item.status]}
-                    </StatusBadge>
-                    {item.isGroup ? (
-                      <span className="rounded-sm bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-                        Grupo
-                      </span>
-                    ) : null}
-                    <span className="max-w-[9rem] truncate rounded-sm bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-                      {item.instanceName}
-                    </span>
-                  </div>
+                </button>
+                <div
+                  className={cn(
+                    'absolute right-2 top-2 opacity-0 transition-opacity',
+                    'pointer-events-none group-hover:pointer-events-auto group-hover:opacity-100',
+                    'focus-within:pointer-events-auto focus-within:opacity-100',
+                  )}
+                >
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-7 bg-card/90 text-muted-foreground"
+                        disabled={pinPending}
+                        aria-label="Ações da conversa"
+                      >
+                        <MoreVertical className="size-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem
+                        onSelect={() => onTogglePin(item)}
+                        disabled={pinPending}
+                      >
+                        {item.isPinned ? <PinOff /> : <Pin />}
+                        {item.isPinned ? 'Desafixar' : 'Fixar'}
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </div>
-              </button>
+              </div>
             );
           })
         )}

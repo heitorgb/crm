@@ -82,6 +82,15 @@ export function useCloseConversation() {
   });
 }
 
+export function useSetConversationPinned() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, pinned }: { id: string; pinned: boolean }) =>
+      pinned ? attendanceService.pin(id) : attendanceService.unpin(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: attendanceKeys.all }),
+  });
+}
+
 export function useRefreshGroup() {
   const queryClient = useQueryClient();
   return useMutation({

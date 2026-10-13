@@ -1530,4 +1530,274 @@ describe('WhatsApp attendance (integration)', () => {
       expect(evolution.sentMedia).toHaveLength(0);
     });
   });
+
+  describe('pinned conversations and ordering', () => {
+    async function seedInstance(tenant: SeededTenant): Promise<string> {
+      const instanceName = `pin-${randomUUID()}`;
+      await createInstance(tenant, instanceName);
+      return instanceName;
+    }
+
+    async function createConversation(
+      tenant: SeededTenant,
+      instanceName: string,
+      remoteJid: string,
+      options: { lastMessageAt?: Date | null; isPinned?: boolean } = {},
+    ): Promise<string> {
+      const instance = await prisma.whatsAppInstance.findFirstOrThrow({
+        where: { tenantId: tenant.tenantId, instanceName },
+        select: { id: true },
+      });
+      const conversation = await prisma.conversation.create({
+        data: {
+          tenantId: tenant.tenantId,
+          whatsappInstanceId: instance.id,
+          externalContactId: remoteJid,
+          isGroup: false,
+          status: 'OPEN',
+          isPinned: options.isPinned ?? false,
+          ...(options.lastMessageAt !== undefined ? { lastMessageAt: options.lastMessageAt } : {}),
+        },
+        select: { id: true },
+      });
+      return conversation.id;
+    }
+
+    function listConversations(tenant: SeededTenant, query = '') {
+      return app.inject({
+        method: 'GET',
+        url: `/api/conversations${query}`,
+        headers: authHeaders(tenant),
+      });
+    }
+
+    it('pins and unpins a conversation, persisting the state', async () => {
+      const instanceName = await seedInstance(ownerA);
+      const conversationId = await createConversation(
+        ownerA,
+        instanceName,
+        '5511900000001@s.whatsapp.net',
+      );
+
+      const pinned = await app.inject({
+        method: 'POST',
+        url: `/api/conversations/${conversationId}/pin`,
+        headers: authHeaders(ownerA),
+      });
+      expect(pinned.statusCode).toBe(200);
+      expect(pinned.json().isPinned).toBe(true);
+
+      const stored = await prisma.conversation.findUniqueOrThrow({ where: { id: conversationId } });
+      expect(stored.isPinned).toBe(true);
+
+      const fetched = await app.inject({
+        method: 'GET',
+        url: `/api/conversations/${conversationId}`,
+        headers: authHeaders(ownerA),
+      });
+      expect(fetched.json().isPinned).toBe(true);
+
+      const unpinned = await app.inject({
+        method: 'POST',
+        url: `/api/conversations/${conversationId}/unpin`,
+        headers: authHeaders(ownerA),
+      });
+      expect(unpinned.statusCode).toBe(200);
+      expect(unpinned.json().isPinned).toBe(false);
+
+      const storedAfter = await prisma.conversation.findUniqueOrThrow({
+        where: { id: conversationId },
+      });
+      expect(storedAfter.isPinned).toBe(false);
+    });
+
+    it('repeats pin and unpin without inconsistencies', async () => {
+      const instanceName = await seedInstance(ownerA);
+      const conversationId = await createConversation(
+        ownerA,
+        instanceName,
+        '5511900000002@s.whatsapp.net',
+      );
+
+      const first = await app.inject({
+        method: 'POST',
+        url: `/api/conversations/${conversationId}/pin`,
+        headers: authHeaders(ownerA),
+      });
+      const second = await app.inject({
+        method: 'POST',
+        url: `/api/conversations/${conversationId}/pin`,
+        headers: authHeaders(ownerA),
+      });
+      expect(first.statusCode).toBe(200);
+      expect(second.statusCode).toBe(200);
+      expect(second.json().isPinned).toBe(true);
+
+      const count = await prisma.conversation.count({ where: { id: conversationId } });
+      expect(count).toBe(1);
+
+      await app.inject({
+        method: 'POST',
+        url: `/api/conversations/${conversationId}/unpin`,
+        headers: authHeaders(ownerA),
+      });
+      const third = await app.inject({
+        method: 'POST',
+        url: `/api/conversations/${conversationId}/unpin`,
+        headers: authHeaders(ownerA),
+      });
+      expect(third.statusCode).toBe(200);
+      expect(third.json().isPinned).toBe(false);
+    });
+
+    it('allows any authenticated member to pin', async () => {
+      const instanceName = await seedInstance(ownerA);
+      const conversationId = await createConversation(
+        ownerA,
+        instanceName,
+        '5511900000003@s.whatsapp.net',
+      );
+
+      const pinned = await app.inject({
+        method: 'POST',
+        url: `/api/conversations/${conversationId}/pin`,
+        headers: authHeaders(userA),
+      });
+      expect(pinned.statusCode).toBe(200);
+      expect(pinned.json().isPinned).toBe(true);
+    });
+
+    it('rejects an unauthenticated pin', async () => {
+      const instanceName = await seedInstance(ownerA);
+      const conversationId = await createConversation(
+        ownerA,
+        instanceName,
+        '5511900000004@s.whatsapp.net',
+      );
+
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/conversations/${conversationId}/pin`,
+      });
+      expect(response.statusCode).toBe(401);
+    });
+
+    it('returns 404 for an unknown conversation', async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/conversations/${randomUUID()}/pin`,
+        headers: authHeaders(ownerA),
+      });
+      expect(response.statusCode).toBe(404);
+      expect(response.json().code).toBe('CONVERSATION_NOT_FOUND');
+    });
+
+    it('never pins a conversation from another tenant', async () => {
+      const instanceName = await seedInstance(ownerA);
+      const conversationId = await createConversation(
+        ownerA,
+        instanceName,
+        '5511900000005@s.whatsapp.net',
+      );
+
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/conversations/${conversationId}/pin`,
+        headers: authHeaders(ownerB),
+      });
+      expect(response.statusCode).toBe(404);
+
+      const stored = await prisma.conversation.findUniqueOrThrow({ where: { id: conversationId } });
+      expect(stored.isPinned).toBe(false);
+    });
+
+    it('publishes conversation.updated when the pinned state changes', async () => {
+      const instanceName = await seedInstance(ownerA);
+      const conversationId = await createConversation(
+        ownerA,
+        instanceName,
+        '5511900000006@s.whatsapp.net',
+      );
+      const emit = vi.spyOn(app.get(RealtimeService), 'emitToTenant');
+
+      await app.inject({
+        method: 'POST',
+        url: `/api/conversations/${conversationId}/pin`,
+        headers: authHeaders(ownerA),
+      });
+
+      expect(emit).toHaveBeenCalledWith(
+        ownerA.tenantId,
+        'conversation.updated',
+        expect.objectContaining({ conversationId }),
+      );
+      emit.mockRestore();
+    });
+
+    it('lists pinned conversations first, then by most recent activity, with nulls last', async () => {
+      const instanceName = await seedInstance(ownerA);
+      const base = Date.now();
+      const pinnedOld = await createConversation(ownerA, instanceName, '5511900000010@s.whatsapp.net', {
+        isPinned: true,
+        lastMessageAt: new Date(base - 10_000),
+      });
+      const recent = await createConversation(ownerA, instanceName, '5511900000011@s.whatsapp.net', {
+        lastMessageAt: new Date(base),
+      });
+      const older = await createConversation(ownerA, instanceName, '5511900000012@s.whatsapp.net', {
+        lastMessageAt: new Date(base - 20_000),
+      });
+      const noMessage = await createConversation(ownerA, instanceName, '5511900000013@s.whatsapp.net', {
+        lastMessageAt: null,
+      });
+
+      const response = await listConversations(ownerA);
+      expect(response.statusCode).toBe(200);
+      const ids = (response.json().data as { id: string }[]).map((item) => item.id);
+
+      expect(ids[0]).toBe(pinnedOld);
+      expect(ids.slice(1)).toEqual([recent, older, noMessage]);
+    });
+
+    it('keeps filters and pagination working with pinned conversations', async () => {
+      const instanceA = await seedInstance(ownerA);
+      const instanceB = await seedInstance(ownerA);
+      await createConversation(ownerA, instanceA, '5511900000020@s.whatsapp.net', {
+        isPinned: true,
+        lastMessageAt: new Date(Date.now() - 1_000),
+      });
+      await createConversation(ownerA, instanceA, '5511900000021@s.whatsapp.net', {
+        lastMessageAt: new Date(Date.now() - 2_000),
+      });
+      await createConversation(ownerA, instanceA, '5511900000022@s.whatsapp.net', {
+        lastMessageAt: new Date(Date.now() - 3_000),
+      });
+      await createConversation(ownerA, instanceB, '5511900000023@s.whatsapp.net', {
+        lastMessageAt: new Date(),
+      });
+
+      const instanceAResponse = await listConversations(
+        ownerA,
+        `?whatsappInstanceId=${await instanceIdOf(ownerA, instanceA)}`,
+      );
+      expect(instanceAResponse.json().data).toHaveLength(3);
+
+      const firstPage = await listConversations(ownerA, '?perPage=2&page=1');
+      expect(firstPage.json().data).toHaveLength(2);
+      expect(firstPage.json().meta.total).toBe(4);
+      expect(firstPage.json().meta.totalPages).toBe(2);
+      expect(firstPage.json().data[0].isPinned).toBe(true);
+
+      const secondPage = await listConversations(ownerA, '?perPage=2&page=2');
+      expect(secondPage.json().data).toHaveLength(2);
+    });
+
+    async function instanceIdOf(tenant: SeededTenant, instanceName: string): Promise<string> {
+      const instance = await prisma.whatsAppInstance.findFirstOrThrow({
+        where: { tenantId: tenant.tenantId, instanceName },
+        select: { id: true },
+      });
+      return instance.id;
+    }
+  });
 });

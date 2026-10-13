@@ -44,6 +44,7 @@ export interface Conversation {
   isGroup: boolean;
   groupName: string | null;
   avatarUrl: string | null;
+  isPinned: boolean;
   whatsappInstanceId: string;
   instanceName: string;
   externalContactId: string | null;

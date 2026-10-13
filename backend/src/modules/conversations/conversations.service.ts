@@ -45,6 +45,7 @@ export interface ConversationView {
   avatarUrl: string | null;
   isPinned: boolean;
   isArchived: boolean;
+  unreadCount: number;
   whatsappInstanceId: string;
   instanceName: string;
   externalContactId: string | null;
@@ -118,7 +119,19 @@ export class ConversationsService {
       }),
     ]);
 
-    return buildPage(conversations.map(toConversationView), total, query.page, query.perPage);
+    const unread = await this.countUnreadByConversation(
+      tenantId,
+      conversations.map((conversation) => conversation.id),
+    );
+
+    return buildPage(
+      conversations.map((conversation) =>
+        toConversationView(conversation, unread.get(conversation.id) ?? 0),
+      ),
+      total,
+      query.page,
+      query.perPage,
+    );
   }
 
   async findOne(id: string): Promise<ConversationView> {
@@ -132,7 +145,9 @@ export class ConversationsService {
       throw new ConversationNotFoundError();
     }
 
-    return toConversationView(conversation);
+    const unread = await this.countUnreadByConversation(tenantId, [conversation.id]);
+
+    return toConversationView(conversation, unread.get(conversation.id) ?? 0);
   }
 
   async create(dto: CreateConversationDto): Promise<ConversationView> {
@@ -151,7 +166,7 @@ export class ConversationsService {
       include: CONVERSATION_INCLUDE,
     });
 
-    return toConversationView(conversation);
+    return toConversationView(conversation, 0);
   }
 
   /**
@@ -338,6 +353,83 @@ export class ConversationsService {
     this.realtime.emitToTenant(tenantId, 'conversation.updated', { conversationId: id });
 
     return this.findOne(id);
+  }
+
+  /**
+   * Marks the conversation as read for every authorized user of the tenant.
+   * The read marker advances to the latest inbound message already persisted,
+   * so a message received during the operation is never lost from the counter.
+   * Tenant-scoped and idempotent: repeated calls do not change the state.
+   */
+  async markAsRead(id: string): Promise<ConversationView> {
+    const { tenantId } = this.tenantContext.requireContext();
+    const conversation = await this.prisma.conversation.findFirst({
+      where: { id, tenantId },
+      select: { id: true, lastReadAt: true },
+    });
+
+    if (!conversation) {
+      throw new ConversationNotFoundError();
+    }
+
+    const latestInbound = await this.prisma.message.findFirst({
+      where: { tenantId, conversationId: id, direction: MessageDirection.INBOUND },
+      orderBy: { occurredAt: 'desc' },
+      select: { occurredAt: true },
+    });
+
+    const marker = latestInbound?.occurredAt ?? new Date();
+    if (!conversation.lastReadAt || marker > conversation.lastReadAt) {
+      await this.prisma.conversation.update({
+        where: { id },
+        data: { lastReadAt: marker },
+      });
+      this.realtime.emitToTenant(tenantId, 'conversation.updated', { conversationId: id });
+    }
+
+    return this.findOne(id);
+  }
+
+  /** Total inbound messages still unread across the tenant inbox (archived excluded). */
+  async unreadTotal(): Promise<{ total: number }> {
+    const { tenantId } = this.tenantContext.requireContext();
+    const rows = await this.prisma.$queryRaw<Array<{ total: bigint }>>`
+      SELECT COUNT(*)::bigint AS "total"
+      FROM "messages" m
+      JOIN "conversations" c ON c."id" = m."conversation_id"
+      WHERE c."tenant_id" = ${tenantId}::uuid
+        AND c."is_archived" = false
+        AND m."direction" = 'INBOUND'
+        AND (c."last_read_at" IS NULL OR m."occurred_at" > c."last_read_at")
+    `;
+
+    return { total: Number(rows[0]?.total ?? 0) };
+  }
+
+  /**
+   * Counts unread inbound messages per conversation in a single aggregate query,
+   * honoring each conversation's own last-read marker.
+   */
+  private async countUnreadByConversation(
+    tenantId: string,
+    conversationIds: string[],
+  ): Promise<Map<string, number>> {
+    if (conversationIds.length === 0) {
+      return new Map();
+    }
+
+    const rows = await this.prisma.$queryRaw<Array<{ conversationId: string; unread: bigint }>>`
+      SELECT m."conversation_id" AS "conversationId", COUNT(*)::bigint AS "unread"
+      FROM "messages" m
+      JOIN "conversations" c ON c."id" = m."conversation_id"
+      WHERE c."tenant_id" = ${tenantId}::uuid
+        AND m."conversation_id" IN (${Prisma.join(conversationIds)})
+        AND m."direction" = 'INBOUND'
+        AND (c."last_read_at" IS NULL OR m."occurred_at" > c."last_read_at")
+      GROUP BY m."conversation_id"
+    `;
+
+    return new Map(rows.map((row) => [row.conversationId, Number(row.unread)]));
   }
 
   async sendHumanMessage(
@@ -550,7 +642,10 @@ export class ConversationsService {
   }
 }
 
-function toConversationView(conversation: PrismaConversation): ConversationView {
+function toConversationView(
+  conversation: PrismaConversation,
+  unreadCount: number,
+): ConversationView {
   const lastMessage = conversation.messages[0] ?? null;
   return {
     id: conversation.id,
@@ -561,6 +656,7 @@ function toConversationView(conversation: PrismaConversation): ConversationView 
     avatarUrl: conversation.avatarUrl,
     isPinned: conversation.isPinned,
     isArchived: conversation.isArchived,
+    unreadCount,
     whatsappInstanceId: conversation.whatsappInstanceId,
     instanceName: conversation.instance.name,
     externalContactId: conversation.externalContactId,

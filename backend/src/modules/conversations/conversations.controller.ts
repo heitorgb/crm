@@ -40,6 +40,11 @@ export class ConversationsController {
     return this.conversations.list(query);
   }
 
+  @Get('unread-count')
+  unreadCount() {
+    return this.conversations.unreadTotal();
+  }
+
   @Get(':id')
   findOne(@Param('id', ParseUUIDPipe) id: string) {
     return this.conversations.findOne(id);
@@ -95,6 +100,12 @@ export class ConversationsController {
   @HttpCode(200)
   unarchive(@Param('id', ParseUUIDPipe) id: string) {
     return this.conversations.unarchive(id);
+  }
+
+  @Post(':id/read')
+  @HttpCode(200)
+  markRead(@Param('id', ParseUUIDPipe) id: string) {
+    return this.conversations.markAsRead(id);
   }
 
   @Post(':id/refresh-group')

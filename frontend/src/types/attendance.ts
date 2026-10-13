@@ -46,6 +46,7 @@ export interface Conversation {
   avatarUrl: string | null;
   isPinned: boolean;
   isArchived: boolean;
+  unreadCount: number;
   whatsappInstanceId: string;
   instanceName: string;
   externalContactId: string | null;

@@ -41,6 +41,11 @@ export const attendanceService = {
 
   getConversation: (id: string) => apiRequest<Conversation>(`/conversations/${id}`),
 
+  unreadCount: () => apiRequest<{ total: number }>('/conversations/unread-count'),
+
+  markRead: (id: string) =>
+    apiRequest<Conversation>(`/conversations/${id}/read`, { method: 'POST', body: {} }),
+
   startConversation: (input: { contactId: string; whatsappInstanceId: string }) =>
     apiRequest<Conversation>('/conversations/start', { method: 'POST', body: input }),
 

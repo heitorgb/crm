@@ -209,14 +209,27 @@ CRM (sem dependências novas). A tela é **full-bleed**: `MainContent` deixa de 
   vira um `Sheet`; no mobile a lista e o chat se alternam (botão voltar no cabeçalho do chat).
 - **Tempo real**: eventos Socket.IO invalidam as queries; um aviso "Reconectando ao servidor…" é
   exibido quando o socket cai. `refetchInterval` segue como fallback.
+- **Não lidas (persistido no servidor)**: o estado de leitura é **compartilhado entre os
+  atendentes autorizados do mesmo tenant** e persistido em `Conversation.lastReadAt` (coluna
+  `last_read_at`; migração `add_conversation_last_read`, com *backfill* para `last_message_at`/
+  `created_at`, de modo que o histórico existente nunca reaparece como não lido). O contador de
+  não lidas de cada conversa é **calculado** como o total de mensagens `INBOUND` com
+  `occurred_at > last_read_at` (ou todas as `INBOUND`, quando o marcador é nulo) — não há contador
+  denormalizado. Mensagens `OUTBOUND` nunca entram na contagem. Abrir a conversa
+  (`/atendimento/conversas?conversation=…`) chama `POST /api/conversations/:id/read`, que avança o
+  marcador até a última mensagem recebida já persistida (idempotente e escopado por tenant); uma
+  mensagem recebida durante/depois da marcação permanece não lida. O total do tenant para o título
+  da aba vem de `GET /api/conversations/unread-count` (soma das mensagens não lidas das conversas
+  não arquivadas). A atualização propaga por `message.created`/`conversation.updated` na sala
+  `tenant:{tenantId}`, então a leitura de um atendente aparece para os demais. O frontend usa o
+  servidor como fonte de verdade e o `refetchInterval` como fallback.
 - **Notificações**: mensagens recebidas (`message.created` com `direction = INBOUND`, publicado na
-  sala `tenant:{tenantId}`) marcam a
-  conversa como não lida. O título da aba mostra `(N) OrderUp CRM` com o total de conversas não
-  lidas e um som curto é tocado; abrir a conversa em `/atendimento/conversas?conversation=…` zera o
-  contador. As preferências (**Contador de não lidas na aba** e **Som de notificação**) ficam em
-  Configurações → Notificações e são persistidas por navegador (`localStorage`). O socket é
-  compartilhado por toda a aplicação via `RealtimeProvider`. O contador é do navegador: cobre
-  mensagens recebidas com a aplicação aberta (não há marcação de lida no servidor).
+  sala `tenant:{tenantId}`) atualizam o contador do servidor e disparam um som curto (quando
+  habilitado). O título da aba mostra `(N) OrderUp CRM` com o total de **mensagens** não lidas do
+  tenant. As preferências (**Contador de não lidas na aba** e **Som de notificação**) ficam em
+  Configurações → Notificações e são persistidas por navegador (`localStorage`); o contador em si
+  **não** é mais local (dados antigos de `unreadCounts` são descartados na migração do store). O
+  socket é compartilhado por toda a aplicação via `RealtimeProvider`.
 
 Reabrir usa `POST /api/conversations/:id/takeover` (já existente).
 
@@ -254,6 +267,7 @@ fluxo humano existente.
 | GET    | `/api/whatsapp/instances/:id/status`             | autenticado      |
 | POST   | `/api/webhooks/evolution`                         | público (segredo)|
 | GET    | `/api/conversations`                             | autenticado      |
+| GET    | `/api/conversations/unread-count`                | autenticado      |
 | GET    | `/api/conversations/:id`                         | autenticado      |
 | POST   | `/api/conversations`                             | autenticado      |
 | POST   | `/api/conversations/start`                       | autenticado      |
@@ -264,6 +278,7 @@ fluxo humano existente.
 | POST   | `/api/conversations/:id/unpin`                   | autenticado      |
 | POST   | `/api/conversations/:id/archive`                 | autenticado      |
 | POST   | `/api/conversations/:id/unarchive`               | autenticado      |
+| POST   | `/api/conversations/:id/read`                    | autenticado      |
 | POST   | `/api/conversations/:id/refresh-group`           | autenticado      |
 | GET    | `/api/conversations/:id/messages`                | autenticado      |
 | POST   | `/api/conversations/:id/messages`                | autenticado      |
@@ -391,6 +406,11 @@ cobre instâncias, webhook (válido/inválido/duplicado/instância inexistente),
 injeção, falha do provedor) e conversas/tickets; `test/integration/digest.integration-spec.ts` cobre
 entrega, janela, isolamento de tenant, zero leads, falha+retry, validação e overview. Evolution e IA
 são dublês nos testes; a integração real só é testada com ambiente configurado.
+
+`test/integration/unread-conversations.integration-spec.ts` cobre a marcação de leitura
+(idempotência, persistência, isolamento entre tenants, emissão de `conversation.updated`), o cálculo
+das não lidas (exclui `OUTBOUND`, incrementa em nova mensagem, não duplica webhooks repetidos,
+preserva mensagens recebidas após a leitura e exclui arquivadas do total do tenant).
 
 ## Fora de escopo
 

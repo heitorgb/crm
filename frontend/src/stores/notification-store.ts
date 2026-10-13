@@ -4,12 +4,8 @@ import { persist } from 'zustand/middleware';
 interface NotificationState {
   tabBadgeEnabled: boolean;
   soundEnabled: boolean;
-  unreadCounts: Record<string, number>;
   setTabBadgeEnabled: (enabled: boolean) => void;
   setSoundEnabled: (enabled: boolean) => void;
-  markUnread: (conversationId: string) => void;
-  markRead: (conversationId: string) => void;
-  markAllRead: () => void;
 }
 
 export const useNotificationStore = create<NotificationState>()(
@@ -17,26 +13,23 @@ export const useNotificationStore = create<NotificationState>()(
     (set) => ({
       tabBadgeEnabled: true,
       soundEnabled: true,
-      unreadCounts: {},
       setTabBadgeEnabled: (tabBadgeEnabled) => set({ tabBadgeEnabled }),
       setSoundEnabled: (soundEnabled) => set({ soundEnabled }),
-      markUnread: (conversationId) =>
-        set((state) => ({
-          unreadCounts: {
-            ...state.unreadCounts,
-            [conversationId]: (state.unreadCounts[conversationId] ?? 0) + 1,
-          },
-        })),
-      markRead: (conversationId) =>
-        set((state) => {
-          if (!(conversationId in state.unreadCounts)) {
-            return state;
-          }
-          const { [conversationId]: _read, ...unreadCounts } = state.unreadCounts;
-          return { unreadCounts };
-        }),
-      markAllRead: () => set({ unreadCounts: {} }),
     }),
-    { name: 'orderup-notifications' },
+    {
+      name: 'orderup-notifications',
+      version: 1,
+      migrate: (persistedState) => {
+        if (
+          persistedState &&
+          typeof persistedState === 'object' &&
+          'unreadCounts' in persistedState
+        ) {
+          const { unreadCounts: _legacy, ...rest } = persistedState as Record<string, unknown>;
+          return rest as unknown as NotificationState;
+        }
+        return persistedState as NotificationState;
+      },
+    },
   ),
 );

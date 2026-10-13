@@ -11,6 +11,7 @@ export const attendanceKeys = {
   conversations: (params: ListConversationsParams) =>
     ['attendance', 'conversations', params] as const,
   conversation: (id: string) => ['attendance', 'conversation', id] as const,
+  unreadCount: ['attendance', 'unread-count'] as const,
   messages: (id: string) => ['attendance', 'messages', id] as const,
   participantAvatar: (conversationId: string, jid: string) =>
     ['attendance', 'participant-avatar', conversationId, jid] as const,
@@ -39,6 +40,14 @@ export function useConversation(id: string | undefined) {
     queryKey: attendanceKeys.conversation(id ?? ''),
     queryFn: () => attendanceService.getConversation(id as string),
     enabled: Boolean(id),
+  });
+}
+
+export function useUnreadCount() {
+  return useQuery({
+    queryKey: attendanceKeys.unreadCount,
+    queryFn: () => attendanceService.unreadCount(),
+    refetchInterval: 30000,
   });
 }
 
@@ -100,6 +109,17 @@ export function useSetConversationArchived() {
     mutationFn: ({ id, archived }: { id: string; archived: boolean }) =>
       archived ? attendanceService.archive(id) : attendanceService.unarchive(id),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: attendanceKeys.all }),
+  });
+}
+
+export function useMarkConversationRead() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => attendanceService.markRead(id),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: attendanceKeys.all });
+      void queryClient.invalidateQueries({ queryKey: attendanceKeys.unreadCount });
+    },
   });
 }
 

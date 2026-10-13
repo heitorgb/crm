@@ -153,7 +153,8 @@ CRM (sem dependências novas). A tela é **full-bleed**: `MainContent` deixa de 
   atualizar grupo, ver contato). Histórico com papel de parede sutil, separadores de dia (Hoje/Ontem)
   e balões assimétricos — enviados em verde da marca com *ticks* de status
   (`PENDING`/`SENT`/`DELIVERED`/`READ`/`FAILED`) e recebidos em card. Nome e foto por remetente em
-  grupos. Compositor com anexo (imagem/vídeo/áudio/PDF), texto autoexpansível, gravação de áudio e
+  grupos. URLs no texto (e em legendas de mídia) são exibidas como links clicáveis que abrem em
+  nova aba. Compositor com anexo (imagem/vídeo/áudio/PDF), texto autoexpansível, gravação de áudio e
   envio por `Enter`.
 - **Painel de contato (direita)**: dados do contato/grupo, cliente, assunto e ações. Em telas menores
   vira um `Sheet`; no mobile a lista e o chat se alternam (botão voltar no cabeçalho do chat).

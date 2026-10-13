@@ -1,4 +1,5 @@
 import { ConversationStatus } from '@prisma/client';
+import { Transform } from 'class-transformer';
 import {
   IsBoolean,
   IsEnum,
@@ -30,6 +31,11 @@ export class ListConversationsQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsUUID()
   customerId?: string;
+
+  @IsOptional()
+  @Transform(({ value }) => (value === 'true' ? true : value === 'false' ? false : value))
+  @IsBoolean()
+  archived?: boolean;
 }
 
 export class CreateConversationDto {

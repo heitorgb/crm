@@ -438,7 +438,8 @@ export class WebhookService {
 
       await this.prisma.conversation.update({
         where: { id: input.conversationId },
-        data: { lastMessageAt: new Date() },
+        // A new inbound message returns an archived conversation to the inbox.
+        data: { lastMessageAt: new Date(), isArchived: false },
       });
 
       return message;

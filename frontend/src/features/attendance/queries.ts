@@ -27,7 +27,10 @@ export function useConversations(params: ListConversationsParams = {}) {
     queryKey: attendanceKeys.conversations(params),
     queryFn: () => attendanceService.listConversations(params),
     refetchInterval: 15000,
-    placeholderData: (previous) => previous,
+    placeholderData: (previous, previousQuery) => {
+      const previousParams = previousQuery?.queryKey[2] as ListConversationsParams | undefined;
+      return previousParams?.archived === params.archived ? previous : undefined;
+    },
   });
 }
 
@@ -87,6 +90,15 @@ export function useSetConversationPinned() {
   return useMutation({
     mutationFn: ({ id, pinned }: { id: string; pinned: boolean }) =>
       pinned ? attendanceService.pin(id) : attendanceService.unpin(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: attendanceKeys.all }),
+  });
+}
+
+export function useSetConversationArchived() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, archived }: { id: string; archived: boolean }) =>
+      archived ? attendanceService.archive(id) : attendanceService.unarchive(id),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: attendanceKeys.all }),
   });
 }

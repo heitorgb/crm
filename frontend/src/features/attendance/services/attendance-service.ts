@@ -21,6 +21,7 @@ export interface ListConversationsParams {
   whatsappInstanceId?: string;
   contactId?: string;
   customerId?: string;
+  archived?: boolean;
 }
 
 export const attendanceService = {
@@ -34,6 +35,7 @@ export const attendanceService = {
         whatsappInstanceId: params.whatsappInstanceId,
         contactId: params.contactId,
         customerId: params.customerId,
+        archived: params.archived,
       })}`,
     ),
 
@@ -63,6 +65,12 @@ export const attendanceService = {
 
   unpin: (id: string) =>
     apiRequest<Conversation>(`/conversations/${id}/unpin`, { method: 'POST', body: {} }),
+
+  archive: (id: string) =>
+    apiRequest<Conversation>(`/conversations/${id}/archive`, { method: 'POST', body: {} }),
+
+  unarchive: (id: string) =>
+    apiRequest<Conversation>(`/conversations/${id}/unarchive`, { method: 'POST', body: {} }),
 
   refreshGroup: (id: string) =>
     apiRequest<Conversation>(`/conversations/${id}/refresh-group`, { method: 'POST', body: {} }),

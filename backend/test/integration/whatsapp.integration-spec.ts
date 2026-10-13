@@ -1800,4 +1800,323 @@ describe('WhatsApp attendance (integration)', () => {
       return instance.id;
     }
   });
+
+  describe('archived conversations', () => {
+    async function seedInstance(): Promise<string> {
+      const instanceName = `archive-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      return instanceName;
+    }
+
+    async function createConversation(
+      instanceName: string,
+      remoteJid: string,
+      options: { lastMessageAt?: Date | null; isPinned?: boolean; isArchived?: boolean } = {},
+    ): Promise<string> {
+      const instance = await prisma.whatsAppInstance.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId, instanceName },
+        select: { id: true },
+      });
+      const conversation = await prisma.conversation.create({
+        data: {
+          tenantId: ownerA.tenantId,
+          whatsappInstanceId: instance.id,
+          externalContactId: remoteJid,
+          isGroup: false,
+          status: 'OPEN',
+          isPinned: options.isPinned ?? false,
+          isArchived: options.isArchived ?? false,
+          ...(options.lastMessageAt !== undefined ? { lastMessageAt: options.lastMessageAt } : {}),
+        },
+        select: { id: true },
+      });
+      return conversation.id;
+    }
+
+    function listConversations(tenant: SeededTenant, query = '') {
+      return app.inject({
+        method: 'GET',
+        url: `/api/conversations${query}`,
+        headers: authHeaders(tenant),
+      });
+    }
+
+    function archive(id: string, tenant = ownerA) {
+      return app.inject({
+        method: 'POST',
+        url: `/api/conversations/${id}/archive`,
+        headers: authHeaders(tenant),
+      });
+    }
+
+    function unarchive(id: string, tenant = ownerA) {
+      return app.inject({
+        method: 'POST',
+        url: `/api/conversations/${id}/unarchive`,
+        headers: authHeaders(tenant),
+      });
+    }
+
+    it('archives and unarchives a conversation, persisting the state', async () => {
+      const instanceName = await seedInstance();
+      const conversationId = await createConversation(
+        instanceName,
+        '5511901000001@s.whatsapp.net',
+      );
+
+      const archived = await archive(conversationId);
+      expect(archived.statusCode).toBe(200);
+      expect(archived.json().isArchived).toBe(true);
+
+      const stored = await prisma.conversation.findUniqueOrThrow({ where: { id: conversationId } });
+      expect(stored.isArchived).toBe(true);
+
+      const fetched = await app.inject({
+        method: 'GET',
+        url: `/api/conversations/${conversationId}`,
+        headers: authHeaders(ownerA),
+      });
+      expect(fetched.json().isArchived).toBe(true);
+
+      const restored = await unarchive(conversationId);
+      expect(restored.statusCode).toBe(200);
+      expect(restored.json().isArchived).toBe(false);
+
+      const storedAfter = await prisma.conversation.findUniqueOrThrow({
+        where: { id: conversationId },
+      });
+      expect(storedAfter.isArchived).toBe(false);
+    });
+
+    it('repeats archive and unarchive without inconsistencies', async () => {
+      const instanceName = await seedInstance();
+      const conversationId = await createConversation(
+        instanceName,
+        '5511901000002@s.whatsapp.net',
+      );
+
+      const first = await archive(conversationId);
+      const second = await archive(conversationId);
+      expect(first.statusCode).toBe(200);
+      expect(second.statusCode).toBe(200);
+      expect(second.json().isArchived).toBe(true);
+
+      const count = await prisma.conversation.count({ where: { id: conversationId } });
+      expect(count).toBe(1);
+
+      await unarchive(conversationId);
+      const third = await unarchive(conversationId);
+      expect(third.statusCode).toBe(200);
+      expect(third.json().isArchived).toBe(false);
+    });
+
+    it('hides archived conversations from the inbox and lists them with the filter', async () => {
+      const instanceName = await seedInstance();
+      const active = await createConversation(instanceName, '5511901000010@s.whatsapp.net');
+      const archived = await createConversation(instanceName, '5511901000011@s.whatsapp.net', {
+        isArchived: true,
+      });
+
+      const inbox = await listConversations(ownerA);
+      expect(inbox.json().data.map((item: { id: string }) => item.id)).toEqual([active]);
+      expect(inbox.json().meta.total).toBe(1);
+
+      const archivedList = await listConversations(ownerA, '?archived=true');
+      expect(archivedList.json().data.map((item: { id: string }) => item.id)).toEqual([archived]);
+      expect(archivedList.json().meta.total).toBe(1);
+    });
+
+    it('applies search and pagination to the archived list', async () => {
+      const instanceName = await seedInstance();
+      await createConversation(instanceName, '5511901000020@s.whatsapp.net', {
+        isArchived: true,
+        lastMessageAt: new Date(Date.now() - 1_000),
+      });
+      await createConversation(instanceName, '5511901000021@s.whatsapp.net', {
+        isArchived: true,
+        lastMessageAt: new Date(Date.now() - 2_000),
+      });
+      const target = await createConversation(instanceName, '5511901000099@s.whatsapp.net', {
+        isArchived: true,
+      });
+
+      const searched = await listConversations(ownerA, '?archived=true&search=5511901000099');
+      expect(searched.json().data).toHaveLength(1);
+      expect(searched.json().data[0].id).toBe(target);
+
+      const firstPage = await listConversations(ownerA, '?archived=true&perPage=2&page=1');
+      expect(firstPage.json().data).toHaveLength(2);
+      expect(firstPage.json().meta.total).toBe(3);
+      expect(firstPage.json().meta.totalPages).toBe(2);
+
+      const secondPage = await listConversations(ownerA, '?archived=true&perPage=2&page=2');
+      expect(secondPage.json().data).toHaveLength(1);
+    });
+
+    it('keeps the instance filter working in the archived list', async () => {
+      const instanceA = await seedInstance();
+      const instanceB = await seedInstance();
+      await createConversation(instanceA, '5511901000030@s.whatsapp.net', { isArchived: true });
+      await createConversation(instanceB, '5511901000031@s.whatsapp.net', { isArchived: true });
+
+      const instance = await prisma.whatsAppInstance.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId, instanceName: instanceA },
+        select: { id: true },
+      });
+      const response = await listConversations(
+        ownerA,
+        `?archived=true&whatsappInstanceId=${instance.id}`,
+      );
+      expect(response.json().data).toHaveLength(1);
+      expect(response.json().meta.total).toBe(1);
+    });
+
+    it('preserves the pinned state when archiving', async () => {
+      const instanceName = await seedInstance();
+      const conversationId = await createConversation(
+        instanceName,
+        '5511901000040@s.whatsapp.net',
+        { isPinned: true },
+      );
+
+      const archived = await archive(conversationId);
+      expect(archived.json().isArchived).toBe(true);
+      expect(archived.json().isPinned).toBe(true);
+
+      const stored = await prisma.conversation.findUniqueOrThrow({ where: { id: conversationId } });
+      expect(stored.isPinned).toBe(true);
+      expect(stored.isArchived).toBe(true);
+    });
+
+    it('lists pinned archived conversations first, then by recent activity', async () => {
+      const instanceName = await seedInstance();
+      const base = Date.now();
+      const pinnedOld = await createConversation(instanceName, '5511901000050@s.whatsapp.net', {
+        isArchived: true,
+        isPinned: true,
+        lastMessageAt: new Date(base - 10_000),
+      });
+      const recent = await createConversation(instanceName, '5511901000051@s.whatsapp.net', {
+        isArchived: true,
+        lastMessageAt: new Date(base),
+      });
+      const older = await createConversation(instanceName, '5511901000052@s.whatsapp.net', {
+        isArchived: true,
+        lastMessageAt: new Date(base - 20_000),
+      });
+
+      const response = await listConversations(ownerA, '?archived=true');
+      const ids = (response.json().data as { id: string }[]).map((item) => item.id);
+      expect(ids).toEqual([pinnedOld, recent, older]);
+    });
+
+    it('never archives a conversation from another tenant', async () => {
+      const instanceName = await seedInstance();
+      const conversationId = await createConversation(
+        instanceName,
+        '5511901000060@s.whatsapp.net',
+      );
+
+      const response = await archive(conversationId, ownerB);
+      expect(response.statusCode).toBe(404);
+
+      const stored = await prisma.conversation.findUniqueOrThrow({ where: { id: conversationId } });
+      expect(stored.isArchived).toBe(false);
+    });
+
+    it('rejects an unauthenticated archive and returns 404 for unknown conversations', async () => {
+      const instanceName = await seedInstance();
+      const conversationId = await createConversation(
+        instanceName,
+        '5511901000070@s.whatsapp.net',
+      );
+
+      const unauthorized = await app.inject({
+        method: 'POST',
+        url: `/api/conversations/${conversationId}/archive`,
+      });
+      expect(unauthorized.statusCode).toBe(401);
+
+      const missing = await archive(randomUUID());
+      expect(missing.statusCode).toBe(404);
+      expect(missing.json().code).toBe('CONVERSATION_NOT_FOUND');
+    });
+
+    it('publishes conversation.updated when the archived state changes', async () => {
+      const instanceName = await seedInstance();
+      const conversationId = await createConversation(
+        instanceName,
+        '5511901000080@s.whatsapp.net',
+      );
+      const emit = vi.spyOn(app.get(RealtimeService), 'emitToTenant');
+
+      await archive(conversationId);
+
+      expect(emit).toHaveBeenCalledWith(
+        ownerA.tenantId,
+        'conversation.updated',
+        expect.objectContaining({ conversationId }),
+      );
+      emit.mockRestore();
+    });
+
+    it('returns an archived conversation to the inbox when a new message arrives', async () => {
+      const instanceName = `archive-inbound-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+
+      await postWebhook(evolutionPayload(instanceName, randomUUID(), 'Olá'));
+      const conversation = await prisma.conversation.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId },
+      });
+
+      await archive(conversation.id);
+      const archivedState = await prisma.conversation.findUniqueOrThrow({
+        where: { id: conversation.id },
+      });
+      expect(archivedState.isArchived).toBe(true);
+
+      await postWebhook(evolutionPayload(instanceName, randomUUID(), 'Voltei'));
+
+      const restored = await prisma.conversation.findUniqueOrThrow({
+        where: { id: conversation.id },
+      });
+      expect(restored.isArchived).toBe(false);
+
+      const conversations = await prisma.conversation.findMany({
+        where: { tenantId: ownerA.tenantId },
+      });
+      expect(conversations).toHaveLength(1);
+
+      const inbound = await prisma.message.findMany({
+        where: { tenantId: ownerA.tenantId, direction: 'INBOUND' },
+      });
+      expect(inbound).toHaveLength(2);
+    });
+
+    it('does not unarchive when a duplicate event is reprocessed', async () => {
+      const instanceName = `archive-dup-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+
+      const payload = evolutionPayload(instanceName, randomUUID(), 'Olá');
+      await postWebhook(payload);
+      const conversation = await prisma.conversation.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId },
+      });
+
+      await archive(conversation.id);
+
+      const duplicate = await postWebhook(payload);
+      expect(duplicate.json().ignored).toBe('duplicate_event');
+
+      const stillArchived = await prisma.conversation.findUniqueOrThrow({
+        where: { id: conversation.id },
+      });
+      expect(stillArchived.isArchived).toBe(true);
+
+      const inbound = await prisma.message.findMany({
+        where: { tenantId: ownerA.tenantId, direction: 'INBOUND' },
+      });
+      expect(inbound).toHaveLength(1);
+    });
+  });
 });

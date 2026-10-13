@@ -19,6 +19,7 @@ import {
   useConversationMessages,
   useConversations,
   useRefreshGroup,
+  useSetConversationArchived,
   useSetConversationPinned,
   useTakeoverConversation,
 } from './queries';
@@ -48,6 +49,7 @@ export function AttendancePage() {
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState<ConversationStatus | 'ALL'>('ALL');
   const [instanceId, setInstanceId] = useState<string>('ALL');
+  const [archivedView, setArchivedView] = useState(false);
   const [panelOpen, setPanelOpen] = useState(true);
   const [infoOpen, setInfoOpen] = useState(false);
 
@@ -59,6 +61,7 @@ export function AttendancePage() {
     search: search || undefined,
     status: status === 'ALL' ? undefined : status,
     whatsappInstanceId: instanceId === 'ALL' ? undefined : instanceId,
+    archived: archivedView,
   });
   const conversations = conversationsQuery.data?.data ?? [];
   const activeId = selectedId;
@@ -69,6 +72,7 @@ export function AttendancePage() {
   const reopenConversation = useTakeoverConversation();
   const refreshGroup = useRefreshGroup();
   const setPinned = useSetConversationPinned();
+  const setArchived = useSetConversationArchived();
   const markRead = useNotificationStore((state) => state.markRead);
 
   const conversation = conversationQuery.data ?? null;
@@ -84,8 +88,26 @@ export function AttendancePage() {
     setSearchParams({}, { replace: true });
   };
 
+  const handleArchivedChange = (value: boolean): void => {
+    setArchivedView(value);
+    handleDeselect();
+  };
+
   const handleTogglePin = (conversation: Conversation): void => {
     setPinned.mutate({ id: conversation.id, pinned: !conversation.isPinned });
+  };
+
+  const handleToggleArchive = (conversation: Conversation): void => {
+    setArchived.mutate(
+      { id: conversation.id, archived: !conversation.isArchived },
+      {
+        onSuccess: () => {
+          if (activeId === conversation.id) {
+            handleDeselect();
+          }
+        },
+      },
+    );
   };
 
   useEffect(() => {
@@ -149,6 +171,10 @@ export function AttendancePage() {
             instances={instancesQuery.data?.data ?? []}
             onTogglePin={handleTogglePin}
             pinPendingId={setPinned.isPending ? (setPinned.variables?.id ?? null) : null}
+            archived={archivedView}
+            onArchivedChange={handleArchivedChange}
+            onToggleArchive={handleToggleArchive}
+            archivePendingId={setArchived.isPending ? (setArchived.variables?.id ?? null) : null}
           />
         </div>
 

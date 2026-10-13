@@ -1,5 +1,13 @@
 import { Link } from 'react-router-dom';
-import { MessageSquare, MoreVertical, Pin, PinOff, Smartphone } from 'lucide-react';
+import {
+  Archive,
+  ArchiveRestore,
+  MessageSquare,
+  MoreVertical,
+  Pin,
+  PinOff,
+  Smartphone,
+} from 'lucide-react';
 import { EmptyState } from '@/components/common/empty-state';
 import { SearchInput } from '@/components/common/search-input';
 import { StatusBadge } from '@/components/common/status-badge';
@@ -18,6 +26,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cn } from '@/lib/utils';
 import { useNotificationStore } from '@/stores/notification-store';
 import type { Conversation, ConversationStatus, WhatsAppInstance } from '@/types/attendance';
@@ -46,6 +55,10 @@ interface ConversationListProps {
   instances: WhatsAppInstance[];
   onTogglePin: (conversation: Conversation) => void;
   pinPendingId: string | null;
+  archived: boolean;
+  onArchivedChange: (value: boolean) => void;
+  onToggleArchive: (conversation: Conversation) => void;
+  archivePendingId: string | null;
 }
 
 export function ConversationList({
@@ -64,6 +77,10 @@ export function ConversationList({
   instances,
   onTogglePin,
   pinPendingId,
+  archived,
+  onArchivedChange,
+  onToggleArchive,
+  archivePendingId,
 }: ConversationListProps) {
   const unreadCounts = useNotificationStore((state) => state.unreadCounts);
 
@@ -75,6 +92,19 @@ export function ConversationList({
       </div>
 
       <div className="space-y-2 border-b border-border p-3">
+        <Tabs
+          value={archived ? 'archived' : 'inbox'}
+          onValueChange={(value) => onArchivedChange(value === 'archived')}
+        >
+          <TabsList className="w-full">
+            <TabsTrigger value="inbox" className="flex-1">
+              Caixa de entrada
+            </TabsTrigger>
+            <TabsTrigger value="archived" className="flex-1">
+              Arquivadas
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
         <SearchInput value={search} onChange={onSearchChange} placeholder="Buscar conversa" />
         <div className="flex gap-2">
           <Select value={instanceId} onValueChange={onInstanceChange}>
@@ -122,25 +152,34 @@ export function ConversationList({
           </div>
         ) : conversations.length === 0 ? (
           <div className="p-4">
-            <EmptyState
-              icon={MessageSquare}
-              title="Nenhuma conversa"
-              description="As conversas aparecem aqui quando o WhatsApp receber mensagens."
-              action={
-                <Button variant="outline" asChild>
-                  <Link to="/atendimento/whatsapp">
-                    <Smartphone />
-                    Conectar WhatsApp
-                  </Link>
-                </Button>
-              }
-            />
+            {archived ? (
+              <EmptyState
+                icon={Archive}
+                title="Nenhuma conversa arquivada"
+                description="As conversas que você arquivar aparecem aqui."
+              />
+            ) : (
+              <EmptyState
+                icon={MessageSquare}
+                title="Nenhuma conversa"
+                description="As conversas aparecem aqui quando o WhatsApp receber mensagens."
+                action={
+                  <Button variant="outline" asChild>
+                    <Link to="/atendimento/whatsapp">
+                      <Smartphone />
+                      Conectar WhatsApp
+                    </Link>
+                  </Button>
+                }
+              />
+            )}
           </div>
         ) : (
           conversations.map((item) => {
             const active = item.id === activeId;
             const unread = unreadCounts[item.id] ?? 0;
             const pinPending = pinPendingId === item.id;
+            const archivePending = archivePendingId === item.id;
             return (
               <div
                 key={item.id}
@@ -219,7 +258,7 @@ export function ConversationList({
                         variant="ghost"
                         size="icon"
                         className="size-7 bg-card/90 text-muted-foreground"
-                        disabled={pinPending}
+                        disabled={pinPending || archivePending}
                         aria-label="Ações da conversa"
                       >
                         <MoreVertical className="size-4" />
@@ -228,10 +267,17 @@ export function ConversationList({
                     <DropdownMenuContent align="end">
                       <DropdownMenuItem
                         onSelect={() => onTogglePin(item)}
-                        disabled={pinPending}
+                        disabled={pinPending || archivePending}
                       >
                         {item.isPinned ? <PinOff /> : <Pin />}
                         {item.isPinned ? 'Desafixar' : 'Fixar'}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onSelect={() => onToggleArchive(item)}
+                        disabled={pinPending || archivePending}
+                      >
+                        {archived ? <ArchiveRestore /> : <Archive />}
+                        {archived ? 'Desarquivar' : 'Arquivar'}
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>

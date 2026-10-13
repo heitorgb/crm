@@ -158,6 +158,17 @@ CRM (sem dependências novas). A tela é **full-bleed**: `MainContent` deixa de 
   Conversas fixadas aparecem **primeiro** na lista, com um ícone discreto; dentro de cada grupo a
   ordenação continua pela atividade mais recente (`lastMessageAt` desc, com nulos por último e
   `createdAt`/`id` como desempate).
+- **Arquivar conversas**: cada item expõe a ação de **arquivar** (e **desarquivar** na listagem de
+  arquivadas), exclusiva do CRM. O estado persiste em `Conversation.isArchived` (coluna
+  `is_archived`, padrão `false`; migração `add_conversation_archived`), `POST
+  /api/conversations/:id/archive` e `/unarchive`, idempotentes e escopados por tenant. A caixa de
+  entrada (aba padrão) mostra apenas conversas **não arquivadas**; a aba **Arquivadas** consulta
+  `GET /api/conversations?archived=true` (busca, filtros, paginação e fixação continuam valendo em
+  cada listagem). Arquivar não exclui a conversa nem o histórico. Uma **nova mensagem recebida**
+  remove automaticamente o estado de arquivamento (o webhook zera `isArchived` apenas quando a
+  mensagem é de fato persistida, preservando a idempotência de eventos repetidos), devolvendo a
+  conversa à caixa de entrada e emitindo `conversation.updated`. O tempo real usa o evento e a room
+  existentes (`tenant:{tenantId}`).
 - **Chat (centro)**: cabeçalho com avatar, nome, telefone/instância e menu de ações (encerrar/reabrir,
   atualizar grupo, ver contato). Histórico com papel de parede em padrão de *doodles* (estilo
   WhatsApp, `public/chat-doodle.svg`), separadores de dia (Hoje/Ontem)
@@ -251,6 +262,8 @@ fluxo humano existente.
 | POST   | `/api/conversations/:id/close`                   | autenticado      |
 | POST   | `/api/conversations/:id/pin`                     | autenticado      |
 | POST   | `/api/conversations/:id/unpin`                   | autenticado      |
+| POST   | `/api/conversations/:id/archive`                 | autenticado      |
+| POST   | `/api/conversations/:id/unarchive`               | autenticado      |
 | POST   | `/api/conversations/:id/refresh-group`           | autenticado      |
 | GET    | `/api/conversations/:id/messages`                | autenticado      |
 | POST   | `/api/conversations/:id/messages`                | autenticado      |

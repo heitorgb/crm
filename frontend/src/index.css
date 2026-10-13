@@ -132,8 +132,10 @@
 
   .chat-wallpaper {
     background-color: hsl(var(--muted) / 0.45);
-    background-image: radial-gradient(hsl(var(--foreground) / 0.045) 1px, transparent 1px);
-    background-size: 22px 22px;
+    background-image: url('/chat-doodle.svg');
+    background-repeat: repeat;
+    background-size: 240px 240px;
+    background-attachment: local;
   }
 
   .scrollbar-thin {

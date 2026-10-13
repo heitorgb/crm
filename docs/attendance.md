@@ -150,7 +150,8 @@ CRM (sem dependências novas). A tela é **full-bleed**: `MainContent` deixa de 
   e indicadores de status/grupo/instância. Estados de carregamento (skeleton), erro (com retry) e
   lista vazia (convite para conectar o WhatsApp).
 - **Chat (centro)**: cabeçalho com avatar, nome, telefone/instância e menu de ações (encerrar/reabrir,
-  atualizar grupo, ver contato). Histórico com papel de parede sutil, separadores de dia (Hoje/Ontem)
+  atualizar grupo, ver contato). Histórico com papel de parede em padrão de *doodles* (estilo
+  WhatsApp, `public/chat-doodle.svg`), separadores de dia (Hoje/Ontem)
   e balões assimétricos — enviados em verde da marca com *ticks* de status
   (`PENDING`/`SENT`/`DELIVERED`/`READ`/`FAILED`) e recebidos em card. Nome e foto por remetente em
   grupos. URLs no texto (e em legendas de mídia) são exibidas como links clicáveis que abrem em

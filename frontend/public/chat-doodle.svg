@@ -1,0 +1,118 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240">
+  <defs>
+    <g id="doodle-cup">
+      <path d="M17 8h1a4 4 0 1 1 0 8h-1" />
+      <path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4Z" />
+      <path d="M6 2.5v2M10 2.5v2M14 2.5v2" />
+    </g>
+    <g id="doodle-note">
+      <path d="M9 18V5l12-2v13" />
+      <circle cx="6" cy="18" r="3" />
+      <circle cx="18" cy="16" r="3" />
+    </g>
+    <g id="doodle-clock">
+      <circle cx="12" cy="12" r="10" />
+      <path d="M12 7v5l3 2" />
+    </g>
+    <g id="doodle-heart">
+      <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z" />
+    </g>
+    <g id="doodle-star">
+      <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+    </g>
+    <g id="doodle-chat">
+      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+    </g>
+    <g id="doodle-camera">
+      <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z" />
+      <circle cx="12" cy="13" r="3" />
+    </g>
+    <g id="doodle-plane">
+      <path d="M22 2 11 13" />
+      <path d="M22 2 15 22l-4-9-9-4 20-7z" />
+    </g>
+    <g id="doodle-gift">
+      <path d="M20 12v10H4V12" />
+      <path d="M2 7h20v5H2z" />
+      <path d="M12 22V7" />
+      <path d="M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7z" />
+      <path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z" />
+    </g>
+    <g id="doodle-bulb">
+      <path d="M9 18h6" />
+      <path d="M10 22h4" />
+      <path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .23 2.23 1.5 3.5A4.61 4.61 0 0 1 8.91 14" />
+    </g>
+    <g id="doodle-umbrella">
+      <path d="M12 2a10 10 0 0 0-10 10h20A10 10 0 0 0 12 2Z" />
+      <path d="M12 12v7a2 2 0 0 0 4 0" />
+      <path d="M12 2v1" />
+    </g>
+    <g id="doodle-sun">
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
+    </g>
+    <g id="doodle-cloud">
+      <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" />
+    </g>
+    <g id="doodle-flower">
+      <circle cx="12" cy="12" r="3" />
+      <path d="M12 16.5A4.5 4.5 0 1 1 7.5 12 4.5 4.5 0 1 1 12 7.5a4.5 4.5 0 1 1 4.5 4.5 4.5 4.5 0 1 1-4.5 4.5" />
+    </g>
+    <g id="doodle-bike">
+      <circle cx="5.5" cy="17.5" r="3.5" />
+      <circle cx="18.5" cy="17.5" r="3.5" />
+      <path d="M15 6a1 1 0 1 0 0-2 1 1 0 0 0 0 2z" />
+      <path d="M12 17.5V14l-3-3 4-3 2 3h2" />
+    </g>
+    <g id="doodle-moon">
+      <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" />
+    </g>
+    <g id="doodle-pencil">
+      <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+      <path d="M15 5l4 4" />
+    </g>
+    <g id="doodle-leaf">
+      <path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10Z" />
+      <path d="M2 21c0-3 1.85-5.36 5.08-6" />
+    </g>
+    <g id="doodle-bell">
+      <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
+      <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
+    </g>
+    <g id="doodle-smile">
+      <circle cx="12" cy="12" r="10" />
+      <path d="M8 14s1.5 2 4 2 4-2 4-2" />
+      <path d="M9 9h.01M15 9h.01" />
+    </g>
+  </defs>
+  <g
+    fill="none"
+    stroke="#8f8f8f"
+    stroke-width="1.5"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    opacity="0.35"
+  >
+    <use href="#doodle-cup" transform="translate(6 6) scale(1.15) rotate(-6 12 12)" />
+    <use href="#doodle-note" transform="translate(62 14) scale(1.15) rotate(8 12 12)" />
+    <use href="#doodle-clock" transform="translate(118 4) scale(1.15) rotate(-10 12 12)" />
+    <use href="#doodle-heart" transform="translate(172 16) scale(1.15) rotate(6 12 12)" />
+    <use href="#doodle-camera" transform="translate(18 58) scale(1.15) rotate(8 12 12)" />
+    <use href="#doodle-star" transform="translate(76 64) scale(1.15) rotate(-12 12 12)" />
+    <use href="#doodle-chat" transform="translate(134 54) scale(1.15) rotate(6 12 12)" />
+    <use href="#doodle-plane" transform="translate(186 68) scale(1.15) rotate(-8 12 12)" />
+    <use href="#doodle-gift" transform="translate(6 108) scale(1.15) rotate(10 12 12)" />
+    <use href="#doodle-bulb" transform="translate(64 114) scale(1.15) rotate(-6 12 12)" />
+    <use href="#doodle-umbrella" transform="translate(122 104) scale(1.15) rotate(8 12 12)" />
+    <use href="#doodle-sun" transform="translate(178 116) scale(1.15) rotate(-10 12 12)" />
+    <use href="#doodle-cloud" transform="translate(24 158) scale(1.15) rotate(6 12 12)" />
+    <use href="#doodle-flower" transform="translate(82 162) scale(1.15) rotate(-10 12 12)" />
+    <use href="#doodle-bike" transform="translate(140 156) scale(1.15) rotate(8 12 12)" />
+    <use href="#doodle-moon" transform="translate(188 166) scale(1.15) rotate(-6 12 12)" />
+    <use href="#doodle-pencil" transform="translate(6 206) scale(1.15) rotate(12 12 12)" />
+    <use href="#doodle-leaf" transform="translate(64 210) scale(1.15) rotate(-8 12 12)" />
+    <use href="#doodle-bell" transform="translate(122 204) scale(1.15) rotate(6 12 12)" />
+    <use href="#doodle-smile" transform="translate(180 206) scale(1.15) rotate(-10 12 12)" />
+  </g>
+</svg>

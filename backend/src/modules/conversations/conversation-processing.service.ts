@@ -368,6 +368,11 @@ export class ConversationProcessingService implements OnModuleInit {
       messageId,
       direction: 'OUTBOUND',
     });
+    this.realtime.emitToTenant(tenantId, 'message.created', {
+      conversationId: conversation.id,
+      messageId,
+      direction: 'OUTBOUND',
+    });
   }
 
   private async storeImage(

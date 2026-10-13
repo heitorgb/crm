@@ -148,6 +148,11 @@ export class WebhookService {
       messageId: persisted.id,
       direction: 'INBOUND',
     });
+    this.realtime.emitToTenant(instance.tenantId, 'message.created', {
+      conversationId: conversation.id,
+      messageId: persisted.id,
+      direction: 'INBOUND',
+    });
     this.realtime.emitToTenant(instance.tenantId, 'conversation.updated', {
       conversationId: conversation.id,
       status: conversation.status,

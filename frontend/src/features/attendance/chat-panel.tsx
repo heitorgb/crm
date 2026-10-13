@@ -189,6 +189,7 @@ export function ChatPanel({
                   conversationId={message.conversationId}
                   message={message}
                   isGroup={isGroup}
+                  whatsappInstanceId={conversation.whatsappInstanceId}
                   onReply={setReplyTo}
                 />
               </Fragment>

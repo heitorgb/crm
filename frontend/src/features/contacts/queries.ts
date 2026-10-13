@@ -37,6 +37,17 @@ export function useCreateContact() {
   });
 }
 
+export function useResolveContact() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (input: { phone: string; name?: string }) => contactsService.resolve(input),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: contactKeys.all });
+    },
+  });
+}
+
 export function useUpdateContact() {
   const queryClient = useQueryClient();
 

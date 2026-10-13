@@ -134,6 +134,7 @@ export class WebhookService {
     const type = detectType(message);
     const externalMessageId = readString(key?.id);
     const quoted = await this.resolveInboundQuoted(instance.tenantId, message);
+    const contacts = extractContacts(message);
 
     const persisted = await this.persistInboundMessage({
       tenantId: instance.tenantId,
@@ -149,6 +150,7 @@ export class WebhookService {
         ...(participant ? { participantJid: participant } : {}),
         ...(viewOnce ? { viewOnce: true } : {}),
         ...(quoted ? { quoted } : {}),
+        ...(contacts ? { contacts } : {}),
         instanceName,
       },
     });
@@ -593,6 +595,20 @@ function extractText(message: unknown): string | null {
   if (video && typeof video.caption === 'string') {
     return video.caption;
   }
+  const contact = isRecord(message.contactMessage) ? message.contactMessage : null;
+  if (contact && typeof contact.displayName === 'string' && contact.displayName.trim().length > 0) {
+    return contact.displayName;
+  }
+  const contactsArray = isRecord(message.contactsArrayMessage)
+    ? message.contactsArrayMessage
+    : null;
+  if (
+    contactsArray &&
+    typeof contactsArray.displayName === 'string' &&
+    contactsArray.displayName.trim().length > 0
+  ) {
+    return contactsArray.displayName;
+  }
   return null;
 }
 
@@ -609,7 +625,8 @@ function detectType(message: unknown): MessageType {
   if (message.documentMessage !== undefined) return MessageType.DOCUMENT;
   if (message.stickerMessage !== undefined) return MessageType.STICKER;
   if (message.locationMessage !== undefined) return MessageType.LOCATION;
-  if (message.contactMessage !== undefined) return MessageType.CONTACT;
+  if (message.contactMessage !== undefined || message.contactsArrayMessage !== undefined)
+    return MessageType.CONTACT;
   return MessageType.UNKNOWN;
 }
 
@@ -636,4 +653,62 @@ function toArray(value: unknown): unknown[] {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+interface ParsedContact {
+  name: string | null;
+  phone: string | null;
+}
+
+function extractContacts(message: unknown): ParsedContact[] | null {
+  if (!isRecord(message)) {
+    return null;
+  }
+
+  const single = isRecord(message.contactMessage) ? message.contactMessage : null;
+  if (single) {
+    const contact = parseContact(single);
+    return contact ? [contact] : null;
+  }
+
+  const array = isRecord(message.contactsArrayMessage) ? message.contactsArrayMessage : null;
+  if (array && Array.isArray(array.contacts)) {
+    const contacts = array.contacts
+      .filter(isRecord)
+      .map(parseContact)
+      .filter((contact): contact is ParsedContact => contact !== null);
+    return contacts.length > 0 ? contacts : null;
+  }
+
+  return null;
+}
+
+function parseContact(value: Record<string, unknown>): ParsedContact | null {
+  const displayName = readString(value.displayName);
+  const vcard = readString(value.vcard);
+  const parsed = vcard ? parseVcard(vcard) : { name: null, phone: null };
+  const name = displayName ?? parsed.name;
+
+  if (!name && !parsed.phone) {
+    return null;
+  }
+
+  return { name, phone: parsed.phone };
+}
+
+function parseVcard(vcard: string): { name: string | null; phone: string | null } {
+  let name: string | null = null;
+  let phone: string | null = null;
+
+  for (const rawLine of vcard.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!name && /^FN[:;]/i.test(line)) {
+      name = readString(line.slice(line.indexOf(':') + 1).trim());
+    } else if (!phone && /^TEL[:;]/i.test(line)) {
+      const waid = /waid=(\d+)/i.exec(line);
+      phone = waid ? waid[1] : readString(line.slice(line.indexOf(':') + 1).trim());
+    }
+  }
+
+  return { name, phone };
 }

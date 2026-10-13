@@ -24,9 +24,11 @@ import {
   formatBubbleTime,
   messageSnippet,
   quotedAuthorLabel,
+  readMessageContacts,
   readQuotedMessage,
 } from './attendance-utils';
 import { LinkifiedText } from './linkified-text';
+import { MessageContact } from './message-contact';
 import { isMediaMessage } from './media-message-utils';
 import { MessageMedia } from './message-media';
 import { SenderAvatar } from './sender-avatar';
@@ -35,15 +37,23 @@ interface MessageBubbleProps {
   conversationId: string;
   message: ConversationMessage;
   isGroup: boolean;
+  whatsappInstanceId: string;
   onReply?: (message: ConversationMessage) => void;
 }
 
-export function MessageBubble({ conversationId, message, isGroup, onReply }: MessageBubbleProps) {
+export function MessageBubble({
+  conversationId,
+  message,
+  isGroup,
+  whatsappInstanceId,
+  onReply,
+}: MessageBubbleProps) {
   const isOutbound = message.direction === 'OUTBOUND';
   const showSender = isGroup && !isOutbound;
   const isSticker = message.type === 'STICKER';
   const isMedia = isMediaMessage(message);
   const quoted = readQuotedMessage(message);
+  const contacts = message.type === 'CONTACT' ? readMessageContacts(message.metadata) : [];
 
   if (isSticker) {
     return (
@@ -109,6 +119,8 @@ export function MessageBubble({ conversationId, message, isGroup, onReply }: Mes
               ) : null}
               <MessageMedia conversationId={conversationId} message={message} />
             </>
+          ) : contacts.length > 0 ? (
+            <MessageContact contacts={contacts} whatsappInstanceId={whatsappInstanceId} />
           ) : (
             <LinkifiedText
               text={message.content ?? `[${message.type.toLowerCase()}]`}

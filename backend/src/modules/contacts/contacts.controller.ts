@@ -12,7 +12,12 @@ import {
 } from '@nestjs/common';
 import { Roles } from '../auth/decorators/auth.decorators.js';
 import { ContactsService } from './contacts.service.js';
-import { CreateContactDto, ListContactsQueryDto, UpdateContactDto } from './dto/contact.dto.js';
+import {
+  CreateContactDto,
+  ListContactsQueryDto,
+  ResolveContactDto,
+  UpdateContactDto,
+} from './dto/contact.dto.js';
 
 @Controller('contacts')
 export class ContactsController {
@@ -31,6 +36,12 @@ export class ContactsController {
   @Post()
   create(@Body() dto: CreateContactDto) {
     return this.contacts.create(dto);
+  }
+
+  @Post('resolve')
+  @HttpCode(200)
+  resolve(@Body() dto: ResolveContactDto) {
+    return this.contacts.resolveByPhone(dto);
   }
 
   @Patch(':id')

@@ -84,3 +84,15 @@ export class ListContactsQueryDto extends PaginationQueryDto {
   @IsIn(CONTACT_SORT_FIELDS)
   sort: ContactSortField = 'createdAt';
 }
+
+export class ResolveContactDto {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(40)
+  phone!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  name?: string;
+}

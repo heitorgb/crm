@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto';
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { ConversationStatus, MessageType, Prisma } from '@prisma/client';
+import { ConversationStatus, MessageStatus, MessageType, Prisma } from '@prisma/client';
 import { isGroupJid, phoneFromJid } from '../../common/whatsapp/jid.js';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service.js';
 import { JOB_NAMES, JOB_QUEUE, type JobQueue } from '../../infrastructure/queue/job-queue.types.js';
 import { RealtimeService } from '../../infrastructure/realtime/realtime.service.js';
 import { ContactsService } from '../contacts/contacts.service.js';
+import { MessagesService } from '../conversations/messages.service.js';
 import { WhatsAppDirectoryService } from '../whatsapp/whatsapp-directory.service.js';
 import {
   WhatsAppInstancesService,
@@ -28,6 +29,7 @@ export class WebhookService {
     private readonly instances: WhatsAppInstancesService,
     private readonly contacts: ContactsService,
     private readonly directory: WhatsAppDirectoryService,
+    private readonly messages: MessagesService,
     private readonly realtime: RealtimeService,
     @Inject(JOB_QUEUE) private readonly queue: JobQueue,
   ) {}
@@ -68,6 +70,11 @@ export class WebhookService {
 
     if (eventType === 'groups.upsert' || eventType === 'groups.update') {
       await this.handleGroupUpsert(instance, payload);
+      return { accepted: true };
+    }
+
+    if (eventType === 'messages.update') {
+      await this.handleMessageUpdate(instance, payload);
       return { accepted: true };
     }
 
@@ -182,6 +189,44 @@ export class WebhookService {
         conversationId: conversation.id,
         participantId,
         state,
+      });
+    }
+  }
+
+  private async handleMessageUpdate(
+    instance: ResolvedInstance,
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    const updates = toArray(payload.data).filter(isRecord);
+
+    for (const update of updates) {
+      const externalMessageId = readString(update.keyId);
+      const status = mapEvolutionStatus(readString(update.status));
+      if (!externalMessageId || !status) {
+        continue;
+      }
+
+      const updated = await this.messages.updateOutboundStatusByExternalId({
+        tenantId: instance.tenantId,
+        externalMessageId,
+        status,
+      });
+      if (!updated) {
+        continue;
+      }
+
+      this.realtime.emitToConversation(
+        instance.tenantId,
+        updated.conversationId,
+        'message.updated',
+        {
+          conversationId: updated.conversationId,
+          messageId: updated.messageId,
+          status: updated.status,
+        },
+      );
+      this.realtime.emitToTenant(instance.tenantId, 'conversation.updated', {
+        conversationId: updated.conversationId,
       });
     }
   }
@@ -389,8 +434,32 @@ function computeEventId(
     return `${instanceName}:${eventType}:${messageId}`;
   }
 
+  const updateId = data ? readString(data.keyId) : null;
+  if (updateId) {
+    const status = readString(data?.status);
+    return `${instanceName}:${eventType}:${updateId}${status ? `:${status}` : ''}`;
+  }
+
   const hash = createHash('sha256').update(JSON.stringify(payload)).digest('hex').slice(0, 40);
   return `${instanceName}:${eventType}:${hash}`;
+}
+
+function mapEvolutionStatus(value: string | null): MessageStatus | null {
+  switch (value) {
+    case 'PENDING':
+      return MessageStatus.PENDING;
+    case 'SERVER_ACK':
+      return MessageStatus.SENT;
+    case 'DELIVERY_ACK':
+      return MessageStatus.DELIVERED;
+    case 'READ':
+    case 'PLAYED':
+      return MessageStatus.READ;
+    case 'ERROR':
+      return MessageStatus.FAILED;
+    default:
+      return null;
+  }
 }
 
 export function readInstanceName(payload: Record<string, unknown>): string | null {

@@ -36,6 +36,7 @@ export function useAttendanceRealtime(): { connected: boolean } {
       void refreshSession();
     });
     socket.on('message.created', invalidate);
+    socket.on('message.updated', invalidate);
     socket.on('conversation.updated', invalidate);
 
     return () => {

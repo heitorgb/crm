@@ -104,11 +104,11 @@ Em **Atendimento → WhatsApp** (`/atendimento/whatsapp`):
    existir, usa `GET /instance/connect`; retorna o **QR code** (base64) e/ou o **código de
    pareamento**.
 3. A tela exibe o QR, permite **gerar novo QR** e faz *poll* de status até **Conectado**.
-4. O **webhook é configurado automaticamente** (eventos `MESSAGES_UPSERT`, `GROUPS_UPSERT` e
-   `PRESENCE_UPDATE`) com o token do segredo (da instância ou `EVOLUTION_WEBHOOK_SECRET`); há também
-   a ação **Reconfigurar webhook**. No boot do backend o webhook é **reconciliado** para todas as
-   instâncias conectadas/ativas, de modo que mudar `PUBLIC_API_URL` se autocorrige no próximo
-   restart sem depender de reconfiguração manual.
+4. O **webhook é configurado automaticamente** (eventos `MESSAGES_UPSERT`, `MESSAGES_UPDATE`,
+   `GROUPS_UPSERT` e `PRESENCE_UPDATE`) com o token do segredo (da instância ou
+   `EVOLUTION_WEBHOOK_SECRET`); há também a ação **Reconfigurar webhook**. No boot do backend o
+   webhook é **reconciliado** para todas as instâncias conectadas/ativas, de modo que mudar
+   `PUBLIC_API_URL` se autocorrige no próximo restart sem depender de reconfiguração manual.
 5. Desconectar/excluir a instância permanecem disponíveis.
 
 ### Importação automática de contatos
@@ -272,6 +272,21 @@ Referência do evento: [implementação da Evolution](https://github.com/Evoluti
   `tenant:{tenantId}:conversation:{conversationId}`. Eventos são emitidos por room — nunca
   `server.emit`.
 - O frontend usa Socket.IO como caminho principal e `refetchInterval` apenas como fallback.
+
+### Status de entrega e leitura
+
+- A Evolution envia recibos pelo evento `messages.update` (status `SERVER_ACK`, `DELIVERY_ACK`,
+  `READ`, `PLAYED`, `PENDING`, `ERROR`). O webhook mapeia: `SERVER_ACK` → `SENT`,
+  `DELIVERY_ACK` → `DELIVERED`, `READ`/`PLAYED` → `READ`, `ERROR` → `FAILED`.
+- O recibo é casado pelo `externalMessageId` da mensagem **dentro do tenant** e apenas mensagens
+  `OUTBOUND` são atualizadas. A progressão é monotônica: um recibo atrasado nunca regride um status
+  já avançado (ex.: `READ` não volta para `DELIVERED`).
+- Ao mudar, o backend emite `message.updated` na room da conversa e `conversation.updated` no
+  tenant, e o frontend invalida as queries exibindo o segundo *check* (entregue) ou azul (lido).
+- Instâncias novas assinam `MESSAGES_UPDATE`; nas já conectadas o evento entra pela
+  reconciliação de webhook no boot (ou por **Reconfigurar webhook**). O *tick* só avança se a
+  Evolution emitir o recibo — se o destinatário tiver desativado confirmações de leitura, o azul
+  pode nunca aparecer.
 
 ## Digest agendado
 

@@ -419,7 +419,12 @@ describe('WhatsApp attendance (integration)', () => {
 
       expect(evolution.created).toContain(instanceName);
       const webhook = evolution.webhooks.find((item) => item.instance === instanceName);
-      expect(webhook?.events).toEqual(['MESSAGES_UPSERT', 'GROUPS_UPSERT', 'PRESENCE_UPDATE']);
+      expect(webhook?.events).toEqual([
+        'MESSAGES_UPSERT',
+        'MESSAGES_UPDATE',
+        'GROUPS_UPSERT',
+        'PRESENCE_UPDATE',
+      ]);
       expect(webhook?.url).toContain('/api/webhooks/evolution?token=');
       expect(JSON.stringify(response.json())).not.toContain('super-secret-webhook');
     });
@@ -711,6 +716,108 @@ describe('WhatsApp attendance (integration)', () => {
       expect(new Set(conversations.map((item) => item.contactId))).toEqual(
         new Set([contacts[0].id]),
       );
+    });
+  });
+
+  describe('message status receipts', () => {
+    async function seedOutbound(): Promise<{
+      instanceName: string;
+      conversationId: string;
+      messageId: string;
+      externalMessageId: string;
+    }> {
+      const instanceName = `status-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      await postWebhook(evolutionPayload(instanceName, randomUUID(), 'Olá'));
+
+      const conversation = await prisma.conversation.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId },
+      });
+      await app.inject({
+        method: 'POST',
+        url: `/api/conversations/${conversation.id}/messages`,
+        headers: authHeaders(ownerA),
+        payload: { content: 'Boa tarde, Jackson' },
+      });
+
+      const outbound = await prisma.message.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId, direction: 'OUTBOUND' },
+      });
+      return {
+        instanceName,
+        conversationId: conversation.id,
+        messageId: outbound.id,
+        externalMessageId: outbound.externalMessageId as string,
+      };
+    }
+
+    function statusPayload(instanceName: string, keyId: string, status: string) {
+      return {
+        event: 'messages.update',
+        instance: instanceName,
+        data: {
+          keyId,
+          remoteJid: '5511999999999@s.whatsapp.net',
+          fromMe: true,
+          status,
+        },
+      };
+    }
+
+    it('advances an outbound message from SENT to DELIVERED and READ', async () => {
+      const { instanceName, messageId, conversationId, externalMessageId } = await seedOutbound();
+      const emit = vi.spyOn(app.get(RealtimeService), 'emitToConversation');
+
+      await postWebhook(statusPayload(instanceName, externalMessageId, 'SERVER_ACK'));
+      let message = await prisma.message.findUniqueOrThrow({ where: { id: messageId } });
+      expect(message.status).toBe('SENT');
+
+      await postWebhook(statusPayload(instanceName, externalMessageId, 'DELIVERY_ACK'));
+      message = await prisma.message.findUniqueOrThrow({ where: { id: messageId } });
+      expect(message.status).toBe('DELIVERED');
+      expect(emit).toHaveBeenCalledWith(
+        ownerA.tenantId,
+        conversationId,
+        'message.updated',
+        expect.objectContaining({ messageId, status: 'DELIVERED' }),
+      );
+
+      await postWebhook(statusPayload(instanceName, externalMessageId, 'READ'));
+      message = await prisma.message.findUniqueOrThrow({ where: { id: messageId } });
+      expect(message.status).toBe('READ');
+
+      emit.mockRestore();
+    });
+
+    it('never downgrades a status when receipts arrive out of order', async () => {
+      const { instanceName, messageId, externalMessageId } = await seedOutbound();
+
+      await postWebhook(statusPayload(instanceName, externalMessageId, 'READ'));
+      await postWebhook(statusPayload(instanceName, externalMessageId, 'DELIVERY_ACK'));
+      await postWebhook(statusPayload(instanceName, externalMessageId, 'SERVER_ACK'));
+
+      const message = await prisma.message.findUniqueOrThrow({ where: { id: messageId } });
+      expect(message.status).toBe('READ');
+    });
+
+    it('ignores receipts for unknown messages without failing the webhook', async () => {
+      const { instanceName } = await seedOutbound();
+
+      const response = await postWebhook(statusPayload(instanceName, randomUUID(), 'DELIVERY_ACK'));
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json().accepted).toBe(true);
+    });
+
+    it('scopes status updates to the owning tenant', async () => {
+      const { messageId, externalMessageId } = await seedOutbound();
+      const foreignInstance = `status-b-${randomUUID()}`;
+      await createInstance(ownerB, foreignInstance);
+
+      await postWebhook(statusPayload(foreignInstance, externalMessageId, 'READ'));
+
+      const message = await prisma.message.findUniqueOrThrow({ where: { id: messageId } });
+      expect(message.status).toBe('SENT');
     });
   });
 

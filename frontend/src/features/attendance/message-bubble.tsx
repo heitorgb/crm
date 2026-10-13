@@ -66,6 +66,11 @@ export function MessageBubble({ conversationId, message, isGroup }: MessageBubbl
               : 'rounded-bl-sm border border-border bg-card text-foreground',
           )}
         >
+          {isOutbound && message.metadata?.showAgentName === true && message.senderName ? (
+            <span className="mb-0.5 block px-0.5 text-[11px] font-semibold text-primary">
+              {message.senderName}
+            </span>
+          ) : null}
           {isMedia ? (
             <MessageMedia conversationId={conversationId} message={message} />
           ) : (

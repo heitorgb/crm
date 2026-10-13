@@ -3,6 +3,7 @@ import { Mic, Paperclip, Send, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { ApiError } from '@/lib/api-client';
+import { useAttendanceStore } from '@/stores/attendance-store';
 import { MediaPreviewDialog } from './media-preview-dialog';
 import { useSendConversationMedia, useSendConversationMessage } from './queries';
 import { useAudioRecorder } from './use-audio-recorder';
@@ -26,6 +27,8 @@ export function MessageComposer({ conversationId }: { conversationId: string }) 
 
   const sendMessage = useSendConversationMessage();
   const sendMedia = useSendConversationMedia();
+  const showAgentName = useAttendanceStore((state) => state.showAgentName);
+  const setShowAgentName = useAttendanceStore((state) => state.setShowAgentName);
   const busy = sendMessage.isPending || sendMedia.isPending;
   const canSend = draft.trim().length > 0;
 
@@ -69,7 +72,11 @@ export function MessageComposer({ conversationId }: { conversationId: string }) 
     }
     setError(null);
     try {
-      await sendMessage.mutateAsync({ id: conversationId, content: draft.trim() });
+      await sendMessage.mutateAsync({
+        id: conversationId,
+        content: draft.trim(),
+        includeAgentName: showAgentName,
+      });
       setDraft('');
     } catch (caught) {
       setError(
@@ -102,6 +109,7 @@ export function MessageComposer({ conversationId }: { conversationId: string }) 
         id: conversationId,
         file,
         caption: caption.length > 0 ? caption : undefined,
+        includeAgentName: showAgentName,
       });
       setDraft('');
       setPendingFile(null);
@@ -113,7 +121,11 @@ export function MessageComposer({ conversationId }: { conversationId: string }) 
   const sendRecordedAudio = async (file: File): Promise<void> => {
     setError(null);
     try {
-      await sendMedia.mutateAsync({ id: conversationId, file });
+      await sendMedia.mutateAsync({
+        id: conversationId,
+        file,
+        includeAgentName: showAgentName,
+      });
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : 'Não foi possível enviar o áudio.');
     }
@@ -134,6 +146,17 @@ export function MessageComposer({ conversationId }: { conversationId: string }) 
       />
       {!pendingFile && (error || recorder.error) ? (
         <p className="mb-2 text-xs font-medium text-danger">{error ?? recorder.error}</p>
+      ) : null}
+      {!recorder.recording ? (
+        <label className="mb-1.5 flex w-fit cursor-pointer select-none items-center gap-2 px-1 text-xs font-medium text-muted-foreground">
+          <input
+            type="checkbox"
+            checked={showAgentName}
+            onChange={(event) => setShowAgentName(event.target.checked)}
+            className="size-4 cursor-pointer rounded border-border accent-primary"
+          />
+          Exibir nome do atendente
+        </label>
       ) : null}
       {recorder.recording ? (
         <div className="flex items-center gap-3 px-1">

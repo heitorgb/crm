@@ -93,8 +93,15 @@ export function useRefreshGroup() {
 export function useSendConversationMessage() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, content }: { id: string; content: string }) =>
-      attendanceService.sendMessage(id, content),
+    mutationFn: ({
+      id,
+      content,
+      includeAgentName,
+    }: {
+      id: string;
+      content: string;
+      includeAgentName: boolean;
+    }) => attendanceService.sendMessage(id, content, includeAgentName),
     onSuccess: (_result, variables) => {
       void queryClient.invalidateQueries({ queryKey: attendanceKeys.messages(variables.id) });
       void queryClient.invalidateQueries({ queryKey: attendanceKeys.all });
@@ -105,8 +112,17 @@ export function useSendConversationMessage() {
 export function useSendConversationMedia() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, file, caption }: { id: string; file: File; caption?: string }) =>
-      attendanceService.sendMedia(id, file, caption),
+    mutationFn: ({
+      id,
+      file,
+      caption,
+      includeAgentName,
+    }: {
+      id: string;
+      file: File;
+      caption?: string;
+      includeAgentName: boolean;
+    }) => attendanceService.sendMedia(id, file, caption, includeAgentName),
     onSuccess: (_result, variables) => {
       void queryClient.invalidateQueries({ queryKey: attendanceKeys.messages(variables.id) });
       void queryClient.invalidateQueries({ queryKey: attendanceKeys.all });

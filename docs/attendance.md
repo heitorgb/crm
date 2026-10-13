@@ -30,7 +30,8 @@ Lead no WhatsApp
   `groupName?` (assunto do grupo), `avatarUrl?` (foto do grupo), `lastMessageAt?`, `closedAt?`.
 - `Message`: `conversationId`, `direction`, `type`, `content?`, `externalMessageId?`
   (`UNIQUE (tenantId, externalMessageId)` = idempotência), `status`, `senderId?` (JID do
-  participante em grupos), `senderName?` (pushName), `metadata`, `occurredAt`.
+  participante em grupos **ou** `userId` do atendente em `OUTBOUND`), `senderName?` (pushName em
+  grupos **ou** nome do atendente em `OUTBOUND`), `metadata`, `occurredAt`.
 - `WhatsAppAvatar`: cache de foto de perfil por instância/JID (`tenantId`, `whatsappInstanceId`,
   `jid`, `url?`, `fetchedAt`), `UNIQUE (whatsappInstanceId, jid)`.
 - `MessageAttachment`: **metadados** de mídia (`storageKey`, `fileName`, `mimeType`, `size`,
@@ -159,6 +160,14 @@ CRM (sem dependências novas). A tela é **full-bleed**: `MainContent` deixa de 
   envio por `Enter`. Colar com **Ctrl+V** uma imagem/vídeo do clipboard (ex.: print de tela) abre a
   prévia de mídia — igual ao anexo — com campo de legenda e botões **Enviar**/**Cancelar** antes do
   envio (`MediaPreviewDialog`).
+- **Nome do atendente**: o compositor traz a opção **Exibir nome do atendente** (marcada por padrão),
+  alternável a cada mensagem e lembrada por navegador. Quando ligada, o nome do atendente é enviado
+  ao cliente como prefixo em negrito (`*Nome:*` seguido de quebra de linha) no texto e nas legendas
+  de mídia — o cliente vê quem respondeu quando vários atendentes usam o mesmo número. O
+  comportamento é aplicado no servidor a partir do usuário autenticado (o nome nunca vem do cliente),
+  inclusive no reenvio de mensagens com falha. No CRM, as mensagens enviadas mostram o nome do
+  atendente no topo do balão e guardam `senderId`/`senderName` para rastreabilidade. O padrão é
+  configurável em Configurações → Atendimento (ver [`settings.md`](./settings.md)).
 - **Painel de contato (direita)**: dados do contato/grupo, cliente, assunto e ações. Em telas menores
   vira um `Sheet`; no mobile a lista e o chat se alternam (botão voltar no cabeçalho do chat).
 - **Tempo real**: eventos Socket.IO invalidam as queries; um aviso "Reconectando ao servidor…" é

@@ -51,6 +51,8 @@ export interface PersistOutboundInput {
   externalMessageId?: string | null;
   status?: MessageStatus;
   type?: MessageType;
+  senderId?: string | null;
+  senderName?: string | null;
   metadata?: Record<string, unknown>;
 }
 
@@ -184,6 +186,8 @@ export class MessagesService {
         content: input.content,
         externalMessageId: input.externalMessageId ?? null,
         status: input.status ?? MessageStatus.PENDING,
+        senderId: input.senderId ?? null,
+        senderName: input.senderName ?? null,
         metadata: (input.metadata ?? {}) as Prisma.InputJsonValue,
       },
       include: MESSAGE_INCLUDE,

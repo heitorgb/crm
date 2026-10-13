@@ -1,8 +1,9 @@
-import { Bell, Building2, Palette, Users } from 'lucide-react';
+import { Bell, Building2, Headset, Palette, Users } from 'lucide-react';
 import { PageHeader } from '@/components/common/page-header';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAuthStore } from '@/stores/auth-store';
 import { AppearanceTab } from './appearance-tab';
+import { AttendanceTab } from './attendance-tab';
 import { NotificationsTab } from './notifications-tab';
 import { OrganizationTab } from './organization-tab';
 import { TeamTab } from './team-tab';
@@ -29,6 +30,10 @@ export function SettingsPage() {
             <Palette />
             Aparência
           </TabsTrigger>
+          <TabsTrigger value="attendance">
+            <Headset />
+            Atendimento
+          </TabsTrigger>
           <TabsTrigger value="notifications">
             <Bell />
             Notificações
@@ -43,6 +48,9 @@ export function SettingsPage() {
         </TabsContent>
         <TabsContent value="appearance">
           <AppearanceTab />
+        </TabsContent>
+        <TabsContent value="attendance">
+          <AttendanceTab />
         </TabsContent>
         <TabsContent value="notifications">
           <NotificationsTab />

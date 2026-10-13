@@ -21,6 +21,7 @@ Complementa [`authentication.md`](./authentication.md) e [`multi-tenancy.md`](./
 | Organização  | `GET/PATCH /api/tenants/current`              | leitura: todos; PATCH: `OWNER`, `ADMIN` |
 | Equipe       | `GET/POST/PATCH/DELETE /api/members`          | leitura: todos; escrita: `OWNER`, `ADMIN` |
 | Aparência    | (frontend) tema claro/escuro/sistema          | todos         |
+| Atendimento  | (frontend) exibir nome do atendente           | todos         |
 | Notificações | (frontend) contador de não lidas e som        | todos         |
 
 ### Organização
@@ -45,6 +46,15 @@ Complementa [`authentication.md`](./authentication.md) e [`multi-tenancy.md`](./
 ### Aparência
 
 Seletor de tema reutilizando o `theme-store` (o mesmo do header). Sem persistência no backend.
+
+### Atendimento
+
+Preferência do navegador persistida em `localStorage` (`orderup-attendance`), sem backend:
+
+- **Exibir nome do atendente** — define o estado inicial do checkbox no compositor do atendimento.
+  Quando ligado, o nome do atendente é prefixado nas mensagens enviadas ao cliente (`*Nome:*`). O
+  checkbox do compositor altera a cada mensagem e atualiza essa preferência — ver
+  [`attendance.md`](./attendance.md).
 
 ### Notificações
 

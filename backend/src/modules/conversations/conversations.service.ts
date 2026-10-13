@@ -11,6 +11,7 @@ import { WhatsAppDirectoryService } from '../whatsapp/whatsapp-directory.service
 import {
   ConversationProcessingService,
   type DeliverMediaInput,
+  type OutboundAuthor,
 } from './conversation-processing.service.js';
 import {
   ContactPhoneRequiredError,
@@ -268,7 +269,7 @@ export class ConversationsService {
     return this.findOne(id);
   }
 
-  async sendHumanMessage(id: string, content: string): Promise<void> {
+  async sendHumanMessage(id: string, content: string, includeAgentName: boolean): Promise<void> {
     const { tenantId } = this.tenantContext.requireContext();
     const conversation = await this.prisma.conversation.findFirst({
       where: { id, tenantId },
@@ -286,10 +287,15 @@ export class ConversationsService {
       });
     }
 
-    await this.processing.deliverText(tenantId, id, content);
+    const author = await this.resolveAuthor(includeAgentName);
+    await this.processing.deliverText(tenantId, id, content, author);
   }
 
-  async sendHumanMedia(id: string, input: DeliverMediaInput): Promise<void> {
+  async sendHumanMedia(
+    id: string,
+    input: DeliverMediaInput,
+    includeAgentName: boolean,
+  ): Promise<void> {
     const { tenantId } = this.tenantContext.requireContext();
     const conversation = await this.prisma.conversation.findFirst({
       where: { id, tenantId },
@@ -316,7 +322,18 @@ export class ConversationsService {
       });
     }
 
-    await this.processing.deliverMedia(tenantId, id, input);
+    const author = await this.resolveAuthor(includeAgentName);
+    await this.processing.deliverMedia(tenantId, id, input, author);
+  }
+
+  private async resolveAuthor(showAgentName: boolean): Promise<OutboundAuthor> {
+    const { userId } = this.tenantContext.requireContext();
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { name: true },
+    });
+
+    return { senderId: userId, senderName: user?.name ?? null, showAgentName };
   }
 
   /** Resolves the WhatsApp avatar of a participant that belongs to this conversation. */

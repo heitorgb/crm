@@ -34,6 +34,12 @@ export interface DeliverMediaInput {
   caption?: string | null;
 }
 
+export interface OutboundAuthor {
+  senderId: string | null;
+  senderName: string | null;
+  showAgentName: boolean;
+}
+
 @Injectable()
 export class ConversationProcessingService implements OnModuleInit {
   private readonly logger = new Logger(ConversationProcessingService.name);
@@ -56,7 +62,12 @@ export class ConversationProcessingService implements OnModuleInit {
   }
 
   /** Delivers a text message written by an agent in the chat. */
-  async deliverText(tenantId: string, conversationId: string, text: string): Promise<void> {
+  async deliverText(
+    tenantId: string,
+    conversationId: string,
+    text: string,
+    author: OutboundAuthor,
+  ): Promise<void> {
     const conversation = await this.prisma.conversation.findFirst({
       where: { id: conversationId, tenantId },
       include: { instance: true },
@@ -69,16 +80,21 @@ export class ConversationProcessingService implements OnModuleInit {
       tenantId,
       conversationId: conversation.id,
       content: text,
+      senderId: author.senderId,
+      senderName: author.senderName,
+      metadata: authorMetadata(author),
     });
+
+    const outgoingText = buildOutboundText(text, author) ?? text;
 
     await this.dispatch(
       tenantId,
       conversation,
       outbound.id,
       MessageType.TEXT,
-      text,
+      outgoingText,
       null,
-      text,
+      outgoingText,
     );
   }
 
@@ -87,6 +103,7 @@ export class ConversationProcessingService implements OnModuleInit {
     tenantId: string,
     conversationId: string,
     input: DeliverMediaInput,
+    author: OutboundAuthor,
   ): Promise<void> {
     const conversation = await this.prisma.conversation.findFirst({
       where: { id: conversationId, tenantId },
@@ -109,6 +126,9 @@ export class ConversationProcessingService implements OnModuleInit {
       conversationId: conversation.id,
       content: caption,
       type,
+      senderId: author.senderId,
+      senderName: author.senderName,
+      metadata: authorMetadata(author),
     });
 
     await this.messages.createAttachment({
@@ -130,7 +150,7 @@ export class ConversationProcessingService implements OnModuleInit {
       type,
       stored.base64,
       { mimeType: stored.mimeType, fileName: stored.fileName },
-      caption,
+      caption ? buildOutboundText(caption, author) : caption,
     );
   }
 
@@ -286,6 +306,12 @@ export class ConversationProcessingService implements OnModuleInit {
 
       const conversation = message.conversation;
       const destination = deliveryDestination(conversation.externalContactId);
+      const showAgentName = isRecord(message.metadata) && message.metadata.showAgentName === true;
+      const outgoingText =
+        buildOutboundText(message.content, {
+          senderName: message.senderName,
+          showAgentName,
+        }) ?? '';
 
       try {
         if (!this.evolution.configured || !destination) {
@@ -306,13 +332,13 @@ export class ConversationProcessingService implements OnModuleInit {
             media: (await this.storage.get(attachment.storageKey)).toString('base64'),
             fileName: attachment.fileName,
             mimetype: attachment.mimeType,
-            ...(message.content ? { caption: message.content } : {}),
+            ...(message.content ? { caption: outgoingText } : {}),
           });
         } else {
           sent = await this.evolution.sendText(
             conversation.instance.instanceName,
             destination,
-            message.content ?? '',
+            outgoingText,
           );
         }
 
@@ -562,4 +588,18 @@ function ensureExtension(fileName: string, extension: string): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function authorMetadata(author: OutboundAuthor): Record<string, unknown> {
+  return author.showAgentName && author.senderName ? { showAgentName: true } : {};
+}
+
+function buildOutboundText(
+  text: string | null,
+  author: Pick<OutboundAuthor, 'senderName' | 'showAgentName'>,
+): string | null {
+  if (!text || !author.showAgentName || !author.senderName) {
+    return text;
+  }
+  return `*${author.senderName}:*\n${text}`;
 }

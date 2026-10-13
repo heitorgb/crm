@@ -105,7 +105,7 @@ export class ConversationsController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: SendConversationMessageDto,
   ): Promise<{ ok: true }> {
-    await this.conversations.sendHumanMessage(id, dto.content.trim());
+    await this.conversations.sendHumanMessage(id, dto.content.trim(), dto.includeAgentName ?? false);
     return { ok: true };
   }
 
@@ -135,13 +135,18 @@ export class ConversationsController {
     }
 
     const caption = readCaption(file.fields);
+    const includeAgentName = readBooleanField(file.fields, 'includeAgentName');
 
-    await this.conversations.sendHumanMedia(id, {
-      buffer,
-      mimeType: file.mimetype,
-      fileName: file.filename || 'file',
-      caption,
-    });
+    await this.conversations.sendHumanMedia(
+      id,
+      {
+        buffer,
+        mimeType: file.mimetype,
+        fileName: file.filename || 'file',
+        caption,
+      },
+      includeAgentName,
+    );
 
     return { ok: true };
   }
@@ -201,4 +206,20 @@ function readCaption(fields: unknown): string | undefined {
 
 function sanitizeFileName(fileName: string): string {
   return fileName.replace(/["\r\n]/g, '_');
+}
+
+function readBooleanField(fields: unknown, key: string): boolean {
+  if (typeof fields !== 'object' || fields === null) {
+    return false;
+  }
+  const field = (fields as Record<string, unknown>)[key];
+  if (
+    typeof field === 'object' &&
+    field !== null &&
+    'value' in field &&
+    typeof (field as { value?: unknown }).value === 'string'
+  ) {
+    return (field as { value: string }).value === 'true';
+  }
+  return false;
 }

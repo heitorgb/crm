@@ -24,7 +24,7 @@ export function NotificationsTab() {
             <div>
               <p className="text-sm font-medium">Contador de não lidas na aba</p>
               <p className="text-xs text-muted-foreground">
-                Exibe o número de conversas não lidas no título da aba do navegador.
+                Exibe o número de mensagens não lidas no título da aba do navegador.
               </p>
             </div>
           </div>

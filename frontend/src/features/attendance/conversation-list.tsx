@@ -28,7 +28,6 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cn } from '@/lib/utils';
-import { useNotificationStore } from '@/stores/notification-store';
 import type { Conversation, ConversationStatus, WhatsAppInstance } from '@/types/attendance';
 import {
   conversationLabel,
@@ -82,8 +81,6 @@ export function ConversationList({
   onToggleArchive,
   archivePendingId,
 }: ConversationListProps) {
-  const unreadCounts = useNotificationStore((state) => state.unreadCounts);
-
   return (
     <div className="flex h-full min-h-0 w-full flex-col border-r border-border bg-card">
       <div className="flex h-14 items-center border-b border-border px-4">
@@ -177,7 +174,7 @@ export function ConversationList({
         ) : (
           conversations.map((item) => {
             const active = item.id === activeId;
-            const unread = unreadCounts[item.id] ?? 0;
+            const unread = item.unreadCount;
             const pinPending = pinPendingId === item.id;
             const archivePending = archivePendingId === item.id;
             return (

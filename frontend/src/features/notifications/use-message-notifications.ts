@@ -1,6 +1,8 @@
 import { useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { playNotificationSound, primeNotificationSound } from '@/lib/notification-sound';
+import { attendanceKeys, useUnreadCount } from '@/features/attendance/queries';
 import { useNotificationStore } from '@/stores/notification-store';
 import { useRealtime } from '@/providers/use-realtime';
 
@@ -15,16 +17,17 @@ interface MessageCreatedPayload {
 
 /**
  * Keeps the browser tab badge and the notification sound in sync with inbound
- * messages, everywhere in the app (not only on the attendance screen).
+ * messages, everywhere in the app (not only on the attendance screen). The tab
+ * counter is read from the persisted server state, never from local storage.
  */
 export function useMessageNotifications(): void {
   const { socket } = useRealtime();
   const location = useLocation();
+  const queryClient = useQueryClient();
 
   const tabBadgeEnabled = useNotificationStore((state) => state.tabBadgeEnabled);
   const soundEnabled = useNotificationStore((state) => state.soundEnabled);
-  const markUnread = useNotificationStore((state) => state.markUnread);
-  const unreadCount = useNotificationStore((state) => Object.keys(state.unreadCounts).length);
+  const unreadCount = useUnreadCount().data?.total ?? 0;
 
   const onAttendance = location.pathname === ATTENDANCE_PATH;
   const activeConversationId = new URLSearchParams(location.search).get('conversation');
@@ -52,24 +55,30 @@ export function useMessageNotifications(): void {
       return;
     }
 
+    const refreshUnread = (): void => {
+      void queryClient.invalidateQueries({ queryKey: attendanceKeys.unreadCount });
+    };
+
     const handleMessage = (payload: MessageCreatedPayload): void => {
       if (payload?.direction !== 'INBOUND' || !payload.conversationId) {
         return;
       }
+      refreshUnread();
       const isOpen = onAttendance && activeConversationId === payload.conversationId;
       if (isOpen) {
         return;
       }
 
-      markUnread(payload.conversationId);
       if (soundEnabled) {
         playNotificationSound();
       }
     };
 
     socket.on('message.created', handleMessage);
+    socket.on('conversation.updated', refreshUnread);
     return () => {
       socket.off('message.created', handleMessage);
+      socket.off('conversation.updated', refreshUnread);
     };
-  }, [socket, onAttendance, activeConversationId, markUnread, soundEnabled]);
+  }, [socket, onAttendance, activeConversationId, soundEnabled, queryClient]);
 }

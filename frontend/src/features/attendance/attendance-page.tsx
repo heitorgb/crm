@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { MessageSquare, RefreshCw } from 'lucide-react';
 import { EmptyState } from '@/components/common/empty-state';
@@ -6,7 +6,6 @@ import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
-import { useNotificationStore } from '@/stores/notification-store';
 import type { Conversation, ConversationStatus } from '@/types/attendance';
 import { useWhatsAppInstances } from '@/features/whatsapp/queries';
 import { ChatPanel } from './chat-panel';
@@ -18,6 +17,7 @@ import {
   useConversation,
   useConversationMessages,
   useConversations,
+  useMarkConversationRead,
   useRefreshGroup,
   useSetConversationArchived,
   useSetConversationPinned,
@@ -73,9 +73,12 @@ export function AttendancePage() {
   const refreshGroup = useRefreshGroup();
   const setPinned = useSetConversationPinned();
   const setArchived = useSetConversationArchived();
-  const markRead = useNotificationStore((state) => state.markRead);
+  const markConversationRead = useMarkConversationRead();
+  const { mutate: markRead } = markConversationRead;
+  const lastMarkedRef = useRef<{ id: string; count: number } | null>(null);
 
   const conversation = conversationQuery.data ?? null;
+  const unreadCount = conversationQuery.data?.unreadCount ?? 0;
   const visibleMessages = (messagesQuery.data?.data ?? []).filter(
     (message) => !isMediaPending(message),
   );
@@ -121,10 +124,20 @@ export function AttendancePage() {
   }, [searchParams, setSearchParams]);
 
   useEffect(() => {
-    if (activeId) {
-      markRead(activeId);
+    if (!activeId || unreadCount <= 0) {
+      return;
     }
-  }, [activeId, messagesQuery.data, markRead]);
+    const last = lastMarkedRef.current;
+    if (last && last.id === activeId && last.count === unreadCount) {
+      return;
+    }
+    lastMarkedRef.current = { id: activeId, count: unreadCount };
+    markRead(activeId, {
+      onError: () => {
+        lastMarkedRef.current = null;
+      },
+    });
+  }, [activeId, unreadCount, markRead]);
 
   const handleToggleInfo = (): void => {
     if (isDesktop) {

@@ -1,6 +1,6 @@
 import { apiRequest } from '@/lib/api-client';
 import type {
-  AuthSession,
+  AuthSessionResponse,
   AuthUser,
   ChangePasswordInput,
   CurrentSession,
@@ -10,10 +10,10 @@ import type {
 
 export const authService = {
   login: (input: LoginInput) =>
-    apiRequest<AuthSession>('/auth/login', { method: 'POST', body: input, auth: false }),
+    apiRequest<AuthSessionResponse>('/auth/login', { method: 'POST', body: input, auth: false }),
 
   refresh: () =>
-    apiRequest<AuthSession>('/auth/refresh', { method: 'POST', body: {}, auth: false }),
+    apiRequest<AuthSessionResponse>('/auth/refresh', { method: 'POST', body: {}, auth: false }),
 
   logout: () => apiRequest<void>('/auth/logout', { method: 'POST', body: {}, auth: false }),
 
@@ -26,5 +26,5 @@ export const authService = {
     apiRequest<void>('/auth/change-password', { method: 'POST', body: input }),
 
   switchTenant: (tenantId: string) =>
-    apiRequest<AuthSession>('/auth/switch-tenant', { method: 'POST', body: { tenantId } }),
+    apiRequest<AuthSessionResponse>('/auth/switch-tenant', { method: 'POST', body: { tenantId } }),
 };

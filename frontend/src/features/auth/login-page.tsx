@@ -14,6 +14,7 @@ const demoSession: AuthSession = {
   accessToken: 'demo-session',
   tokenType: 'Bearer',
   expiresIn: 3600,
+  expiresAt: Date.now() + 3600 * 1000,
   user: { id: 'demo-user', name: 'Ana Martins', email: 'ana@orderup.com.br' },
   tenant: { id: 'demo-tenant', name: 'OrderUp Demo' },
   role: 'OWNER',

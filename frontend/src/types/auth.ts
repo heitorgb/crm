@@ -19,7 +19,7 @@ export interface Membership {
   active: boolean;
 }
 
-export interface AuthSession {
+export interface AuthSessionResponse {
   accessToken: string;
   tokenType: 'Bearer';
   expiresIn: number;
@@ -27,6 +27,10 @@ export interface AuthSession {
   tenant: AuthTenant;
   role: Role;
   membershipId: string;
+}
+
+export interface AuthSession extends AuthSessionResponse {
+  expiresAt: number;
 }
 
 export interface CurrentSession {

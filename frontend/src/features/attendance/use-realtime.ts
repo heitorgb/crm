@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { io } from 'socket.io-client';
+import { refreshSession } from '@/lib/session-refresh';
 import { useAuthStore } from '@/stores/auth-store';
 import { attendanceKeys } from './queries';
 
@@ -30,7 +31,10 @@ export function useAttendanceRealtime(): { connected: boolean } {
       invalidate();
     });
     socket.on('disconnect', () => setConnected(false));
-    socket.on('connect_error', () => setConnected(false));
+    socket.on('connect_error', () => {
+      setConnected(false);
+      void refreshSession();
+    });
     socket.on('message.created', invalidate);
     socket.on('conversation.updated', invalidate);
 

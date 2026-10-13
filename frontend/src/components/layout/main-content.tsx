@@ -15,7 +15,7 @@ export function MainContent({ children }: { children: ReactNode }) {
 
   return (
     <main className="flex-1 overflow-y-auto scrollbar-thin">
-      <div className={cn('mx-auto w-full p-4 sm:p-6', !isChat && 'max-w-[1360px]')}>{children}</div>
+      <div className="mx-auto w-full max-w-[1360px] p-4 sm:p-6">{children}</div>
     </main>
   );
 }

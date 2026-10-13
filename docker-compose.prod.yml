@@ -70,6 +70,8 @@ services:
       REDIS_URL: redis://redis:6379
     ports:
       - '${BACKEND_PORT:-4100}:3000'
+    volumes:
+      - storage_data:/app/storage
     depends_on:
       postgres:
         condition: service_healthy
@@ -89,3 +91,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  storage_data:

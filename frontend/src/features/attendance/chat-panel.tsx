@@ -12,7 +12,6 @@ import {
 } from 'lucide-react';
 import { EmptyState } from '@/components/common/empty-state';
 import { StatusBadge } from '@/components/common/status-badge';
-import { UserAvatar } from '@/components/common/user-avatar';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -32,6 +31,7 @@ import {
 } from './attendance-utils';
 import { MessageBubble } from './message-bubble';
 import { MessageComposer } from './message-composer';
+import { SenderAvatar } from './sender-avatar';
 
 interface ChatPanelProps {
   conversation: Conversation;
@@ -83,9 +83,11 @@ export function ChatPanel({
         >
           <ArrowLeft />
         </Button>
-        <UserAvatar
+        <SenderAvatar
+          conversationId={conversation.id}
+          jid={isGroup ? null : conversation.externalContactId}
           name={conversationLabel(conversation)}
-          src={conversation.avatarUrl ?? undefined}
+          src={conversation.avatarUrl}
           className="size-10"
         />
         <div className="min-w-0 flex-1">

@@ -60,6 +60,12 @@ export interface EvolutionGroupInfo {
   size: number | null;
 }
 
+export interface EvolutionContact {
+  jid: string;
+  name: string | null;
+  avatarUrl: string | null;
+}
+
 @Injectable()
 export class EvolutionClient {
   private readonly logger = new Logger(EvolutionClient.name);
@@ -196,6 +202,39 @@ export class EvolutionClient {
       pictureUrl,
       size,
     };
+  }
+
+  /** Address book of the connected number, used to import contacts into the CRM. */
+  async findContacts(instanceName: string): Promise<EvolutionContact[]> {
+    const raw = await this.request(
+      'POST',
+      `/chat/findContacts/${encodeURIComponent(instanceName)}`,
+      {},
+    );
+
+    const list = Array.isArray(raw)
+      ? raw
+      : isRecord(raw) && Array.isArray(raw.contacts)
+        ? raw.contacts
+        : [];
+
+    return list.filter(isRecord).flatMap((entry) => {
+      const jid = readString(entry.id) ?? readString(entry.remoteJid);
+      if (!jid) {
+        return [];
+      }
+      return [
+        {
+          jid,
+          name:
+            readString(entry.pushName) ??
+            readString(entry.name) ??
+            readString(entry.verifiedName) ??
+            readString(entry.notify),
+          avatarUrl: readString(entry.profilePicUrl) ?? readString(entry.profilePictureUrl),
+        },
+      ];
+    });
   }
 
   async fetchProfilePictureUrl(instanceName: string, jid: string): Promise<string | null> {

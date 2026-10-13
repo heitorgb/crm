@@ -46,6 +46,7 @@ export interface Contact {
   email: string | null;
   phone: string | null;
   position: string | null;
+  avatarUrl: string | null;
   isPrimary: boolean;
   createdAt: string;
   updatedAt: string;

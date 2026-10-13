@@ -4,6 +4,7 @@ import type { Env } from '../../../src/config/env.validation.js';
 import type { EncryptionService } from '../../../src/infrastructure/crypto/encryption.service.js';
 import type { PrismaService } from '../../../src/infrastructure/prisma/prisma.service.js';
 import type { EvolutionClient } from '../../../src/modules/whatsapp/evolution/evolution.client.js';
+import type { WhatsAppContactSyncService } from '../../../src/modules/whatsapp/whatsapp-contact-sync.service.js';
 import { WhatsAppInstancesService } from '../../../src/modules/whatsapp/whatsapp-instances.service.js';
 
 interface EvolutionMock {
@@ -31,11 +32,14 @@ function createHarness(
     getOrThrow: vi.fn((key: string) => env[key]),
   };
 
+  const contactSync = { enqueue: vi.fn().mockResolvedValue(undefined) };
+
   const service = new WhatsAppInstancesService(
     prisma as unknown as PrismaService,
     {} as unknown as TenantContextService,
     { available: false } as unknown as EncryptionService,
     evolution as unknown as EvolutionClient,
+    contactSync as unknown as WhatsAppContactSyncService,
     config as unknown as ConfigService<Env, true>,
   );
 

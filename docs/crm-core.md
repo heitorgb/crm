@@ -26,8 +26,10 @@ endpoint aceita `tenantId` do cliente.
 
 ### `Contact`
 
-Pertence a um `Customer` do mesmo tenant. `UNIQUE` não existe: um cliente tem vários contatos.
-Campos: `name` (obrigatório), `email?`, `phone?`, `position?`, `isPrimary`, timestamps.
+Pertence a um `Customer` do mesmo tenant. `UNIQUE (tenantId, phone)`: o telefone é a chave de
+dedupe dentro do tenant (contatos sem telefone não colidem).
+Campos: `name` (obrigatório), `email?`, `phone?`, `position?`, `avatarUrl?`, `isPrimary`,
+timestamps. `avatarUrl` é preenchido pela importação automática da agenda do WhatsApp.
 Índices: `(tenantId, customerId)` e `(tenantId, createdAt)`.
 
 ### `Tag` e `CustomerTag`

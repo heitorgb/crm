@@ -122,6 +122,14 @@ class FakeEvolution {
     this.avatarLookups.push(jid);
     return this.avatarUrl;
   }
+
+  readonly contactLookups: string[] = [];
+  addressBook: { jid: string; name: string | null; avatarUrl: string | null }[] = [];
+
+  async findContacts(instanceName: string) {
+    this.contactLookups.push(instanceName);
+    return this.addressBook;
+  }
 }
 
 const evolution = new FakeEvolution();
@@ -152,6 +160,8 @@ describe('WhatsApp attendance (integration)', () => {
     evolution.webhooks.length = 0;
     evolution.groupLookups.length = 0;
     evolution.avatarLookups.length = 0;
+    evolution.contactLookups.length = 0;
+    evolution.addressBook = [];
     evolution.createInstanceError = undefined;
     evolution.mediaBase64 = undefined;
     evolution.mediaError = undefined;
@@ -461,6 +471,103 @@ describe('WhatsApp attendance (integration)', () => {
         headers: authHeaders(ownerA),
       });
       expect(response.statusCode).toBe(404);
+    });
+  });
+
+  describe('contact sync', () => {
+    async function connectAndSync(tenant: SeededTenant, instanceName: string) {
+      const instanceId = await createInstance(tenant, instanceName);
+      const response = await app.inject({
+        method: 'GET',
+        url: `/api/whatsapp/instances/${instanceId}/status`,
+        headers: authHeaders(tenant),
+      });
+      return { instanceId, response };
+    }
+
+    it('imports the address book automatically when the instance connects', async () => {
+      const instanceName = `sync-${randomUUID()}`;
+      evolution.addressBook = [
+        { jid: '5511911111111@s.whatsapp.net', name: 'Alice', avatarUrl: 'https://cdn.example/alice.jpg' },
+        { jid: '5511922222222@s.whatsapp.net', name: 'Bruno', avatarUrl: null },
+      ];
+
+      const { response } = await connectAndSync(ownerA, instanceName);
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json().status).toBe('CONNECTED');
+      expect(evolution.contactLookups).toContain(instanceName);
+
+      const contacts = await prisma.contact.findMany({
+        where: { tenantId: ownerA.tenantId },
+        orderBy: { phone: 'asc' },
+      });
+      expect(contacts).toHaveLength(2);
+      expect(contacts[0]).toMatchObject({
+        phone: '5511911111111',
+        name: 'Alice',
+        avatarUrl: 'https://cdn.example/alice.jpg',
+      });
+      expect(contacts[1]).toMatchObject({ phone: '5511922222222', name: 'Bruno' });
+    });
+
+    it('keeps a manually edited name and only fills missing data', async () => {
+      const phone = '5511933333333';
+      await prisma.contact.create({
+        data: { tenantId: ownerA.tenantId, phone, name: 'Nome Editado' },
+      });
+      evolution.addressBook = [
+        { jid: `${phone}@s.whatsapp.net`, name: 'Nome WhatsApp', avatarUrl: 'https://cdn.example/x.jpg' },
+      ];
+
+      await connectAndSync(ownerA, `sync-keep-${randomUUID()}`);
+
+      const contact = await prisma.contact.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId, phone },
+      });
+      expect(contact.name).toBe('Nome Editado');
+      expect(contact.avatarUrl).toBe('https://cdn.example/x.jpg');
+    });
+
+    it('replaces a phone placeholder name with the WhatsApp name', async () => {
+      const phone = '5511944444444';
+      await prisma.contact.create({ data: { tenantId: ownerA.tenantId, phone, name: phone } });
+      evolution.addressBook = [
+        { jid: `${phone}@s.whatsapp.net`, name: 'Nome Real', avatarUrl: null },
+      ];
+
+      await connectAndSync(ownerA, `sync-name-${randomUUID()}`);
+
+      const contact = await prisma.contact.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId, phone },
+      });
+      expect(contact.name).toBe('Nome Real');
+    });
+
+    it('ignores groups, status and invalid identifiers', async () => {
+      evolution.addressBook = [
+        { jid: '120363000000000000@g.us', name: 'Grupo', avatarUrl: null },
+        { jid: 'status@broadcast', name: 'Status', avatarUrl: null },
+        { jid: 'abc@lid', name: 'Lid', avatarUrl: null },
+        { jid: '5511955555555@s.whatsapp.net', name: 'Válido', avatarUrl: null },
+      ];
+
+      await connectAndSync(ownerA, `sync-filter-${randomUUID()}`);
+
+      const contacts = await prisma.contact.findMany({ where: { tenantId: ownerA.tenantId } });
+      expect(contacts).toHaveLength(1);
+      expect(contacts[0].phone).toBe('5511955555555');
+    });
+
+    it('never imports contacts into another tenant', async () => {
+      evolution.addressBook = [
+        { jid: '5511966666666@s.whatsapp.net', name: 'Isolado', avatarUrl: null },
+      ];
+
+      await connectAndSync(ownerA, `sync-iso-${randomUUID()}`);
+
+      const contacts = await prisma.contact.findMany({ where: { tenantId: ownerB.tenantId } });
+      expect(contacts).toHaveLength(0);
     });
   });
 

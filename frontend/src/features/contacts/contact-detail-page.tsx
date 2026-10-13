@@ -5,6 +5,7 @@ import { EmptyState } from '@/components/common/empty-state';
 import { PageHeader } from '@/components/common/page-header';
 import { PageLoader } from '@/components/common/page-loader';
 import { StatusBadge, type StatusTone } from '@/components/common/status-badge';
+import { UserAvatar } from '@/components/common/user-avatar';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { formatDateTime } from '@/lib/format';
@@ -102,6 +103,15 @@ export function ContactDetailPage() {
             <CardTitle>Dados do contato</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3 text-sm">
+            <div className="flex items-center gap-3">
+              <UserAvatar name={contact.name} src={contact.avatarUrl ?? undefined} className="size-12" />
+              <div className="min-w-0">
+                <p className="truncate font-medium text-foreground">{contact.name}</p>
+                {contact.phone ? (
+                  <p className="font-mono text-xs text-muted-foreground">{contact.phone}</p>
+                ) : null}
+              </div>
+            </div>
             <div className="flex items-center justify-between">
               <span className="text-muted-foreground">Telefone</span>
               <span className="font-mono text-xs">{contact.phone ?? '—'}</span>

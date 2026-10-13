@@ -72,6 +72,7 @@ POST   /message/sendText/{instanceName}   body { number, text }
 POST   /webhook/set/{instanceName}        body { webhook: { enabled, url, events, base64 } }
 GET    /group/findGroupInfos/{instanceName}?groupJid={jid}
 POST   /chat/fetchProfilePictureUrl/{instanceName}   body { number }
+POST   /chat/findContacts/{instanceName}             agenda do número (importação de contatos)
 ```
 
 `number` aceita tanto telefone (dígitos) quanto JID completo de grupo (`...@g.us`). O envio
@@ -109,6 +110,23 @@ Em **Atendimento → WhatsApp** (`/atendimento/whatsapp`):
    instâncias conectadas/ativas, de modo que mudar `PUBLIC_API_URL` se autocorrige no próximo
    restart sem depender de reconfiguração manual.
 5. Desconectar/excluir a instância permanecem disponíveis.
+
+### Importação automática de contatos
+
+Ao conectar um número, o backend importa a **agenda do WhatsApp** para `Contact`, sem cadastro
+manual:
+
+- gatilho automático na primeira transição da instância para `CONNECTED` (via polling de status da
+  UI) e, no boot, para todas as instâncias já conectadas (reconciliação best-effort);
+- a importação roda como job de fila (`whatsapp.contacts.sync`) carregando `tenantId` explícito;
+- `POST /chat/findContacts/{instanceName}` retorna a agenda; apenas números individuais e discáveis
+  são importados (grupos, `status@broadcast` e identificadores `@lid` são ignorados);
+- a dedupe é por `(tenantId, phone)`. Contato novo recebe `name` (pushName) e `avatarUrl`; contato
+  existente é preservado — o nome só é substituído quando ainda é o telefone (placeholder) e a foto
+  só é preenchida quando vazia, nunca sobrescrevendo edição manual;
+- falhas na Evolution são registradas e ignoradas, sem interromper a conexão.
+- A foto fica em `Contact.avatarUrl` e aparece na lista e no detalhe de contatos (fallback: iniciais).
+- Instâncias já conectadas antes desta funcionalidade são importadas no próximo boot, sem ação manual.
 
 ### Requisitos de configuração
 

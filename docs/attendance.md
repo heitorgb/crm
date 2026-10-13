@@ -156,7 +156,9 @@ CRM (sem dependências novas). A tela é **full-bleed**: `MainContent` deixa de 
   (`PENDING`/`SENT`/`DELIVERED`/`READ`/`FAILED`) e recebidos em card. Nome e foto por remetente em
   grupos. URLs no texto (e em legendas de mídia) são exibidas como links clicáveis que abrem em
   nova aba. Compositor com anexo (imagem/vídeo/áudio/PDF), texto autoexpansível, gravação de áudio e
-  envio por `Enter`.
+  envio por `Enter`. Colar com **Ctrl+V** uma imagem/vídeo do clipboard (ex.: print de tela) abre a
+  prévia de mídia — igual ao anexo — com campo de legenda e botões **Enviar**/**Cancelar** antes do
+  envio (`MediaPreviewDialog`).
 - **Painel de contato (direita)**: dados do contato/grupo, cliente, assunto e ações. Em telas menores
   vira um `Sheet`; no mobile a lista e o chat se alternam (botão voltar no cabeçalho do chat).
 - **Tempo real**: eventos Socket.IO invalidam as queries; um aviso "Reconectando ao servidor…" é

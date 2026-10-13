@@ -92,3 +92,8 @@ export interface QuotedMessage {
   type: MessageType;
 }
 
+export interface ContactEntry {
+  name: string | null;
+  phone: string | null;
+}
+

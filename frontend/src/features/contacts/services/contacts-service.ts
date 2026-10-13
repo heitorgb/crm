@@ -28,6 +28,9 @@ export const contactsService = {
 
   create: (input: ContactInput) => apiRequest<Contact>('/contacts', { method: 'POST', body: input }),
 
+  resolve: (input: { phone: string; name?: string }) =>
+    apiRequest<Contact>('/contacts/resolve', { method: 'POST', body: input }),
+
   update: (id: string, input: Partial<ContactInput>) =>
     apiRequest<Contact>(`/contacts/${id}`, { method: 'PATCH', body: input }),
 

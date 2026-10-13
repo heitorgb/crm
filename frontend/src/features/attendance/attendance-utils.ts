@@ -1,5 +1,6 @@
 import { format, isToday, isYesterday } from 'date-fns';
 import type {
+  ContactEntry,
   Conversation,
   ConversationMessage,
   ConversationStatus,
@@ -128,4 +129,25 @@ export function quotedAuthorLabel(quoted: QuotedMessage): string {
     return 'Você';
   }
   return quoted.authorName ?? 'Mensagem';
+}
+
+export function readMessageContacts(
+  metadata: Record<string, unknown> | null,
+): ContactEntry[] {
+  const raw = metadata?.contacts;
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  return raw.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object') {
+      return [];
+    }
+    const contact = entry as Record<string, unknown>;
+    return [
+      {
+        name: typeof contact.name === 'string' ? contact.name : null,
+        phone: typeof contact.phone === 'string' ? contact.phone : null,
+      },
+    ];
+  });
 }

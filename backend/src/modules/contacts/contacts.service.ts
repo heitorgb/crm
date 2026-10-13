@@ -8,7 +8,12 @@ import {
   ContactNotFoundError,
   ContactPhoneConflictError,
 } from './contacts.errors.js';
-import type { CreateContactDto, ListContactsQueryDto, UpdateContactDto } from './dto/contact.dto.js';
+import type {
+  CreateContactDto,
+  ListContactsQueryDto,
+  ResolveContactDto,
+  UpdateContactDto,
+} from './dto/contact.dto.js';
 
 export interface ContactView {
   id: string;
@@ -98,6 +103,16 @@ export class ContactsService {
     }
 
     return toContactView(contact);
+  }
+
+  /** Idempotent lookup/creation by phone, used by shared-contact messages. */
+  async resolveByPhone(input: ResolveContactDto): Promise<ContactView> {
+    const { tenantId } = this.tenantContext.requireContext();
+    return this.findOrCreateByPhone({
+      tenantId,
+      phone: input.phone,
+      name: input.name ?? null,
+    });
   }
 
   async create(dto: CreateContactDto): Promise<ContactView> {

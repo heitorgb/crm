@@ -81,6 +81,7 @@ token. Formato de listagem: `{ data, meta: { page, perPage, total, totalPages } 
 | GET    | `/api/contacts`                   | autenticado        |
 | GET    | `/api/contacts/:id`               | autenticado        |
 | POST   | `/api/contacts`                   | autenticado        |
+| POST   | `/api/contacts/resolve`           | autenticado        |
 | PATCH  | `/api/contacts/:id`               | autenticado        |
 | DELETE | `/api/contacts/:id`               | `OWNER`, `ADMIN`   |
 | GET    | `/api/tags`                       | autenticado        |
@@ -93,6 +94,10 @@ token. Formato de listagem: `{ data, meta: { page, perPage, total, totalPages } 
 | POST   | `/api/qualification-profiles`     | `OWNER`, `ADMIN`   |
 | PATCH  | `/api/qualification-profiles/:id` | `OWNER`, `ADMIN`   |
 | DELETE | `/api/qualification-profiles/:id` | `OWNER`, `ADMIN`   |
+
+`POST /api/contacts/resolve` faz *find-or-create* por telefone (escopado ao tenant) de forma
+idempotente, usado pelos cartões de contato compartilhado no atendimento (ver
+[`attendance.md`](./attendance.md)). Telefone inválido → `CONTACT_NOT_FOUND` (404).
 
 ### Query params de listagem
 

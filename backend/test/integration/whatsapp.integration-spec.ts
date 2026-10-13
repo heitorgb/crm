@@ -1186,6 +1186,32 @@ describe('WhatsApp attendance (integration)', () => {
       expect(evolution.sent[0].number).toBe('75209205874877@lid');
     });
 
+    it('returns the most recent messages first when paginating', async () => {
+      const { conversationId } = await seedConversation();
+      const base = Date.now();
+      await prisma.message.createMany({
+        data: [1, 2, 3].map((n) => ({
+          tenantId: ownerA.tenantId,
+          conversationId,
+          direction: 'INBOUND' as const,
+          type: 'TEXT' as const,
+          content: `msg-${n}`,
+          status: 'RECEIVED' as const,
+          occurredAt: new Date(base + n * 1000),
+        })),
+      });
+
+      const response = await app.inject({
+        method: 'GET',
+        url: `/api/conversations/${conversationId}/messages?page=1&perPage=2`,
+        headers: authHeaders(ownerA),
+      });
+
+      expect(response.statusCode).toBe(200);
+      const contents = (response.json().data as { content: string }[]).map((item) => item.content);
+      expect(contents).toEqual(['msg-2', 'msg-3']);
+    });
+
     it('filters conversations by WhatsApp instance and by contact', async () => {
       const instanceA = `filter-a-${randomUUID()}`;
       const instanceB = `filter-b-${randomUUID()}`;

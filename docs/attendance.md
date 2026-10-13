@@ -161,6 +161,12 @@ CRM (sem dependências novas). A tela é **full-bleed**: `MainContent` deixa de 
   vira um `Sheet`; no mobile a lista e o chat se alternam (botão voltar no cabeçalho do chat).
 - **Tempo real**: eventos Socket.IO invalidam as queries; um aviso "Reconectando ao servidor…" é
   exibido quando o socket cai. `refetchInterval` segue como fallback.
+- **Notificações**: mensagens recebidas (`message.created` com `direction = INBOUND`) marcam a
+  conversa como não lida. O título da aba mostra `(N) OrderUp CRM` com o total de conversas não
+  lidas e um som curto é tocado; abrir a conversa em `/atendimento/conversas?conversation=…` zera o
+  contador. As preferências (**Contador de não lidas na aba** e **Som de notificação**) ficam em
+  Configurações → Notificações e são persistidas por navegador (`localStorage`). O socket é
+  compartilhado por toda a aplicação via `RealtimeProvider`.
 
 Reabrir usa `POST /api/conversations/:id/takeover` (já existente).
 

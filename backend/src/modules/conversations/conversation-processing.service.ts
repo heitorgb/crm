@@ -366,6 +366,7 @@ export class ConversationProcessingService implements OnModuleInit {
     this.realtime.emitToConversation(tenantId, conversation.id, 'message.created', {
       conversationId: conversation.id,
       messageId,
+      direction: 'OUTBOUND',
     });
   }
 

@@ -1,5 +1,6 @@
 import { Outlet } from 'react-router-dom';
 import { useSessionSync } from '@/features/auth/queries';
+import { useMessageNotifications } from '@/features/notifications/use-message-notifications';
 import { useUiStore } from '@/stores/ui-store';
 import { cn } from '@/lib/utils';
 import { Header } from './header';
@@ -13,6 +14,7 @@ export function AppLayout() {
   const setMobileSidebarOpen = useUiStore((state) => state.setMobileSidebarOpen);
 
   useSessionSync();
+  useMessageNotifications();
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">

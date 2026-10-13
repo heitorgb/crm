@@ -641,6 +641,22 @@ describe('WhatsApp attendance (integration)', () => {
       expect(evolution.sent).toHaveLength(0);
     });
 
+    it('publishes inbound message events with their direction', async () => {
+      const instanceName = `dir-in-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      const emit = vi.spyOn(app.get(RealtimeService), 'emitToConversation');
+
+      await postWebhook(evolutionPayload(instanceName, randomUUID(), 'Cheguei'));
+
+      expect(emit).toHaveBeenCalledWith(
+        ownerA.tenantId,
+        expect.any(String),
+        'message.created',
+        expect.objectContaining({ direction: 'INBOUND' }),
+      );
+      emit.mockRestore();
+    });
+
     it('reuses the existing contact for the same phone inside the tenant', async () => {
       const instanceName = `dedupe-${randomUUID()}`;
       await createInstance(ownerA, instanceName);
@@ -1101,6 +1117,26 @@ describe('WhatsApp attendance (integration)', () => {
       });
       expect(outbound?.content).toBe('Olá, sou o atendente');
       expect(outbound?.status).toBe('SENT');
+    });
+
+    it('publishes outbound message events with their direction', async () => {
+      const { conversationId } = await seedConversation();
+      const emit = vi.spyOn(app.get(RealtimeService), 'emitToConversation');
+
+      await app.inject({
+        method: 'POST',
+        url: `/api/conversations/${conversationId}/messages`,
+        headers: authHeaders(ownerA),
+        payload: { content: 'Mensagem do atendente' },
+      });
+
+      expect(emit).toHaveBeenCalledWith(
+        ownerA.tenantId,
+        conversationId,
+        'message.created',
+        expect.objectContaining({ direction: 'OUTBOUND' }),
+      );
+      emit.mockRestore();
     });
 
     it('filters conversations by WhatsApp instance and by contact', async () => {

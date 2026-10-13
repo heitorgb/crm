@@ -174,7 +174,9 @@ CRM (sem dependências novas). A tela é **full-bleed**: `MainContent` deixa de 
   (**Você** quando foi enviada por nós) e um resumo com ícone do tipo de mídia (ex.: microfone para
   áudio), no estilo do WhatsApp Web. Ao passar o mouse sobre uma mensagem aparece o botão
   **Responder**; ao responder, o compositor mostra a prévia da citação (com botão de cancelar) e
-  a mensagem é enviada com a referência à original (`quoted` na Evolution). O backend persiste o
+  a mensagem é enviada com a referência à original (`quoted` na Evolution, no formato
+  `{ key: { id, remoteJid, fromMe, participant }, message }`; em grupos o `participant` com o JID de
+  quem escreveu a citada é obrigatório). O backend persiste o
   contexto em `Message.metadata.quoted` (`externalId`, `authorName`, `authorJid`, `fromMe`, `content`,
   `type` e `messageId` local quando resolvido): no inbound, lendo `contextInfo.quotedMessage` do
   webhook e enriquecendo com o histórico local para descobrir autor e direção; no outbound, a partir

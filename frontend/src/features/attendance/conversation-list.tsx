@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
+import { useNotificationStore } from '@/stores/notification-store';
 import type { Conversation, ConversationStatus, WhatsAppInstance } from '@/types/attendance';
 import {
   conversationLabel,
@@ -54,6 +55,8 @@ export function ConversationList({
   onInstanceChange,
   instances,
 }: ConversationListProps) {
+  const unreadCounts = useNotificationStore((state) => state.unreadCounts);
+
   return (
     <div className="flex h-full min-h-0 w-full flex-col border-r border-border bg-card">
       <div className="flex h-14 items-center border-b border-border px-4">
@@ -126,6 +129,7 @@ export function ConversationList({
         ) : (
           conversations.map((item) => {
             const active = item.id === activeId;
+            const unread = unreadCounts[item.id] ?? 0;
             return (
               <button
                 key={item.id}
@@ -144,17 +148,29 @@ export function ConversationList({
                   className="size-12"
                 />
                 <div className="min-w-0 flex-1">
-                  <div className="flex items-baseline gap-2">
-                    <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
-                      {conversationLabel(item)}
-                    </span>
-                    <span className="shrink-0 text-[11px] text-muted-foreground">
-                      {item.lastMessageAt ? formatListTime(item.lastMessageAt) : ''}
-                    </span>
+                  <div className="flex items-start gap-2">
+                    <div className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-medium text-foreground">
+                        {conversationLabel(item)}
+                      </span>
+                      <p className="mt-0.5 truncate text-[13px] text-muted-foreground">
+                        {conversationPreview(item)}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 flex-col items-end gap-1">
+                      <span className="text-[11px] text-muted-foreground">
+                        {item.lastMessageAt ? formatListTime(item.lastMessageAt) : ''}
+                      </span>
+                      {unread > 0 ? (
+                        <span
+                          className="inline-flex min-w-5 items-center justify-center rounded-full bg-success px-1.5 py-0.5 text-[11px] font-semibold leading-none text-success-foreground"
+                          aria-label={`${unread} mensagem${unread > 1 ? 's' : ''} não lida${unread > 1 ? 's' : ''}`}
+                        >
+                          {unread > 99 ? '99+' : unread}
+                        </span>
+                      ) : null}
+                    </div>
                   </div>
-                  <p className="mt-0.5 truncate text-[13px] text-muted-foreground">
-                    {conversationPreview(item)}
-                  </p>
                   <div className="mt-1.5 flex flex-wrap items-center gap-1">
                     <StatusBadge tone={conversationStatusTone[item.status]}>
                       {conversationStatusLabel[item.status]}

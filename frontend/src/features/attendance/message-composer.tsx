@@ -3,6 +3,7 @@ import { Mic, Paperclip, Send, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { ApiError } from '@/lib/api-client';
+import { MediaPreviewDialog } from './media-preview-dialog';
 import { useSendConversationMedia, useSendConversationMessage } from './queries';
 import { useAudioRecorder } from './use-audio-recorder';
 
@@ -19,6 +20,7 @@ function formatDuration(totalSeconds: number): string {
 export function MessageComposer({ conversationId }: { conversationId: string }) {
   const [draft, setDraft] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -36,6 +38,31 @@ export function MessageComposer({ conversationId }: { conversationId: string }) 
     element.style.height = `${Math.min(element.scrollHeight, MAX_COMPOSER_HEIGHT)}px`;
   }, [draft]);
 
+  useEffect(() => {
+    const handlePaste = (event: ClipboardEvent): void => {
+      const items = event.clipboardData?.items;
+      if (!items) {
+        return;
+      }
+      for (let index = 0; index < items.length; index += 1) {
+        const item = items[index];
+        if (item.kind !== 'file') {
+          continue;
+        }
+        const file = item.getAsFile();
+        if (file) {
+          event.preventDefault();
+          setError(null);
+          setPendingFile(file);
+          return;
+        }
+      }
+    };
+
+    document.addEventListener('paste', handlePaste);
+    return () => document.removeEventListener('paste', handlePaste);
+  }, []);
+
   const handleSend = async (): Promise<void> => {
     if (!canSend || busy) {
       return;
@@ -51,20 +78,33 @@ export function MessageComposer({ conversationId }: { conversationId: string }) 
     }
   };
 
-  const handleFileSelected = async (event: ChangeEvent<HTMLInputElement>): Promise<void> => {
+  const handleFileSelected = (event: ChangeEvent<HTMLInputElement>): void => {
     const file = event.target.files?.[0];
     event.target.value = '';
     if (!file) {
       return;
     }
     setError(null);
+    setPendingFile(file);
+  };
+
+  const handlePreviewOpenChange = (open: boolean): void => {
+    if (!open && !sendMedia.isPending) {
+      setPendingFile(null);
+      setError(null);
+    }
+  };
+
+  const handlePreviewSend = async (file: File, caption: string): Promise<void> => {
+    setError(null);
     try {
       await sendMedia.mutateAsync({
         id: conversationId,
         file,
-        caption: canSend ? draft.trim() : undefined,
+        caption: caption.length > 0 ? caption : undefined,
       });
       setDraft('');
+      setPendingFile(null);
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : 'Não foi possível enviar o arquivo.');
     }
@@ -90,9 +130,9 @@ export function MessageComposer({ conversationId }: { conversationId: string }) 
         type="file"
         accept="image/*,video/*,audio/*,application/pdf"
         className="hidden"
-        onChange={(event) => void handleFileSelected(event)}
+        onChange={handleFileSelected}
       />
-      {error || recorder.error ? (
+      {!pendingFile && (error || recorder.error) ? (
         <p className="mb-2 text-xs font-medium text-danger">{error ?? recorder.error}</p>
       ) : null}
       {recorder.recording ? (
@@ -171,6 +211,20 @@ export function MessageComposer({ conversationId }: { conversationId: string }) 
           )}
         </div>
       )}
+      <MediaPreviewDialog
+        key={
+          pendingFile
+            ? `${pendingFile.name}-${pendingFile.size}-${pendingFile.lastModified}`
+            : 'empty'
+        }
+        file={pendingFile}
+        open={pendingFile !== null}
+        sending={sendMedia.isPending}
+        error={error}
+        initialCaption={draft.trim()}
+        onOpenChange={handlePreviewOpenChange}
+        onSend={(file, caption) => void handlePreviewSend(file, caption)}
+      />
     </div>
   );
 }

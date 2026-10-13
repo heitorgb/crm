@@ -56,6 +56,16 @@ export interface PersistOutboundInput {
   metadata?: Record<string, unknown>;
 }
 
+export interface QuotedMessageInfo {
+  messageId: string | null;
+  externalId: string | null;
+  authorName: string | null;
+  authorJid: string | null;
+  fromMe: boolean;
+  content: string | null;
+  type: MessageType;
+}
+
 export interface CreateAttachmentInput {
   tenantId: string;
   messageId: string;

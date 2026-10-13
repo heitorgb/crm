@@ -105,7 +105,12 @@ export class ConversationsController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: SendConversationMessageDto,
   ): Promise<{ ok: true }> {
-    await this.conversations.sendHumanMessage(id, dto.content.trim(), dto.includeAgentName ?? false);
+    await this.conversations.sendHumanMessage(
+      id,
+      dto.content.trim(),
+      dto.includeAgentName ?? false,
+      dto.quotedMessageId ?? null,
+    );
     return { ok: true };
   }
 
@@ -136,6 +141,7 @@ export class ConversationsController {
 
     const caption = readCaption(file.fields);
     const includeAgentName = readBooleanField(file.fields, 'includeAgentName');
+    const quotedMessageId = readStringField(file.fields, 'quotedMessageId');
 
     await this.conversations.sendHumanMedia(
       id,
@@ -146,6 +152,7 @@ export class ConversationsController {
         caption,
       },
       includeAgentName,
+      quotedMessageId,
     );
 
     return { ok: true };
@@ -209,8 +216,12 @@ function sanitizeFileName(fileName: string): string {
 }
 
 function readBooleanField(fields: unknown, key: string): boolean {
+  return readStringField(fields, key) === 'true';
+}
+
+function readStringField(fields: unknown, key: string): string | null {
   if (typeof fields !== 'object' || fields === null) {
-    return false;
+    return null;
   }
   const field = (fields as Record<string, unknown>)[key];
   if (
@@ -219,7 +230,8 @@ function readBooleanField(fields: unknown, key: string): boolean {
     'value' in field &&
     typeof (field as { value?: unknown }).value === 'string'
   ) {
-    return (field as { value: string }).value === 'true';
+    const value = (field as { value: string }).value.trim();
+    return value.length > 0 ? value : null;
   }
-  return false;
+  return null;
 }

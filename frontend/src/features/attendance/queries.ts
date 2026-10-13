@@ -97,11 +97,13 @@ export function useSendConversationMessage() {
       id,
       content,
       includeAgentName,
+      quotedMessageId,
     }: {
       id: string;
       content: string;
       includeAgentName: boolean;
-    }) => attendanceService.sendMessage(id, content, includeAgentName),
+      quotedMessageId?: string;
+    }) => attendanceService.sendMessage(id, content, includeAgentName, quotedMessageId),
     onSuccess: (_result, variables) => {
       void queryClient.invalidateQueries({ queryKey: attendanceKeys.messages(variables.id) });
       void queryClient.invalidateQueries({ queryKey: attendanceKeys.all });
@@ -117,12 +119,14 @@ export function useSendConversationMedia() {
       file,
       caption,
       includeAgentName,
+      quotedMessageId,
     }: {
       id: string;
       file: File;
       caption?: string;
       includeAgentName: boolean;
-    }) => attendanceService.sendMedia(id, file, caption, includeAgentName),
+      quotedMessageId?: string;
+    }) => attendanceService.sendMedia(id, file, caption, includeAgentName, quotedMessageId),
     onSuccess: (_result, variables) => {
       void queryClient.invalidateQueries({ queryKey: attendanceKeys.messages(variables.id) });
       void queryClient.invalidateQueries({ queryKey: attendanceKeys.all });

@@ -83,6 +83,10 @@ export class SendConversationMessageDto {
   @IsOptional()
   @IsBoolean()
   includeAgentName?: boolean;
+
+  @IsOptional()
+  @IsUUID()
+  quotedMessageId?: string;
 }
 
 export class StartConversationDto {

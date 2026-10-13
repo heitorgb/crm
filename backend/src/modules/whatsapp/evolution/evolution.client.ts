@@ -37,6 +37,12 @@ export interface EvolutionSendMediaInput {
   fileName?: string;
   caption?: string;
   mimetype?: string;
+  quoted?: EvolutionQuotedMessage;
+}
+
+export interface EvolutionQuotedMessage {
+  key: { id: string; remoteJid: string; fromMe: boolean };
+  message: Record<string, unknown>;
 }
 
 export interface EvolutionMediaMessageKey {
@@ -112,10 +118,16 @@ export class EvolutionClient {
     });
   }
 
-  async sendText(instanceName: string, number: string, text: string): Promise<EvolutionSendResult> {
+  async sendText(
+    instanceName: string,
+    number: string,
+    text: string,
+    quoted?: EvolutionQuotedMessage,
+  ): Promise<EvolutionSendResult> {
     const raw = await this.request('POST', `/message/sendText/${encodeURIComponent(instanceName)}`, {
       number,
       text,
+      ...(quoted ? { quoted } : {}),
     });
 
     return { externalMessageId: extractMessageId(raw), raw };
@@ -145,6 +157,7 @@ export class EvolutionClient {
       ...(input.fileName ? { fileName: input.fileName } : {}),
       ...(input.caption ? { caption: input.caption } : {}),
       ...(input.mimetype ? { mimetype: input.mimetype } : {}),
+      ...(input.quoted ? { quoted: input.quoted } : {}),
     });
 
     return { externalMessageId: extractMessageId(raw), raw };

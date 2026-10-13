@@ -160,6 +160,7 @@ export function AttendancePage() {
             </div>
           ) : conversation ? (
             <ChatPanel
+              key={conversation.id}
               conversation={conversation}
               messages={visibleMessages}
               messagesPending={messagesQuery.isPending}

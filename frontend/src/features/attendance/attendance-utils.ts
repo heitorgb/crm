@@ -1,5 +1,11 @@
 import { format, isToday, isYesterday } from 'date-fns';
-import type { Conversation, ConversationStatus } from '@/types/attendance';
+import type {
+  Conversation,
+  ConversationMessage,
+  ConversationStatus,
+  MessageType,
+  QuotedMessage,
+} from '@/types/attendance';
 
 export const conversationStatusTone: Record<ConversationStatus, 'success' | 'secondary'> = {
   OPEN: 'success',
@@ -80,4 +86,46 @@ export function formatDayLabel(value: string): string {
     return 'Ontem';
   }
   return format(date, 'dd/MM/yyyy');
+}
+
+const MESSAGE_TYPE_LABEL: Partial<Record<MessageType, string>> = {
+  IMAGE: 'Imagem',
+  VIDEO: 'Vídeo',
+  AUDIO: 'Áudio',
+  DOCUMENT: 'Documento',
+  STICKER: 'Figurinha',
+  LOCATION: 'Localização',
+  CONTACT: 'Contato',
+};
+
+export function messageSnippet(content: string | null, type: MessageType): string {
+  const text = content?.trim();
+  if (text) {
+    return text;
+  }
+  return MESSAGE_TYPE_LABEL[type] ?? 'Mensagem';
+}
+
+export function readQuotedMessage(message: ConversationMessage): QuotedMessage | null {
+  const raw = message.metadata?.quoted;
+  if (!raw || typeof raw !== 'object') {
+    return null;
+  }
+  const quoted = raw as Record<string, unknown>;
+  return {
+    messageId: typeof quoted.messageId === 'string' ? quoted.messageId : null,
+    externalId: typeof quoted.externalId === 'string' ? quoted.externalId : null,
+    authorName: typeof quoted.authorName === 'string' ? quoted.authorName : null,
+    authorJid: typeof quoted.authorJid === 'string' ? quoted.authorJid : null,
+    fromMe: quoted.fromMe === true,
+    content: typeof quoted.content === 'string' ? quoted.content : null,
+    type: typeof quoted.type === 'string' ? (quoted.type as MessageType) : 'UNKNOWN',
+  };
+}
+
+export function quotedAuthorLabel(quoted: QuotedMessage): string {
+  if (quoted.fromMe) {
+    return 'Você';
+  }
+  return quoted.authorName ?? 'Mensagem';
 }

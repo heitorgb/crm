@@ -31,7 +31,8 @@ Lead no WhatsApp
 - `Message`: `conversationId`, `direction`, `type`, `content?`, `externalMessageId?`
   (`UNIQUE (tenantId, externalMessageId)` = idempotência), `status`, `senderId?` (JID do
   participante em grupos **ou** `userId` do atendente em `OUTBOUND`), `senderName?` (pushName em
-  grupos **ou** nome do atendente em `OUTBOUND`), `metadata`, `occurredAt`.
+  grupos **ou** nome do atendente em `OUTBOUND`), `metadata` (guarda `remoteJid`, `viewOnce`,
+  `showAgentName` e `quoted`), `occurredAt`.
 - `WhatsAppAvatar`: cache de foto de perfil por instância/JID (`tenantId`, `whatsappInstanceId`,
   `jid`, `url?`, `fetchedAt`), `UNIQUE (whatsappInstanceId, jid)`.
 - `MessageAttachment`: **metadados** de mídia (`storageKey`, `fileName`, `mimeType`, `size`,
@@ -168,6 +169,16 @@ CRM (sem dependências novas). A tela é **full-bleed**: `MainContent` deixa de 
   inclusive no reenvio de mensagens com falha. No CRM, as mensagens enviadas mostram o nome do
   atendente no topo do balão e guardam `senderId`/`senderName` para rastreabilidade. O padrão é
   configurável em Configurações → Atendimento (ver [`settings.md`](./settings.md)).
+- **Respostas citadas (menções)**: mensagens que citam outra exibem, no topo do balão, um bloco com
+  barra lateral colorida, o autor citado (**Você** quando foi enviada por nós) e um resumo (texto ou
+  rótulo do tipo de mídia), no estilo do WhatsApp Web. Ao passar o mouse sobre uma mensagem aparece o
+  botão **Responder**; ao responder, o compositor mostra a prévia da citação (com botão de cancelar) e
+  a mensagem é enviada com a referência à original (`quoted` na Evolution). O backend persiste o
+  contexto em `Message.metadata.quoted` (`externalId`, `authorName`, `authorJid`, `fromMe`, `content`,
+  `type` e `messageId` local quando resolvido): no inbound, lendo `contextInfo.quotedMessage` do
+  webhook e enriquecendo com o histórico local para descobrir autor e direção; no outbound, a partir
+  da mensagem referenciada (sempre escopada por tenant/conversa). No reenvio de falha a citação é
+  reconstruída do metadata.
 - **Painel de contato (direita)**: dados do contato/grupo, cliente, assunto e ações. Em telas menores
   vira um `Sheet`; no mobile a lista e o chat se alternam (botão voltar no cabeçalho do chat).
 - **Tempo real**: eventos Socket.IO invalidam as queries; um aviso "Reconectando ao servidor…" é

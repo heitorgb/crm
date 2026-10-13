@@ -233,6 +233,9 @@ O envio humano (`POST /api/conversations/:id/messages`) exige `status = HUMAN`; 
 responde `409 CONVERSATION_NOT_HUMAN_OWNED`. O bot só responde enquanto a conversa estiver em
 `BOT_QUALIFYING` — após handoff ele fica silencioso.
 
+`GET /api/conversations/:id/messages` é paginado das **mais recentes para as mais antigas**: a
+`page=1` traz as últimas mensagens (retornadas em ordem cronológica crescente para renderização).
+
 ## Bot de qualificação
 
 - Primeira interação: envia `privacyNoticeText` (nunca omitido em perfil ativo) e `initialMessage`

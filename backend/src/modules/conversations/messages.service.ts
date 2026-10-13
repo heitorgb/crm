@@ -120,14 +120,16 @@ export class MessagesService {
       this.prisma.message.count({ where: { tenantId, conversationId } }),
       this.prisma.message.findMany({
         where: { tenantId, conversationId },
-        orderBy: { occurredAt: 'asc' },
+        orderBy: { occurredAt: 'desc' },
         skip: skipOf(page, perPage),
         take: perPage,
         include: MESSAGE_INCLUDE,
       }),
     ]);
 
-    return buildPage(messages.map(toMessageView), total, page, perPage);
+    const ascending = [...messages].reverse();
+
+    return buildPage(ascending.map(toMessageView), total, page, perPage);
   }
 
   async findOne(id: string): Promise<MessageView> {

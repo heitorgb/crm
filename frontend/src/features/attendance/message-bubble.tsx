@@ -38,6 +38,8 @@ interface MessageBubbleProps {
   message: ConversationMessage;
   isGroup: boolean;
   whatsappInstanceId: string;
+  groupedWithPrevious?: boolean;
+  groupedWithNext?: boolean;
   onReply?: (message: ConversationMessage) => void;
 }
 
@@ -46,10 +48,13 @@ export function MessageBubble({
   message,
   isGroup,
   whatsappInstanceId,
+  groupedWithPrevious = false,
+  groupedWithNext = false,
   onReply,
 }: MessageBubbleProps) {
   const isOutbound = message.direction === 'OUTBOUND';
-  const showSender = isGroup && !isOutbound;
+  const showSender = isGroup && !isOutbound && !groupedWithPrevious;
+  const stackSpacing = groupedWithPrevious ? 'mt-1' : 'mt-3';
   const isSticker = message.type === 'STICKER';
   const isMedia = isMediaMessage(message);
   const quoted = readQuotedMessage(message);
@@ -57,7 +62,13 @@ export function MessageBubble({
 
   if (isSticker) {
     return (
-      <div className={cn('group flex items-center gap-1', isOutbound ? 'justify-end' : 'justify-start')}>
+      <div
+        className={cn(
+          'group flex items-center gap-1',
+          stackSpacing,
+          isOutbound ? 'justify-end' : 'justify-start',
+        )}
+      >
         <div className="flex max-w-[50%] flex-col items-start gap-0.5">
           {showSender && message.senderName ? (
             <span className="px-1 text-[11px] font-semibold text-primary">
@@ -78,7 +89,11 @@ export function MessageBubble({
   if (message.type === 'REACTION') {
     return (
       <div
-        className={cn('group flex items-center gap-1', isOutbound ? 'justify-end' : 'justify-start')}
+        className={cn(
+          'group flex items-center gap-1',
+          stackSpacing,
+          isOutbound ? 'justify-end' : 'justify-start',
+        )}
       >
         <div
           className={cn(
@@ -102,13 +117,23 @@ export function MessageBubble({
   }
 
   return (
-    <div className={cn('group flex items-center gap-1', isOutbound ? 'justify-end' : 'justify-start')}>
-      {showSender ? (
-        <SenderAvatar
-          conversationId={conversationId}
-          jid={message.senderId}
-          name={message.senderName}
-        />
+    <div
+      className={cn(
+        'group flex items-center gap-1',
+        stackSpacing,
+        isOutbound ? 'justify-end' : 'justify-start',
+      )}
+    >
+      {isGroup && !isOutbound ? (
+        groupedWithPrevious ? (
+          <span className="size-7 shrink-0" aria-hidden />
+        ) : (
+          <SenderAvatar
+            conversationId={conversationId}
+            jid={message.senderId}
+            name={message.senderName}
+          />
+        )
       ) : null}
       <div
         className={cn(
@@ -124,10 +149,12 @@ export function MessageBubble({
         <div
           className={cn(
             'rounded-lg text-sm shadow-sm',
-            isMedia ? 'overflow-hidden p-1' : 'px-2.5 py-1.5',
+            isMedia ? 'overflow-hidden p-1' : 'px-3 py-2',
             isOutbound
-              ? 'rounded-br-sm bg-primary-light text-foreground'
-              : 'rounded-bl-sm border border-border bg-card text-foreground',
+              ? 'bg-primary-light text-foreground'
+              : 'border border-border bg-card text-foreground',
+            !groupedWithNext && (isOutbound ? 'rounded-br-sm' : 'rounded-bl-sm'),
+            groupedWithPrevious && (isOutbound ? 'rounded-tr-sm' : 'rounded-tl-sm'),
           )}
         >
           {!isMedia && quoted ? <QuoteBlock quoted={quoted} isOutbound={isOutbound} /> : null}
@@ -161,8 +188,8 @@ export function MessageBubble({
           ) : null}
           <div
             className={cn(
-              'flex items-center justify-end gap-1 text-[10px]',
-              isMedia && !message.content ? 'px-1 pt-0.5' : 'mt-0.5 px-0.5',
+              'flex items-center justify-end gap-0.5 text-[10px] leading-none',
+              isMedia && !message.content ? 'px-1 pt-0.5' : 'mt-1 px-0.5',
             )}
           >
             {message.metadata?.viewOnce === true ? (
@@ -170,7 +197,8 @@ export function MessageBubble({
             ) : null}
             <span
               className={cn(
-                isOutbound ? 'text-foreground/60' : 'text-muted-foreground',
+                'tabular-nums',
+                isOutbound ? 'text-foreground/55' : 'text-muted-foreground',
               )}
             >
               {formatBubbleTime(message.occurredAt)}
@@ -256,7 +284,7 @@ function ReplyButton({ onClick }: { onClick: () => void }) {
     <Button
       variant="ghost"
       size="icon"
-      className="size-8 shrink-0 rounded-full text-foreground/60 transition-colors hover:bg-surface-hover hover:text-foreground"
+      className="message-reply-button size-8 shrink-0 rounded-full text-foreground/60 hover:bg-surface-hover hover:text-foreground"
       onClick={onClick}
       aria-label="Responder"
     >

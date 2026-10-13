@@ -171,12 +171,17 @@ CRM (sem dependências novas). A tela é **full-bleed**: `MainContent` deixa de 
   existentes (`tenant:{tenantId}`).
 - **Chat (centro)**: cabeçalho com avatar, nome, telefone/instância e menu de ações (encerrar/reabrir,
   atualizar grupo, ver contato). Histórico com papel de parede em padrão de *doodles* (estilo
-  WhatsApp, `public/chat-doodle.svg`), separadores de dia (Hoje/Ontem)
-  e balões assimétricos — enviados em verde da marca com *ticks* de status
-  (`PENDING`/`SENT`/`DELIVERED`/`READ`/`FAILED`) e recebidos em card. Nome e foto por remetente em
-  grupos. URLs no texto (e em legendas de mídia) são exibidas como links clicáveis que abrem em
-  nova aba. Compositor com anexo (imagem/vídeo/áudio/PDF), texto autoexpansível, gravação de áudio e
-  envio por `Enter`. Colar com **Ctrl+V** uma imagem/vídeo do clipboard (ex.: print de tela) abre a
+  WhatsApp, `public/chat-doodle.svg`) com baixo contraste — o *doodle* é atenuado por uma camada do
+  `background` do tema atual, funcionando nos temas claro e escuro sem preto absoluto —, separadores
+  de dia (Hoje/Ontem) e balões assimétricos — enviados em verde da marca com *ticks* de status
+  (`PENDING`/`SENT`/`DELIVERED`/`READ`/`FAILED`) e recebidos em card. Mensagens consecutivas do mesmo
+  remetente (mesma direção, mesmo dia e intervalo curto) são agrupadas com espaçamento reduzido,
+  exibindo nome e foto apenas no primeiro balão do grupo; a rolagem é automática somente quando o
+  usuário está no fim do histórico, e um botão flutuante ("Ir para as últimas mensagens") aparece ao
+  navegar por mensagens antigas. URLs no texto (e em legendas de mídia) são exibidas como links
+  clicáveis que abrem em nova aba. Compositor com anexo (imagem/vídeo/áudio/PDF), texto
+  autoexpansível, gravação de áudio e envio por `Enter`, com anexo/emoji/campo/gravação integrados em
+  um único campo arredondado. Colar com **Ctrl+V** uma imagem/vídeo do clipboard (ex.: print de tela) abre a
   prévia de mídia — igual ao anexo — com campo de legenda e botões **Enviar**/**Cancelar** antes do
   envio (`MediaPreviewDialog`).
 - **Nome do atendente**: o compositor traz a opção **Exibir nome do atendente** (marcada por padrão),

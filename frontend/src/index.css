@@ -131,11 +131,29 @@
   }
 
   .chat-wallpaper {
-    background-color: hsl(var(--muted) / 0.45);
-    background-image: url('/chat-doodle.svg');
+    background-color: hsl(var(--muted) / 0.4);
+    background-image:
+      linear-gradient(hsl(var(--background) / 0.55), hsl(var(--background) / 0.55)),
+      url('/chat-doodle.svg');
     background-repeat: repeat;
-    background-size: 240px 240px;
+    background-size: auto, 300px 300px;
     background-attachment: local;
+  }
+
+  .message-reply-button {
+    opacity: 1;
+    transition: opacity 150ms ease;
+  }
+
+  @media (min-width: 768px) {
+    .message-reply-button {
+      opacity: 0;
+    }
+
+    .group:hover .message-reply-button,
+    .group:focus-within .message-reply-button {
+      opacity: 1;
+    }
   }
 
   .scrollbar-thin {

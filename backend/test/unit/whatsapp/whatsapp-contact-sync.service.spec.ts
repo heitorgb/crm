@@ -59,6 +59,9 @@ describe('WhatsAppContactSyncService', () => {
         { jid: '120363000000000000@g.us', name: 'Grupo', avatarUrl: null },
         { jid: 'status@broadcast', name: 'Status', avatarUrl: null },
         { jid: 'abc@lid', name: 'Lid', avatarUrl: null },
+        { jid: '75209205874877@lid', name: 'Lid Numérico', avatarUrl: null },
+        { jid: '867051314767696@bot', name: 'Meta AI', avatarUrl: null },
+        { jid: '120363410064967646@newsletter', name: 'Newsletter', avatarUrl: null },
       ]),
     );
 

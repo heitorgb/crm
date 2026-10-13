@@ -233,6 +233,18 @@ export class ContactsService {
       return { created: 0, updated: 0 };
     }
 
+    // Self-heal: drop contacts left behind by earlier address-book imports whose
+    // number is no longer part of the book. Only contacts without any linked
+    // conversation or customer are eligible, so CRM data is never destroyed.
+    await this.prisma.contact.deleteMany({
+      where: {
+        tenantId,
+        customerId: null,
+        phone: { not: null, notIn: [...deduped.keys()] },
+        conversations: { none: {} },
+      },
+    });
+
     const existing = await this.prisma.contact.findMany({
       where: { tenantId, phone: { in: [...deduped.keys()] } },
       select: { id: true, phone: true, name: true, avatarUrl: true },

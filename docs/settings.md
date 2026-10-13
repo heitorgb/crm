@@ -16,11 +16,12 @@ Complementa [`authentication.md`](./authentication.md) e [`multi-tenancy.md`](./
 
 ## Configurações — `/configuracoes` (abas)
 
-| Aba         | Endpoints                                     | Papéis        |
-| ----------- | --------------------------------------------- | ------------- |
-| Organização | `GET/PATCH /api/tenants/current`              | leitura: todos; PATCH: `OWNER`, `ADMIN` |
-| Equipe      | `GET/POST/PATCH/DELETE /api/members`          | leitura: todos; escrita: `OWNER`, `ADMIN` |
-| Aparência   | (frontend) tema claro/escuro/sistema          | todos         |
+| Aba          | Endpoints                                     | Papéis        |
+| ------------ | --------------------------------------------- | ------------- |
+| Organização  | `GET/PATCH /api/tenants/current`              | leitura: todos; PATCH: `OWNER`, `ADMIN` |
+| Equipe       | `GET/POST/PATCH/DELETE /api/members`          | leitura: todos; escrita: `OWNER`, `ADMIN` |
+| Aparência    | (frontend) tema claro/escuro/sistema          | todos         |
+| Notificações | (frontend) contador de não lidas e som        | todos         |
 
 ### Organização
 
@@ -45,6 +46,19 @@ Complementa [`authentication.md`](./authentication.md) e [`multi-tenancy.md`](./
 
 Seletor de tema reutilizando o `theme-store` (o mesmo do header). Sem persistência no backend.
 
+### Notificações
+
+Preferências do navegador persistidas em `localStorage` (`orderup-notifications`), sem backend:
+
+- **Contador de não lidas na aba** — título da aba `(N) OrderUp CRM` com o total de conversas não
+  lidas.
+- **Som de notificação** — toca um som curto ao receber mensagem (Web Audio), com botão **Ouvir**
+  para testar.
+
+O estado de não lidas e a detecção de mensagens recebidas vêm do socket compartilhado
+(`RealtimeProvider`) e do evento `message.created` com `direction = INBOUND` — ver
+[`attendance.md`](./attendance.md).
+
 ## Segurança e isolamento
 
 - Todas as rotas exigem membership ativa; o tenant vem de `RequireContext()` — nunca do cliente.
@@ -55,4 +69,3 @@ Seletor de tema reutilizando o `theme-store` (o mesmo do header). Sem persistên
 
 - Alteração de e-mail, convite por token/e-mail e recuperação de senha (sem infra de e-mail).
 - Avatar/upload de imagem de perfil.
-- Preferências de notificação.

@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
+import { useNotificationStore } from '@/stores/notification-store';
 import type { ConversationStatus } from '@/types/attendance';
 import { useWhatsAppInstances } from '@/features/whatsapp/queries';
 import { ChatPanel } from './chat-panel';
@@ -66,6 +67,7 @@ export function AttendancePage() {
   const closeConversation = useCloseConversation();
   const reopenConversation = useTakeoverConversation();
   const refreshGroup = useRefreshGroup();
+  const markRead = useNotificationStore((state) => state.markRead);
 
   const conversation = conversationQuery.data ?? null;
   const visibleMessages = (messagesQuery.data?.data ?? []).filter(
@@ -89,6 +91,12 @@ export function AttendancePage() {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [searchParams, setSearchParams]);
+
+  useEffect(() => {
+    if (activeId) {
+      markRead(activeId);
+    }
+  }, [activeId, messagesQuery.data, markRead]);
 
   const handleToggleInfo = (): void => {
     if (isDesktop) {

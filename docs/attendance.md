@@ -104,11 +104,11 @@ Em **Atendimento → WhatsApp** (`/atendimento/whatsapp`):
    existir, usa `GET /instance/connect`; retorna o **QR code** (base64) e/ou o **código de
    pareamento**.
 3. A tela exibe o QR, permite **gerar novo QR** e faz *poll* de status até **Conectado**.
-4. O **webhook é configurado automaticamente** (eventos `MESSAGES_UPSERT`, `GROUPS_UPSERT` e
-   `PRESENCE_UPDATE`) com o token do segredo (da instância ou `EVOLUTION_WEBHOOK_SECRET`); há também
-   a ação **Reconfigurar webhook**. No boot do backend o webhook é **reconciliado** para todas as
-   instâncias conectadas/ativas, de modo que mudar `PUBLIC_API_URL` se autocorrige no próximo
-   restart sem depender de reconfiguração manual.
+4. O **webhook é configurado automaticamente** (eventos `MESSAGES_UPSERT`, `MESSAGES_UPDATE`,
+   `GROUPS_UPSERT` e `PRESENCE_UPDATE`) com o token do segredo (da instância ou
+   `EVOLUTION_WEBHOOK_SECRET`); há também a ação **Reconfigurar webhook**. No boot do backend o
+   webhook é **reconciliado** para todas as instâncias conectadas/ativas, de modo que mudar
+   `PUBLIC_API_URL` se autocorrige no próximo restart sem depender de reconfiguração manual.
 5. Desconectar/excluir a instância permanecem disponíveis.
 
 ### Importação automática de contatos
@@ -150,7 +150,8 @@ CRM (sem dependências novas). A tela é **full-bleed**: `MainContent` deixa de 
   e indicadores de status/grupo/instância. Estados de carregamento (skeleton), erro (com retry) e
   lista vazia (convite para conectar o WhatsApp).
 - **Chat (centro)**: cabeçalho com avatar, nome, telefone/instância e menu de ações (encerrar/reabrir,
-  atualizar grupo, ver contato). Histórico com papel de parede sutil, separadores de dia (Hoje/Ontem)
+  atualizar grupo, ver contato). Histórico com papel de parede em padrão de *doodles* (estilo
+  WhatsApp, `public/chat-doodle.svg`), separadores de dia (Hoje/Ontem)
   e balões assimétricos — enviados em verde da marca com *ticks* de status
   (`PENDING`/`SENT`/`DELIVERED`/`READ`/`FAILED`) e recebidos em card. Nome e foto por remetente em
   grupos. URLs no texto (e em legendas de mídia) são exibidas como links clicáveis que abrem em
@@ -160,6 +161,12 @@ CRM (sem dependências novas). A tela é **full-bleed**: `MainContent` deixa de 
   vira um `Sheet`; no mobile a lista e o chat se alternam (botão voltar no cabeçalho do chat).
 - **Tempo real**: eventos Socket.IO invalidam as queries; um aviso "Reconectando ao servidor…" é
   exibido quando o socket cai. `refetchInterval` segue como fallback.
+- **Notificações**: mensagens recebidas (`message.created` com `direction = INBOUND`) marcam a
+  conversa como não lida. O título da aba mostra `(N) OrderUp CRM` com o total de conversas não
+  lidas e um som curto é tocado; abrir a conversa em `/atendimento/conversas?conversation=…` zera o
+  contador. As preferências (**Contador de não lidas na aba** e **Som de notificação**) ficam em
+  Configurações → Notificações e são persistidas por navegador (`localStorage`). O socket é
+  compartilhado por toda a aplicação via `RealtimeProvider`.
 
 Reabrir usa `POST /api/conversations/:id/takeover` (já existente).
 
@@ -272,6 +279,21 @@ Referência do evento: [implementação da Evolution](https://github.com/Evoluti
   `tenant:{tenantId}:conversation:{conversationId}`. Eventos são emitidos por room — nunca
   `server.emit`.
 - O frontend usa Socket.IO como caminho principal e `refetchInterval` apenas como fallback.
+
+### Status de entrega e leitura
+
+- A Evolution envia recibos pelo evento `messages.update` (status `SERVER_ACK`, `DELIVERY_ACK`,
+  `READ`, `PLAYED`, `PENDING`, `ERROR`). O webhook mapeia: `SERVER_ACK` → `SENT`,
+  `DELIVERY_ACK` → `DELIVERED`, `READ`/`PLAYED` → `READ`, `ERROR` → `FAILED`.
+- O recibo é casado pelo `externalMessageId` da mensagem **dentro do tenant** e apenas mensagens
+  `OUTBOUND` são atualizadas. A progressão é monotônica: um recibo atrasado nunca regride um status
+  já avançado (ex.: `READ` não volta para `DELIVERED`).
+- Ao mudar, o backend emite `message.updated` na room da conversa e `conversation.updated` no
+  tenant, e o frontend invalida as queries exibindo o segundo *check* (entregue) ou azul (lido).
+- Instâncias novas assinam `MESSAGES_UPDATE`; nas já conectadas o evento entra pela
+  reconciliação de webhook no boot (ou por **Reconfigurar webhook**). O *tick* só avança se a
+  Evolution emitir o recibo — se o destinatário tiver desativado confirmações de leitura, o azul
+  pode nunca aparecer.
 
 ## Digest agendado
 

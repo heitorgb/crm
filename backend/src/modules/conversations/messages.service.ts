@@ -295,6 +295,39 @@ export class MessagesService {
     });
   }
 
+  /**
+   * System variant used by the webhook to apply delivery/read receipts. Only
+   * advances the status (never downgrades) and never touches inbound messages.
+   */
+  async updateOutboundStatusByExternalId(input: {
+    tenantId: string;
+    externalMessageId: string;
+    status: MessageStatus;
+  }): Promise<{ messageId: string; conversationId: string; status: MessageStatus } | null> {
+    const message = await this.prisma.message.findFirst({
+      where: {
+        tenantId: input.tenantId,
+        externalMessageId: input.externalMessageId,
+        direction: MessageDirection.OUTBOUND,
+      },
+      select: { id: true, conversationId: true, status: true },
+    });
+    if (!message || !shouldAdvanceStatus(message.status, input.status)) {
+      return null;
+    }
+
+    await this.prisma.message.update({
+      where: { id: message.id },
+      data: { status: input.status },
+    });
+
+    return {
+      messageId: message.id,
+      conversationId: message.conversationId,
+      status: input.status,
+    };
+  }
+
   private async requireConversation(tenantId: string, conversationId: string): Promise<void> {
     const conversation = await this.prisma.conversation.findFirst({
       where: { id: conversationId, tenantId },
@@ -337,4 +370,23 @@ function toMessageView(message: PrismaMessage): MessageView {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+const OUTBOUND_STATUS_RANK: Record<MessageStatus, number> = {
+  PENDING: 0,
+  RECEIVED: 0,
+  SENT: 1,
+  DELIVERED: 2,
+  READ: 3,
+  FAILED: -1,
+};
+
+function shouldAdvanceStatus(current: MessageStatus, next: MessageStatus): boolean {
+  if (next === MessageStatus.FAILED) {
+    return current === MessageStatus.PENDING;
+  }
+  if (current === MessageStatus.FAILED) {
+    return false;
+  }
+  return OUTBOUND_STATUS_RANK[next] > OUTBOUND_STATUS_RANK[current];
 }

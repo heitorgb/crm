@@ -44,6 +44,7 @@ export interface ConversationView {
   groupName: string | null;
   avatarUrl: string | null;
   isPinned: boolean;
+  isArchived: boolean;
   whatsappInstanceId: string;
   instanceName: string;
   externalContactId: string | null;
@@ -90,6 +91,7 @@ export class ConversationsService {
     if (query.whatsappInstanceId) where.whatsappInstanceId = query.whatsappInstanceId;
     if (query.contactId) where.contactId = query.contactId;
     if (query.customerId) where.customerId = query.customerId;
+    where.isArchived = query.archived ?? false;
     if (query.search) {
       where.OR = [
         { subject: { contains: query.search, mode: 'insensitive' } },
@@ -301,6 +303,36 @@ export class ConversationsService {
 
     if (conversation.isPinned !== isPinned) {
       await this.prisma.conversation.update({ where: { id }, data: { isPinned } });
+    }
+
+    this.realtime.emitToTenant(tenantId, 'conversation.updated', { conversationId: id });
+
+    return this.findOne(id);
+  }
+
+  /** Archives a conversation, removing it from the default inbox (tenant-scoped, idempotent). */
+  async archive(id: string): Promise<ConversationView> {
+    return this.setArchived(id, true);
+  }
+
+  /** Restores an archived conversation to the default inbox (tenant-scoped, idempotent). */
+  async unarchive(id: string): Promise<ConversationView> {
+    return this.setArchived(id, false);
+  }
+
+  private async setArchived(id: string, isArchived: boolean): Promise<ConversationView> {
+    const { tenantId } = this.tenantContext.requireContext();
+    const conversation = await this.prisma.conversation.findFirst({
+      where: { id, tenantId },
+      select: { id: true, isArchived: true },
+    });
+
+    if (!conversation) {
+      throw new ConversationNotFoundError();
+    }
+
+    if (conversation.isArchived !== isArchived) {
+      await this.prisma.conversation.update({ where: { id }, data: { isArchived } });
     }
 
     this.realtime.emitToTenant(tenantId, 'conversation.updated', { conversationId: id });
@@ -528,6 +560,7 @@ function toConversationView(conversation: PrismaConversation): ConversationView 
     groupName: conversation.groupName,
     avatarUrl: conversation.avatarUrl,
     isPinned: conversation.isPinned,
+    isArchived: conversation.isArchived,
     whatsappInstanceId: conversation.whatsappInstanceId,
     instanceName: conversation.instance.name,
     externalContactId: conversation.externalContactId,

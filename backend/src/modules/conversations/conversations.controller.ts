@@ -85,6 +85,18 @@ export class ConversationsController {
     return this.conversations.unpin(id);
   }
 
+  @Post(':id/archive')
+  @HttpCode(200)
+  archive(@Param('id', ParseUUIDPipe) id: string) {
+    return this.conversations.archive(id);
+  }
+
+  @Post(':id/unarchive')
+  @HttpCode(200)
+  unarchive(@Param('id', ParseUUIDPipe) id: string) {
+    return this.conversations.unarchive(id);
+  }
+
   @Post(':id/refresh-group')
   @HttpCode(200)
   refreshGroup(@Param('id', ParseUUIDPipe) id: string) {

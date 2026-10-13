@@ -125,6 +125,31 @@ O compose publica o nginx em HTTP (`:80`). Termine TLS à frente (ex.: um proxy 
 Cloudflare, ou certbot no próprio servidor) e ajuste `AUTH_COOKIE_SECURE=true`, `CORS_ORIGINS` e
 `PUBLIC_API_URL` para o domínio HTTPS.
 
+### WebSocket (Socket.IO) no proxy externo
+
+O realtime usa Socket.IO no namespace `/realtime` e caminho HTTP `/socket.io/`, com os transportes
+`polling` e `websocket` (o cliente negocia via `polling` e faz upgrade para `websocket`). O nginx do
+container (`frontend/nginx.conf`) já encaminha `Upgrade`/`Connection` para `/socket.io/`.
+
+**Todo proxy reverso à frente do frontend** (o terminador TLS — no deploy atual, o Apache na 443)
+precisa, para o caminho `/socket.io/`:
+
+- encaminhar os cabeçalhos de upgrade `Upgrade` e `Connection`;
+- preservar o caminho `/socket.io/` e a query string (`EIO`, `transport`) **sem reescrevê-la**;
+- falar HTTP/1.1 com o upstream (o frontend/nginx), sem buffering de WebSocket.
+
+Sem esse encaminhamento, o handshake chega ao Engine.IO sem transporte/upgrade válido e o backend
+responde **HTTP 400**; o realtime fica restrito ao fallback de `refetchInterval` (polling periódico).
+
+Exemplo canônico em Apache 2.4 (adaptar ao vhost existente; o destino é o frontend/nginx do compose,
+na porta publicada por `HTTP_PORT`; validar a sintaxe e obter autorização antes de recarregar o
+serviço):
+
+```apache
+ProxyPass        /socket.io/  http://127.0.0.1:PORTA_FRONTEND/socket.io/  upgrade=websocket
+ProxyPassReverse /socket.io/  http://127.0.0.1:PORTA_FRONTEND/socket.io/
+```
+
 ## Evolution API (WhatsApp)
 
 A Evolution roda em compose separado (`docker-compose.evolution.yml`) e **não** faz parte deste

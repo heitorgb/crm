@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
+  ArrowDown,
   ArrowLeft,
   Info,
   MessageSquare,
@@ -33,6 +34,36 @@ import { MessageBubble } from './message-bubble';
 import { MessageComposer } from './message-composer';
 import { SenderAvatar } from './sender-avatar';
 
+const GROUP_WINDOW_MS = 5 * 60 * 1000;
+const SCROLL_BOTTOM_THRESHOLD = 96;
+
+function areGrouped(
+  previous: ConversationMessage | undefined,
+  message: ConversationMessage,
+  isGroup: boolean,
+): boolean {
+  if (!previous) {
+    return false;
+  }
+  if (previous.direction !== message.direction) {
+    return false;
+  }
+  if (previous.type === 'REACTION' || message.type === 'REACTION') {
+    return false;
+  }
+  if (dayKey(previous.occurredAt) !== dayKey(message.occurredAt)) {
+    return false;
+  }
+  if (isGroup && message.direction === 'INBOUND' && previous.senderId !== message.senderId) {
+    return false;
+  }
+  if (message.direction === 'OUTBOUND' && previous.senderId !== message.senderId) {
+    return false;
+  }
+  const gap = new Date(message.occurredAt).getTime() - new Date(previous.occurredAt).getTime();
+  return gap >= 0 && gap <= GROUP_WINDOW_MS;
+}
+
 interface ChatPanelProps {
   conversation: Conversation;
   messages: ConversationMessage[];
@@ -64,13 +95,36 @@ export function ChatPanel({
   refreshPending,
   onRefreshGroup,
 }: ChatPanelProps) {
+  const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const atBottomRef = useRef(true);
   const isGroup = conversation.isGroup;
   const [replyTo, setReplyTo] = useState<ConversationMessage | null>(null);
+  const [showJumpToBottom, setShowJumpToBottom] = useState(false);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (!atBottomRef.current) {
+      return;
+    }
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [messages.length, conversation.id]);
+
+  const handleScroll = (): void => {
+    const element = scrollRef.current;
+    if (!element) {
+      return;
+    }
+    const distance = element.scrollHeight - element.scrollTop - element.clientHeight;
+    const atBottom = distance < SCROLL_BOTTOM_THRESHOLD;
+    atBottomRef.current = atBottom;
+    setShowJumpToBottom(!atBottom && messages.length > 0);
+  };
+
+  const scrollToBottom = (): void => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    atBottomRef.current = true;
+    setShowJumpToBottom(false);
+  };
 
   return (
     <div className="flex min-w-0 flex-1 flex-col">
@@ -144,7 +198,11 @@ export function ChatPanel({
         </DropdownMenu>
       </div>
 
-      <div className="chat-wallpaper flex-1 space-y-2 overflow-y-auto scrollbar-thin px-3 py-4 sm:px-6">
+      <div
+        ref={scrollRef}
+        onScroll={handleScroll}
+        className="chat-wallpaper relative flex-1 overflow-y-auto scrollbar-thin px-3 py-4 sm:px-6"
+      >
         {messagesPending ? (
           <div className="space-y-3">
             {Array.from({ length: 5 }).map((_, index) => (
@@ -174,12 +232,13 @@ export function ChatPanel({
         ) : (
           messages.map((message, index) => {
             const previous = messages[index - 1];
+            const next = messages[index + 1];
             const showDay =
               !previous || dayKey(previous.occurredAt) !== dayKey(message.occurredAt);
             return (
               <Fragment key={message.id}>
                 {showDay ? (
-                  <div className="flex justify-center py-2">
+                  <div className="flex justify-center pb-1 pt-4">
                     <span className="rounded-md bg-card/90 px-2.5 py-1 text-[11px] font-medium text-muted-foreground shadow-sm">
                       {formatDayLabel(message.occurredAt)}
                     </span>
@@ -190,6 +249,8 @@ export function ChatPanel({
                   message={message}
                   isGroup={isGroup}
                   whatsappInstanceId={conversation.whatsappInstanceId}
+                  groupedWithPrevious={areGrouped(previous, message, isGroup)}
+                  groupedWithNext={areGrouped(message, next, isGroup)}
                   onReply={setReplyTo}
                 />
               </Fragment>
@@ -197,6 +258,19 @@ export function ChatPanel({
           })
         )}
         <div ref={bottomRef} />
+        {showJumpToBottom ? (
+          <div className="pointer-events-none sticky bottom-3 z-10 flex justify-end">
+            <Button
+              variant="outline"
+              size="icon"
+              className="pointer-events-auto size-9 rounded-full border-border bg-card shadow-md"
+              onClick={scrollToBottom}
+              aria-label="Ir para as últimas mensagens"
+            >
+              <ArrowDown />
+            </Button>
+          </div>
+        ) : null}
       </div>
 
       <MessageComposer

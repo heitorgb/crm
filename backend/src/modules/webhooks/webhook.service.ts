@@ -108,13 +108,26 @@ export class WebhookService {
       return { accepted: true, ignored: 'outbound_or_missing_contact' };
     }
 
+    const rawMessage = data?.message;
+    const { message, viewOnce } = unwrapViewOnce(rawMessage);
+    const reaction = readReaction(message);
+    if (reaction && !reaction.emoji) {
+      return { accepted: true, ignored: 'reaction_removed' };
+    }
+
     const isGroup = isGroupJid(remoteJid);
     const participant = readString(key?.participant);
+    const participantAlt = readString(key?.participantAlt);
+    const remoteJidAlt = readString(key?.remoteJidAlt);
     const pushName = readString(data?.pushName);
 
     const contact = isGroup
       ? null
-      : await this.resolveContact(instance.tenantId, phoneFromJid(remoteJid), pushName);
+      : await this.resolveContact(
+          instance.tenantId,
+          resolveContactPhone(remoteJid, participantAlt, remoteJidAlt),
+          pushName,
+        );
 
     const conversation = await this.findOrCreateConversation(
       instance.tenantId,
@@ -128,13 +141,17 @@ export class WebhookService {
       await this.ensureGroupMetadata(conversation, instance, remoteJid);
     }
 
-    const rawMessage = data?.message;
-    const { message, viewOnce } = unwrapViewOnce(rawMessage);
-    const content = extractText(message);
-    const type = detectType(message);
+    const content = reaction ? reaction.emoji : extractText(message);
+    const type = reaction ? MessageType.REACTION : detectType(message);
     const externalMessageId = readString(key?.id);
     const quoted = await this.resolveInboundQuoted(instance.tenantId, message);
     const contacts = extractContacts(message);
+
+    const senderId = reaction
+      ? (participant ?? participantAlt ?? (isGroup ? null : remoteJid))
+      : isGroup
+        ? participant
+        : null;
 
     const persisted = await this.persistInboundMessage({
       tenantId: instance.tenantId,
@@ -142,13 +159,21 @@ export class WebhookService {
       content,
       type,
       externalMessageId,
-      senderId: isGroup ? participant : null,
-      senderName: isGroup ? pushName : null,
+      senderId,
+      senderName: isGroup || reaction ? pushName : null,
       metadata: {
         remoteJid,
         pushName,
         ...(participant ? { participantJid: participant } : {}),
         ...(viewOnce ? { viewOnce: true } : {}),
+        ...(reaction
+          ? {
+              reaction: {
+                targetMessageId: reaction.targetMessageId,
+                targetFromMe: reaction.targetFromMe,
+              },
+            }
+          : {}),
         ...(quoted ? { quoted } : {}),
         ...(contacts ? { contacts } : {}),
         instanceName,
@@ -550,6 +575,48 @@ function unwrapViewOnce(value: unknown): { message: unknown; viewOnce: boolean }
     }
   }
   return { message: value, viewOnce: false };
+}
+
+interface ParsedReaction {
+  emoji: string | null;
+  targetMessageId: string | null;
+  targetFromMe: boolean;
+}
+
+/**
+ * Reads an Evolution `reactionMessage`. The reactor is identified by the outer
+ * message key; this payload only carries the reacted message and the emoji.
+ */
+function readReaction(message: unknown): ParsedReaction | null {
+  if (!isRecord(message)) {
+    return null;
+  }
+  const reaction = isRecord(message.reactionMessage) ? message.reactionMessage : null;
+  if (!reaction) {
+    return null;
+  }
+  const key = isRecord(reaction.key) ? reaction.key : null;
+  return {
+    emoji: readString(reaction.text),
+    targetMessageId: key ? readString(key.id) : null,
+    targetFromMe: key?.fromMe === true,
+  };
+}
+
+/**
+ * Individual conversations may be addressed by a LID (`<id>@lid`) without a
+ * dialable phone. Evolution also sends the phone in the alternative fields.
+ */
+function resolveContactPhone(
+  remoteJid: string,
+  participantAlt: string | null,
+  remoteJidAlt: string | null,
+): string | null {
+  return (
+    phoneFromJid(remoteJid) ??
+    (participantAlt ? phoneFromJid(participantAlt) : null) ??
+    (remoteJidAlt ? phoneFromJid(remoteJidAlt) : null)
+  );
 }
 
 const CONTEXT_MESSAGE_PARTS = [

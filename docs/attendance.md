@@ -32,7 +32,7 @@ Lead no WhatsApp
   (`UNIQUE (tenantId, externalMessageId)` = idempotência), `status`, `senderId?` (JID do
   participante em grupos **ou** `userId` do atendente em `OUTBOUND`), `senderName?` (pushName em
   grupos **ou** nome do atendente em `OUTBOUND`), `metadata` (guarda `remoteJid`, `viewOnce`,
-  `showAgentName`, `contacts` e `quoted`), `occurredAt`.
+  `showAgentName`, `contacts`, `quoted` e `reaction`), `occurredAt`.
 - `WhatsAppAvatar`: cache de foto de perfil por instância/JID (`tenantId`, `whatsappInstanceId`,
   `jid`, `url?`, `fetchedAt`), `UNIQUE (whatsappInstanceId, jid)`.
 - `MessageAttachment`: **metadados** de mídia (`storageKey`, `fileName`, `mimeType`, `size`,
@@ -171,12 +171,17 @@ CRM (sem dependências novas). A tela é **full-bleed**: `MainContent` deixa de 
   existentes (`tenant:{tenantId}`).
 - **Chat (centro)**: cabeçalho com avatar, nome, telefone/instância e menu de ações (encerrar/reabrir,
   atualizar grupo, ver contato). Histórico com papel de parede em padrão de *doodles* (estilo
-  WhatsApp, `public/chat-doodle.svg`), separadores de dia (Hoje/Ontem)
-  e balões assimétricos — enviados em verde da marca com *ticks* de status
-  (`PENDING`/`SENT`/`DELIVERED`/`READ`/`FAILED`) e recebidos em card. Nome e foto por remetente em
-  grupos. URLs no texto (e em legendas de mídia) são exibidas como links clicáveis que abrem em
-  nova aba. Compositor com anexo (imagem/vídeo/áudio/PDF), texto autoexpansível, gravação de áudio e
-  envio por `Enter`. Colar com **Ctrl+V** uma imagem/vídeo do clipboard (ex.: print de tela) abre a
+  WhatsApp, `public/chat-doodle.svg`) com baixo contraste — o *doodle* é atenuado por uma camada do
+  `background` do tema atual, funcionando nos temas claro e escuro sem preto absoluto —, separadores
+  de dia (Hoje/Ontem) e balões assimétricos — enviados em verde da marca com *ticks* de status
+  (`PENDING`/`SENT`/`DELIVERED`/`READ`/`FAILED`) e recebidos em card. Mensagens consecutivas do mesmo
+  remetente (mesma direção, mesmo dia e intervalo curto) são agrupadas com espaçamento reduzido,
+  exibindo nome e foto apenas no primeiro balão do grupo; a rolagem é automática somente quando o
+  usuário está no fim do histórico, e um botão flutuante ("Ir para as últimas mensagens") aparece ao
+  navegar por mensagens antigas. URLs no texto (e em legendas de mídia) são exibidas como links
+  clicáveis que abrem em nova aba. Compositor com anexo (imagem/vídeo/áudio/PDF), texto
+  autoexpansível, gravação de áudio e envio por `Enter`, com anexo/emoji/campo/gravação integrados em
+  um único campo arredondado. Colar com **Ctrl+V** uma imagem/vídeo do clipboard (ex.: print de tela) abre a
   prévia de mídia — igual ao anexo — com campo de legenda e botões **Enviar**/**Cancelar** antes do
   envio (`MediaPreviewDialog`).
 - **Nome do atendente**: o compositor traz a opção **Exibir nome do atendente** (marcada por padrão),
@@ -192,6 +197,12 @@ CRM (sem dependências novas). A tela é **full-bleed**: `MainContent` deixa de 
   **Conversar** (resolve/cria o contato por telefone e inicia um atendimento 1:1 na mesma instância)
   e **Salvar contato** (`POST /api/contacts/resolve`, find-or-create idempotente por telefone). O
   webhook faz o parse do vCard (`FN`/`TEL`) e guarda `metadata.contacts = [{ name, phone }]`.
+- **Reações**: eventos `messages.upsert` com `data.message.reactionMessage` são reconhecidos como
+  `MessageType.REACTION`. O autor é o remetente do evento (`key.participant`, com o telefone em
+  `key.participantAlt` quando o JID é `@lid`), exibido com o `pushName` (também em conversas
+  individuais); o alvo fica em `metadata.reaction` (`{ targetMessageId, targetFromMe }`). Remoções
+  de reação (`text` vazio) são ignoradas para não gerar bolhas `[unknown]`. O chat mostra a reação
+  como um selo compacto com o nome do participante e o emoji.
 - **Respostas citadas (menções)**: mensagens que citam outra exibem, no topo do balão, um bloco com
   barra lateral colorida (cor por remetente, ou cor da marca quando a citada é nossa), o autor citado
   (**Você** quando foi enviada por nós) e um resumo com ícone do tipo de mídia (ex.: microfone para

@@ -15,6 +15,7 @@ export type MessageType =
   | 'LOCATION'
   | 'CONTACT'
   | 'STICKER'
+  | 'REACTION'
   | 'UNKNOWN';
 
 export interface WhatsAppInstance {

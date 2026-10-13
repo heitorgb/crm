@@ -252,11 +252,11 @@ export function MessageComposer({ conversationId, replyTo, onCancelReply }: Mess
           </div>
         </div>
       ) : (
-        <div className="flex items-end gap-1.5 sm:gap-2">
+        <div className="flex items-end gap-0.5 rounded-2xl border border-border bg-surface px-1 py-1 transition-colors focus-within:border-ring/50 focus-within:ring-2 focus-within:ring-ring/25 sm:gap-1 sm:px-1.5">
           <Button
             variant="ghost"
             size="icon"
-            className="text-muted-foreground"
+            className="size-9 shrink-0 rounded-full text-muted-foreground"
             onClick={() => fileInputRef.current?.click()}
             disabled={busy}
             aria-label="Anexar arquivo"
@@ -276,7 +276,7 @@ export function MessageComposer({ conversationId, replyTo, onCancelReply }: Mess
               };
             }}
             placeholder="Mensagem"
-            className="max-h-40 min-h-[42px] flex-1 resize-none rounded-2xl border-border bg-surface py-2.5"
+            className="max-h-40 min-h-[38px] flex-1 resize-none rounded-md border-0 bg-transparent px-2 py-2.5 text-sm shadow-none focus-visible:ring-0"
             onKeyDown={(event) => {
               if (event.key === 'Enter' && !event.shiftKey) {
                 event.preventDefault();
@@ -287,7 +287,7 @@ export function MessageComposer({ conversationId, replyTo, onCancelReply }: Mess
           {canSend ? (
             <Button
               size="icon"
-              className="rounded-full"
+              className="size-9 shrink-0 rounded-full"
               onClick={() => void handleSend()}
               disabled={busy}
               aria-label="Enviar mensagem"
@@ -298,7 +298,7 @@ export function MessageComposer({ conversationId, replyTo, onCancelReply }: Mess
             <Button
               variant="ghost"
               size="icon"
-              className="rounded-full text-muted-foreground"
+              className="size-9 shrink-0 rounded-full text-muted-foreground"
               onClick={() => void recorder.start()}
               disabled={busy}
               aria-label="Gravar áudio"

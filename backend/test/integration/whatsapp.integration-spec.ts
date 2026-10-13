@@ -644,13 +644,12 @@ describe('WhatsApp attendance (integration)', () => {
     it('publishes inbound message events with their direction', async () => {
       const instanceName = `dir-in-${randomUUID()}`;
       await createInstance(ownerA, instanceName);
-      const emit = vi.spyOn(app.get(RealtimeService), 'emitToConversation');
+      const emit = vi.spyOn(app.get(RealtimeService), 'emitToTenant');
 
       await postWebhook(evolutionPayload(instanceName, randomUUID(), 'Cheguei'));
 
       expect(emit).toHaveBeenCalledWith(
         ownerA.tenantId,
-        expect.any(String),
         'message.created',
         expect.objectContaining({ direction: 'INBOUND' }),
       );
@@ -1121,7 +1120,7 @@ describe('WhatsApp attendance (integration)', () => {
 
     it('publishes outbound message events with their direction', async () => {
       const { conversationId } = await seedConversation();
-      const emit = vi.spyOn(app.get(RealtimeService), 'emitToConversation');
+      const emit = vi.spyOn(app.get(RealtimeService), 'emitToTenant');
 
       await app.inject({
         method: 'POST',
@@ -1132,9 +1131,8 @@ describe('WhatsApp attendance (integration)', () => {
 
       expect(emit).toHaveBeenCalledWith(
         ownerA.tenantId,
-        conversationId,
         'message.created',
-        expect.objectContaining({ direction: 'OUTBOUND' }),
+        expect.objectContaining({ conversationId, direction: 'OUTBOUND' }),
       );
       emit.mockRestore();
     });

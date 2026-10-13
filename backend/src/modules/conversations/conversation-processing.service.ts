@@ -626,8 +626,18 @@ function buildEvolutionQuoted(
   if (!quoted?.externalId || !externalContactId) {
     return null;
   }
+
+  const key: EvolutionQuotedMessage['key'] = {
+    id: quoted.externalId,
+    remoteJid: externalContactId,
+    fromMe: quoted.fromMe,
+  };
+  if (!quoted.fromMe && quoted.authorJid) {
+    key.participant = quoted.authorJid;
+  }
+
   return {
-    key: { id: quoted.externalId, remoteJid: externalContactId, fromMe: quoted.fromMe },
+    key,
     message: { conversation: quoted.content ?? '' },
   };
 }

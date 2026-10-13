@@ -41,7 +41,7 @@ export interface EvolutionSendMediaInput {
 }
 
 export interface EvolutionQuotedMessage {
-  key: { id: string; remoteJid: string; fromMe: boolean };
+  key: { id: string; remoteJid: string; fromMe: boolean; participant?: string };
   message: Record<string, unknown>;
 }
 

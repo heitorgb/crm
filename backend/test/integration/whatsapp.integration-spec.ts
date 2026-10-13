@@ -291,6 +291,55 @@ describe('WhatsApp attendance (integration)', () => {
     };
   }
 
+  function reactionPayload(
+    instanceName: string,
+    messageId: string,
+    emoji: string,
+    options: {
+      remoteJid?: string;
+      participant?: string;
+      participantAlt?: string;
+      pushName?: string;
+      targetId?: string;
+      targetFromMe?: boolean;
+    } = {},
+  ) {
+    const {
+      remoteJid = '5511999999999@s.whatsapp.net',
+      participant,
+      participantAlt,
+      pushName = 'Contato Teste',
+      targetId = randomUUID(),
+      targetFromMe = false,
+    } = options;
+
+    return {
+      event: 'messages.upsert',
+      instance: instanceName,
+      data: {
+        key: {
+          remoteJid,
+          fromMe: false,
+          id: messageId,
+          ...(participant ? { participant } : {}),
+          ...(participantAlt ? { participantAlt } : {}),
+        },
+        pushName,
+        message: {
+          reactionMessage: {
+            key: {
+              id: targetId,
+              fromMe: targetFromMe,
+              remoteJid,
+              ...(participant ? { participant } : {}),
+            },
+            text: emoji,
+          },
+        },
+      },
+    };
+  }
+
   function postWebhook(
     payload: object,
     token = process.env.EVOLUTION_WEBHOOK_SECRET ?? 'test-webhook-secret',
@@ -1019,6 +1068,85 @@ describe('WhatsApp attendance (integration)', () => {
         headers: authHeaders(ownerA),
       });
       expect(unknown.statusCode).toBe(404);
+    });
+  });
+
+  describe('reactions', () => {
+    it('attributes a group reaction to its participant instead of leaving it unknown', async () => {
+      const instanceName = `reaction-group-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      const groupJid = '120363222222222222@g.us';
+      const participant = '5511888888888@lid';
+      const participantAlt = '5511888888888@s.whatsapp.net';
+      const targetId = randomUUID();
+
+      const response = await postWebhook(
+        reactionPayload(instanceName, randomUUID(), '😂', {
+          remoteJid: groupJid,
+          participant,
+          participantAlt,
+          pushName: 'Maria',
+          targetId,
+          targetFromMe: true,
+        }),
+      );
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json().accepted).toBe(true);
+
+      const message = await prisma.message.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId, direction: 'INBOUND' },
+      });
+      expect(message.type).toBe('REACTION');
+      expect(message.content).toBe('😂');
+      expect(message.senderName).toBe('Maria');
+      expect(message.senderId).toBe(participant);
+      expect(message.metadata).toMatchObject({
+        reaction: { targetMessageId: targetId, targetFromMe: true },
+      });
+    });
+
+    it('attributes an individual reaction to the contact', async () => {
+      const instanceName = `reaction-direct-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      const targetId = randomUUID();
+
+      await postWebhook(
+        reactionPayload(instanceName, randomUUID(), '❤️', {
+          remoteJid: '5511999999999@s.whatsapp.net',
+          pushName: 'Contato Teste',
+          targetId,
+          targetFromMe: true,
+        }),
+      );
+
+      const message = await prisma.message.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId, direction: 'INBOUND' },
+      });
+      expect(message.type).toBe('REACTION');
+      expect(message.content).toBe('❤️');
+      expect(message.senderName).toBe('Contato Teste');
+      expect(message.senderId).toBe('5511999999999@s.whatsapp.net');
+      expect(message.metadata).toMatchObject({ reaction: { targetMessageId: targetId } });
+    });
+
+    it('does not leave an unknown message when the reaction is removed', async () => {
+      const instanceName = `reaction-remove-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+
+      const response = await postWebhook(
+        reactionPayload(instanceName, randomUUID(), '', {
+          remoteJid: '5511999999999@s.whatsapp.net',
+        }),
+      );
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json().ignored).toBe('reaction_removed');
+
+      const messages = await prisma.message.findMany({
+        where: { tenantId: ownerA.tenantId },
+      });
+      expect(messages).toHaveLength(0);
     });
   });
 

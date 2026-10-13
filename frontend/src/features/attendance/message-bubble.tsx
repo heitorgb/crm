@@ -75,6 +75,32 @@ export function MessageBubble({
     );
   }
 
+  if (message.type === 'REACTION') {
+    return (
+      <div
+        className={cn('group flex items-center gap-1', isOutbound ? 'justify-end' : 'justify-start')}
+      >
+        <div
+          className={cn(
+            'flex max-w-[85%] items-center gap-1.5 rounded-full border border-border bg-card px-2.5 py-1 text-xs shadow-sm',
+            isOutbound ? 'ml-auto' : 'mr-auto',
+          )}
+        >
+          {!isOutbound && message.senderName ? (
+            <span className="font-semibold text-primary">{message.senderName}</span>
+          ) : null}
+          <span className="text-base leading-none" aria-label="Reação">
+            {message.content ?? '👍'}
+          </span>
+          <span className="text-[10px] text-muted-foreground">
+            {formatBubbleTime(message.occurredAt)}
+          </span>
+        </div>
+        {onReply ? <ReplyButton onClick={() => onReply(message)} /> : null}
+      </div>
+    );
+  }
+
   return (
     <div className={cn('group flex items-center gap-1', isOutbound ? 'justify-end' : 'justify-start')}>
       {showSender ? (

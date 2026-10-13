@@ -32,7 +32,7 @@ Lead no WhatsApp
   (`UNIQUE (tenantId, externalMessageId)` = idempotência), `status`, `senderId?` (JID do
   participante em grupos **ou** `userId` do atendente em `OUTBOUND`), `senderName?` (pushName em
   grupos **ou** nome do atendente em `OUTBOUND`), `metadata` (guarda `remoteJid`, `viewOnce`,
-  `showAgentName`, `contacts` e `quoted`), `occurredAt`.
+  `showAgentName`, `contacts`, `quoted` e `reaction`), `occurredAt`.
 - `WhatsAppAvatar`: cache de foto de perfil por instância/JID (`tenantId`, `whatsappInstanceId`,
   `jid`, `url?`, `fetchedAt`), `UNIQUE (whatsappInstanceId, jid)`.
 - `MessageAttachment`: **metadados** de mídia (`storageKey`, `fileName`, `mimeType`, `size`,
@@ -192,6 +192,12 @@ CRM (sem dependências novas). A tela é **full-bleed**: `MainContent` deixa de 
   **Conversar** (resolve/cria o contato por telefone e inicia um atendimento 1:1 na mesma instância)
   e **Salvar contato** (`POST /api/contacts/resolve`, find-or-create idempotente por telefone). O
   webhook faz o parse do vCard (`FN`/`TEL`) e guarda `metadata.contacts = [{ name, phone }]`.
+- **Reações**: eventos `messages.upsert` com `data.message.reactionMessage` são reconhecidos como
+  `MessageType.REACTION`. O autor é o remetente do evento (`key.participant`, com o telefone em
+  `key.participantAlt` quando o JID é `@lid`), exibido com o `pushName` (também em conversas
+  individuais); o alvo fica em `metadata.reaction` (`{ targetMessageId, targetFromMe }`). Remoções
+  de reação (`text` vazio) são ignoradas para não gerar bolhas `[unknown]`. O chat mostra a reação
+  como um selo compacto com o nome do participante e o emoji.
 - **Respostas citadas (menções)**: mensagens que citam outra exibem, no topo do balão, um bloco com
   barra lateral colorida (cor por remetente, ou cor da marca quando a citada é nossa), o autor citado
   (**Você** quando foi enviada por nós) e um resumo com ícone do tipo de mídia (ex.: microfone para

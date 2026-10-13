@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
+import { REFRESH_SKEW_MS, refreshSession, toSession } from '@/lib/session-refresh';
 import { useAuthStore } from '@/stores/auth-store';
 import { authService } from './services/auth-service';
 import type { ChangePasswordInput, LoginInput, UpdateProfileInput } from '@/types/auth';
@@ -19,7 +20,7 @@ export function useLogin() {
   return useMutation({
     mutationFn: (input: LoginInput) => authService.login(input),
     onSuccess: async (session) => {
-      setSession(session);
+      setSession(toSession(session));
 
       try {
         const current = await authService.me();
@@ -57,7 +58,7 @@ export function useSwitchTenant() {
   return useMutation({
     mutationFn: (tenantId: string) => authService.switchTenant(tenantId),
     onSuccess: (session) => {
-      setSession(session);
+      setSession(toSession(session));
       void queryClient.invalidateQueries({ queryKey: authKeys.me });
     },
   });
@@ -92,6 +93,19 @@ export function useSessionSync() {
     queryFn: () => authService.me(),
     enabled: Boolean(session),
   });
+
+  useEffect(() => {
+    if (!session) {
+      return;
+    }
+
+    const delay = Math.max(session.expiresAt - Date.now() - REFRESH_SKEW_MS, 0);
+    const timer = window.setTimeout(() => {
+      void refreshSession();
+    }, delay);
+
+    return () => window.clearTimeout(timer);
+  }, [session]);
 
   useEffect(() => {
     if (query.data) {

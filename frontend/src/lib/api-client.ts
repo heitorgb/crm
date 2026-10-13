@@ -1,4 +1,5 @@
 import { useAuthStore } from '@/stores/auth-store';
+import { getValidAccessToken, refreshSession } from '@/lib/session-refresh';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 const API_PREFIX = '/api';
@@ -19,20 +20,61 @@ interface RequestOptions extends Omit<RequestInit, 'body'> {
   auth?: boolean;
 }
 
+function withAuthHeader(headers: HeadersInit | undefined, token: string | null): Headers {
+  const next = new Headers(headers);
+  if (token) {
+    next.set('Authorization', `Bearer ${token}`);
+  }
+  return next;
+}
+
+/**
+ * Authenticated fetch that refreshes the access token proactively and once on a
+ * 401, so an expired token never forces the operator to log in again.
+ */
+async function apiFetch(path: string, init: RequestInit, auth: boolean): Promise<Response> {
+  const url = `${BASE_URL}${API_PREFIX}${path}`;
+  const token = auth ? await getValidAccessToken() : null;
+
+  const response = await fetch(url, {
+    ...init,
+    credentials: 'include',
+    headers: withAuthHeader(init.headers, token),
+  });
+
+  if (!auth || response.status !== 401) {
+    return response;
+  }
+
+  const refreshed = await refreshSession();
+  if (!refreshed) {
+    useAuthStore.getState().clearSession();
+    return response;
+  }
+
+  const retryToken = useAuthStore.getState().session?.accessToken ?? null;
+  return fetch(url, {
+    ...init,
+    credentials: 'include',
+    headers: withAuthHeader(init.headers, retryToken),
+  });
+}
+
 export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const { body, auth = true, headers, ...rest } = options;
-  const token = auth ? useAuthStore.getState().session?.accessToken : undefined;
 
-  const response = await fetch(`${BASE_URL}${API_PREFIX}${path}`, {
-    ...rest,
-    credentials: 'include',
-    headers: {
-      ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...headers,
+  const response = await apiFetch(
+    path,
+    {
+      ...rest,
+      headers: {
+        ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+        ...headers,
+      },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
     },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
+    auth,
+  );
 
   if (response.status === 204) {
     return undefined as T;
@@ -54,16 +96,7 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
 }
 
 export async function apiUpload<T>(path: string, formData: FormData): Promise<T> {
-  const token = useAuthStore.getState().session?.accessToken;
-
-  const response = await fetch(`${BASE_URL}${API_PREFIX}${path}`, {
-    method: 'POST',
-    credentials: 'include',
-    headers: {
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: formData,
-  });
+  const response = await apiFetch(path, { method: 'POST', body: formData }, true);
 
   const payload = (await response.json().catch(() => null)) as
     | { code?: string; message?: string }
@@ -81,14 +114,7 @@ export async function apiUpload<T>(path: string, formData: FormData): Promise<T>
 }
 
 export async function apiRequestBlob(path: string): Promise<Blob> {
-  const token = useAuthStore.getState().session?.accessToken;
-
-  const response = await fetch(`${BASE_URL}${API_PREFIX}${path}`, {
-    credentials: 'include',
-    headers: {
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-  });
+  const response = await apiFetch(path, {}, true);
 
   if (!response.ok) {
     const payload = (await response.json().catch(() => null)) as

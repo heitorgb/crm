@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, type OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Prisma, WhatsAppInstanceStatus } from '@prisma/client';
 import { AppException } from '../../common/errors/app.exception.js';
@@ -54,7 +54,7 @@ export interface ResolvedInstance {
 const WEBHOOK_EVENTS = ['MESSAGES_UPSERT', 'GROUPS_UPSERT', 'PRESENCE_UPDATE'];
 
 @Injectable()
-export class WhatsAppInstancesService {
+export class WhatsAppInstancesService implements OnModuleInit {
   private readonly logger = new Logger(WhatsAppInstancesService.name);
 
   constructor(
@@ -64,6 +64,50 @@ export class WhatsAppInstancesService {
     private readonly evolution: EvolutionClient,
     private readonly config: ConfigService<Env, true>,
   ) {}
+
+  onModuleInit(): void {
+    if (this.config.get('NODE_ENV') === 'test') {
+      return;
+    }
+    void this.reconcileWebhooks();
+  }
+
+  /**
+   * Re-applies the webhook to every connected instance at boot so a changed
+   * PUBLIC_API_URL (host, port or domain) self-heals without manual reconfiguration.
+   */
+  private async reconcileWebhooks(): Promise<void> {
+    if (!this.evolution.configured) {
+      return;
+    }
+    if (!this.config.get('PUBLIC_API_URL')) {
+      this.logger.warn('PUBLIC_API_URL is not set; skipping webhook reconciliation');
+      return;
+    }
+
+    try {
+      const instances = await this.prisma.whatsAppInstance.findMany({
+        where: {
+          active: true,
+          status: { in: [WhatsAppInstanceStatus.CONNECTED, WhatsAppInstanceStatus.CONNECTING] },
+        },
+        select: { id: true, tenantId: true, instanceName: true, credentialsEncrypted: true },
+      });
+
+      if (instances.length === 0) {
+        return;
+      }
+
+      this.logger.log(`Reconciling webhook for ${instances.length} instance(s)`);
+      for (const instance of instances) {
+        await this.tryConfigureWebhook(instance);
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Webhook reconciliation failed: ${error instanceof Error ? error.message : 'unknown'}`,
+      );
+    }
+  }
 
   async list(query: ListWhatsAppInstancesQueryDto): Promise<PageResult<WhatsAppInstanceView>> {
     const { tenantId } = this.tenantContext.requireContext();
@@ -255,8 +299,18 @@ export class WhatsAppInstancesService {
   }
 
   private resolveWebhookSecret(credentialsEncrypted: string | null): string {
-    const globalSecret = this.config.get('EVOLUTION_WEBHOOK_SECRET');
+    const secret = this.resolveWebhookSecretOrNull(credentialsEncrypted);
+    if (!secret) {
+      throw new AppException(
+        'WEBHOOK_SECRET_MISSING',
+        'No webhook secret available (instance credentials or EVOLUTION_WEBHOOK_SECRET)',
+        409,
+      );
+    }
+    return secret;
+  }
 
+  private resolveWebhookSecretOrNull(credentialsEncrypted: string | null): string | null {
     if (credentialsEncrypted && this.encryption.available) {
       try {
         const credentials = this.encryption.decryptJson<{ webhookSecret?: string | null }>(
@@ -270,15 +324,25 @@ export class WhatsAppInstancesService {
       }
     }
 
-    if (!globalSecret) {
-      throw new AppException(
-        'WEBHOOK_SECRET_MISSING',
-        'No webhook secret available (instance credentials or EVOLUTION_WEBHOOK_SECRET)',
-        409,
-      );
+    return this.config.get('EVOLUTION_WEBHOOK_SECRET') ?? null;
+  }
+
+  /**
+   * System lookup used by the public webhook to validate the request token before
+   * a tenant context exists. Returns the instance-specific secret when set,
+   * otherwise the global secret; null when the instance is unknown or inactive.
+   */
+  async resolveWebhookSecretForInstanceName(instanceName: string): Promise<string | null> {
+    const instance = await this.prisma.whatsAppInstance.findUnique({
+      where: { instanceName },
+      select: { active: true, credentialsEncrypted: true },
+    });
+
+    if (!instance || !instance.active) {
+      return null;
     }
 
-    return globalSecret;
+    return this.resolveWebhookSecretOrNull(instance.credentialsEncrypted);
   }
 
   /**

@@ -52,7 +52,8 @@ Prompt 09; `MessageAttachment.metadata`, `Message.metadata` e `LeadAnalysis` seg
 
 - Credenciais de instância são criptografadas (AES-256-GCM) com `CREDENTIALS_ENCRYPTION_KEY` e
   **nunca** retornam na API (`hasCredentials: true|false` apenas).
-- O webhook valida `EVOLUTION_WEBHOOK_SECRET` via `?token=` ou header `x-webhook-secret`.
+- O webhook valida o token (`?token=` ou header `x-webhook-secret`) contra o
+  `EVOLUTION_WEBHOOK_SECRET` global **ou** o `webhookSecret` da instância.
 - O tenant **nunca** vem do payload: é resolvido por `instanceName` → `WhatsAppInstance`.
 - Endpoints autenticados exigem membership; escrita de instância restrita a OWNER/ADMIN.
 - Logs não incluem conteúdo sensível nem credenciais.
@@ -102,9 +103,11 @@ Em **Atendimento → WhatsApp** (`/atendimento/whatsapp`):
    existir, usa `GET /instance/connect`; retorna o **QR code** (base64) e/ou o **código de
    pareamento**.
 3. A tela exibe o QR, permite **gerar novo QR** e faz *poll* de status até **Conectado**.
-4. O **webhook é configurado automaticamente** (eventos `MESSAGES_UPSERT` e `GROUPS_UPSERT`) com o
-   token do segredo (da instância ou `EVOLUTION_WEBHOOK_SECRET`); há também a ação
-   **Reconfigurar webhook**.
+4. O **webhook é configurado automaticamente** (eventos `MESSAGES_UPSERT`, `GROUPS_UPSERT` e
+   `PRESENCE_UPDATE`) com o token do segredo (da instância ou `EVOLUTION_WEBHOOK_SECRET`); há também
+   a ação **Reconfigurar webhook**. No boot do backend o webhook é **reconciliado** para todas as
+   instâncias conectadas/ativas, de modo que mudar `PUBLIC_API_URL` se autocorrige no próximo
+   restart sem depender de reconfiguração manual.
 5. Desconectar/excluir a instância permanecem disponíveis.
 
 ### Requisitos de configuração

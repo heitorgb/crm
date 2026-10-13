@@ -392,7 +392,7 @@ function computeEventId(
   return `${instanceName}:${eventType}:${hash}`;
 }
 
-function readInstanceName(payload: Record<string, unknown>): string | null {
+export function readInstanceName(payload: Record<string, unknown>): string | null {
   const direct = readString(payload.instance) ?? readString(payload.instanceName);
   if (direct) {
     return direct;

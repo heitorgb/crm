@@ -24,7 +24,7 @@ export function useMessageNotifications(): void {
   const tabBadgeEnabled = useNotificationStore((state) => state.tabBadgeEnabled);
   const soundEnabled = useNotificationStore((state) => state.soundEnabled);
   const markUnread = useNotificationStore((state) => state.markUnread);
-  const unreadCount = useNotificationStore((state) => state.unreadConversationIds.length);
+  const unreadCount = useNotificationStore((state) => Object.keys(state.unreadCounts).length);
 
   const onAttendance = location.pathname === ATTENDANCE_PATH;
   const activeConversationId = new URLSearchParams(location.search).get('conversation');

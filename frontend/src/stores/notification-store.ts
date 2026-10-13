@@ -4,7 +4,7 @@ import { persist } from 'zustand/middleware';
 interface NotificationState {
   tabBadgeEnabled: boolean;
   soundEnabled: boolean;
-  unreadConversationIds: string[];
+  unreadCounts: Record<string, number>;
   setTabBadgeEnabled: (enabled: boolean) => void;
   setSoundEnabled: (enabled: boolean) => void;
   markUnread: (conversationId: string) => void;
@@ -17,22 +17,25 @@ export const useNotificationStore = create<NotificationState>()(
     (set) => ({
       tabBadgeEnabled: true,
       soundEnabled: true,
-      unreadConversationIds: [],
+      unreadCounts: {},
       setTabBadgeEnabled: (tabBadgeEnabled) => set({ tabBadgeEnabled }),
       setSoundEnabled: (soundEnabled) => set({ soundEnabled }),
       markUnread: (conversationId) =>
-        set((state) =>
-          state.unreadConversationIds.includes(conversationId)
-            ? state
-            : { unreadConversationIds: [...state.unreadConversationIds, conversationId] },
-        ),
-      markRead: (conversationId) =>
         set((state) => ({
-          unreadConversationIds: state.unreadConversationIds.filter(
-            (id) => id !== conversationId,
-          ),
+          unreadCounts: {
+            ...state.unreadCounts,
+            [conversationId]: (state.unreadCounts[conversationId] ?? 0) + 1,
+          },
         })),
-      markAllRead: () => set({ unreadConversationIds: [] }),
+      markRead: (conversationId) =>
+        set((state) => {
+          if (!(conversationId in state.unreadCounts)) {
+            return state;
+          }
+          const { [conversationId]: _read, ...unreadCounts } = state.unreadCounts;
+          return { unreadCounts };
+        }),
+      markAllRead: () => set({ unreadCounts: {} }),
     }),
     { name: 'orderup-notifications' },
   ),

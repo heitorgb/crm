@@ -6,13 +6,15 @@ import { RateLimit } from '../../common/http/rate-limit/rate-limit.decorator.js'
 import { RateLimitGuard } from '../../common/http/rate-limit/rate-limit.guard.js';
 import type { Env } from '../../config/env.validation.js';
 import { Public } from '../auth/decorators/auth.decorators.js';
-import { WebhookService } from './webhook.service.js';
+import { WhatsAppInstancesService } from '../whatsapp/whatsapp-instances.service.js';
+import { WebhookService, readInstanceName } from './webhook.service.js';
 import { WebhookUnauthorizedError } from './webhooks.errors.js';
 
 @Controller('webhooks')
 export class WebhooksController {
   constructor(
     private readonly webhooks: WebhookService,
+    private readonly instances: WhatsAppInstancesService,
     private readonly config: ConfigService<Env, true>,
   ) {}
 
@@ -25,23 +27,37 @@ export class WebhooksController {
     @Req() request: FastifyRequest,
     @Query('token') token?: string,
   ): Promise<unknown> {
-    this.assertSecret(request, token);
+    await this.assertSecret(request, token);
     return this.webhooks.ingestEvolution(request.body);
   }
 
-  private assertSecret(request: FastifyRequest, token?: string): void {
-    const expected = this.config.get('EVOLUTION_WEBHOOK_SECRET');
-    if (!expected) {
+  private async assertSecret(request: FastifyRequest, token?: string): Promise<void> {
+    const header = request.headers['x-webhook-secret'];
+    const provided = token ?? (typeof header === 'string' ? header : undefined);
+    if (!provided) {
+      throw new WebhookUnauthorizedError();
+    }
+
+    const globalSecret = this.config.get('EVOLUTION_WEBHOOK_SECRET');
+    if (globalSecret && safeEqual(provided, globalSecret)) {
       return;
     }
 
-    const header = request.headers['x-webhook-secret'];
-    const provided = token ?? (typeof header === 'string' ? header : undefined);
-
-    if (!provided || !safeEqual(provided, expected)) {
-      throw new WebhookUnauthorizedError();
+    const body = request.body;
+    const instanceName = isRecord(body) ? readInstanceName(body) : null;
+    if (instanceName) {
+      const instanceSecret = await this.instances.resolveWebhookSecretForInstanceName(instanceName);
+      if (instanceSecret && safeEqual(provided, instanceSecret)) {
+        return;
+      }
     }
+
+    throw new WebhookUnauthorizedError();
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function safeEqual(provided: string, expected: string): boolean {

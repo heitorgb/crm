@@ -15,6 +15,7 @@ COPY --from=build /app/prisma ./prisma
 COPY --from=build /app/prisma7.config.ts ./prisma7.config.ts
 COPY --from=build /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=build /app/node_modules/@prisma/client ./node_modules/@prisma/client
+RUN mkdir -p /app/storage && chown -R node:node /app/storage
 USER node
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \

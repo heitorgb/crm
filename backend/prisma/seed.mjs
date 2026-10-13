@@ -11,7 +11,7 @@ if (!connectionString) {
 
 const SEED = {
   tenantName: 'OrderUp Demo',
-  email: 'admin@orderup.local',
+  email: 'admin@orderup.com.br',
   password: 'admin12345',
   userName: 'Administrador Demo',
   role: 'OWNER',

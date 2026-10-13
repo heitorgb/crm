@@ -47,7 +47,7 @@ npm run start:dev         # http://localhost:3000/api/health
 Credenciais do seed:
 
 ```text
-E-mail: admin@orderup.local
+E-mail: admin@orderup.com.br
 Senha:  admin12345
 ```
 
@@ -57,7 +57,7 @@ Para acessar **Administração → Organizações** (`/admin/tenants`) e criar n
 inclua o e-mail em `PLATFORM_ADMIN_EMAILS` no `backend/.env` e reinicie o backend:
 
 ```env
-PLATFORM_ADMIN_EMAILS=admin@orderup.local
+PLATFORM_ADMIN_EMAILS=admin@orderup.com.br
 ```
 
 Sem essa variável, a área administrativa fica indisponível para todos. Detalhes em

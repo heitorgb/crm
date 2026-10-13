@@ -61,7 +61,7 @@ cd backend
 cp .env.example .env
 npm install
 npm run prisma:deploy                # aplica as migrations (ou prisma:migrate em dev)
-npm run prisma:seed                  # cria usuário de dev (admin@orderup.local / admin12345)
+npm run prisma:seed                  # cria usuário de dev (admin@orderup.com.br / admin12345)
 npm run start:dev                    # http://localhost:3000/api/health
 ```
 
@@ -74,7 +74,7 @@ npm install
 npm run dev                          # http://localhost:5173 (proxy de /api para :3000)
 ```
 
-Acesse `http://localhost:5173` e faça login com `admin@orderup.local` / `admin12345`. O app abre em
+Acesse `http://localhost:5173` e faça login com `admin@orderup.com.br` / `admin12345`. O app abre em
 **Atendimento → Conversas**.
 
 ## WhatsApp (Evolution API)

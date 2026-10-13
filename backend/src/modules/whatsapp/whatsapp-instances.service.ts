@@ -202,9 +202,9 @@ export class WhatsAppInstancesService {
     } catch (error) {
       if (
         error instanceof EvolutionRequestError &&
-        (error.httpStatus === 409 || error.httpStatus === 400)
+        (error.httpStatus === 409 || error.httpStatus === 400 || error.httpStatus === 403)
       ) {
-        // Already exists: ask for a fresh connection ticket.
+        // Already exists (403 in Evolution v2): ask for a fresh connection ticket.
         return this.evolution.connect(instanceName);
       }
       throw error;

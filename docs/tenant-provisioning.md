@@ -15,7 +15,7 @@ organizações e gerenciar seus membros. Não há um papel `SUPERADMIN` no banco
 
 ```env
 # backend/.env — e-mails separados por vírgula (normalizados para minúsculas)
-PLATFORM_ADMIN_EMAILS=admin@orderup.local,ops@empresa.com.br
+PLATFORM_ADMIN_EMAILS=admin@orderup.com.br,ops@empresa.com.br
 ```
 
 - Sem valor → allowlist vazia → **ninguém** acessa a área administrativa.
@@ -26,13 +26,13 @@ PLATFORM_ADMIN_EMAILS=admin@orderup.local,ops@empresa.com.br
 
 ### Bootstrap do primeiro admin
 
-O seed cria `admin@orderup.local` (OWNER do tenant `OrderUp Demo`). Basta colocá-lo em
+O seed cria `admin@orderup.com.br` (OWNER do tenant `OrderUp Demo`). Basta colocá-lo em
 `PLATFORM_ADMIN_EMAILS` para habilitar a área:
 
 ```bash
 cd backend
 npm run prisma:seed
-# .env: PLATFORM_ADMIN_EMAILS=admin@orderup.local
+# .env: PLATFORM_ADMIN_EMAILS=admin@orderup.com.br
 ```
 
 ## Autorização

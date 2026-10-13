@@ -1,13 +1,13 @@
-name: Deploy (desenvolvimento)
+name: Deploy (main)
 
 on:
   push:
-    branches: [desenvolvimento]
+    branches: [main]
   workflow_dispatch:
 
 # Nunca roda dois deploys ao mesmo tempo; enfileira o próximo.
 concurrency:
-  group: deploy-desenvolvimento
+  group: deploy-main
   cancel-in-progress: false
 
 jobs:
@@ -19,7 +19,7 @@ jobs:
         uses: appleboy/ssh-action@v1.2.0
         env:
           APP_DIR: ${{ vars.DEPLOY_PATH }}
-          DEPLOY_BRANCH: desenvolvimento
+          DEPLOY_BRANCH: main
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}

@@ -4,7 +4,7 @@
 #
 # Variáveis (com defaults):
 #   APP_DIR        caminho do repositório no servidor   (default: /home/crm)
-#   DEPLOY_BRANCH  branch a implantar                     (default: desenvolvimento)
+#   DEPLOY_BRANCH  branch a implantar                     (default: main)
 #   GIT_REMOTE     remote do git                          (default: origin)
 #   COMPOSE_FILE   arquivo compose de produção            (default: docker-compose.prod.yml)
 #
@@ -14,7 +14,7 @@
 set -euo pipefail
 
 APP_DIR="${APP_DIR:-/home/crm}"
-DEPLOY_BRANCH="${DEPLOY_BRANCH:-desenvolvimento}"
+DEPLOY_BRANCH="${DEPLOY_BRANCH:-main}"
 GIT_REMOTE="${GIT_REMOTE:-origin}"
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.prod.yml}"
 

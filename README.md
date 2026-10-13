@@ -134,7 +134,7 @@ Detalhes técnicos em [docs/development.md](./docs/development.md).
 
 O deploy é contínuo: cada `push` na branch `desenvolvimento` dispara o GitHub Actions, que conecta
 por SSH no servidor e executa `scripts/deploy.sh` (build das imagens, migrations e `up -d` via
-`docker-compose.prod.yml` + `docker-compose.evolution.yml`).
+`docker-compose.prod.yml`).
 
 Configure os segredos `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_KEY` (e, opcionalmente,
 `DEPLOY_PORT`/`DEPLOY_PATH`) e garanta o repositório clonado em `/home/crm` com `backend/.env` e um

@@ -19,7 +19,7 @@ export function useAttendanceRealtime(): { connected: boolean } {
     const socket = io(`${BASE_URL}/realtime`, {
       path: '/socket.io',
       auth: { token },
-      transports: ['websocket'],
+      transports: ['polling', 'websocket'],
     });
     const invalidate = (): void => {
       void queryClient.invalidateQueries({ queryKey: attendanceKeys.all });

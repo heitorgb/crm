@@ -281,7 +281,10 @@ describe('WhatsApp attendance (integration)', () => {
     };
   }
 
-  function postWebhook(payload: object, token = 'test-webhook-secret') {
+  function postWebhook(
+    payload: object,
+    token = process.env.EVOLUTION_WEBHOOK_SECRET ?? 'test-webhook-secret',
+  ) {
     return app.inject({
       method: 'POST',
       url: `/api/webhooks/evolution?token=${token}`,

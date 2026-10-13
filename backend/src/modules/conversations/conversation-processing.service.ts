@@ -18,9 +18,10 @@ import { STORAGE, type StorageService } from '../../infrastructure/storage/stora
 import {
   EvolutionClient,
   type EvolutionMediaType,
+  type EvolutionQuotedMessage,
   type EvolutionSendResult,
 } from '../whatsapp/evolution/evolution.client.js';
-import { MessagesService } from './messages.service.js';
+import { MessagesService, type QuotedMessageInfo } from './messages.service.js';
 
 const SYSTEM_USER_ID = '00000000-0000-4000-8000-000000000001';
 const SYSTEM_MEMBERSHIP_ID = '00000000-0000-4000-8000-000000000002';
@@ -32,6 +33,12 @@ export interface DeliverMediaInput {
   mimeType: string;
   fileName: string;
   caption?: string | null;
+}
+
+export interface OutboundAuthor {
+  senderId: string | null;
+  senderName: string | null;
+  showAgentName: boolean;
 }
 
 @Injectable()
@@ -56,7 +63,13 @@ export class ConversationProcessingService implements OnModuleInit {
   }
 
   /** Delivers a text message written by an agent in the chat. */
-  async deliverText(tenantId: string, conversationId: string, text: string): Promise<void> {
+  async deliverText(
+    tenantId: string,
+    conversationId: string,
+    text: string,
+    author: OutboundAuthor,
+    quoted: QuotedMessageInfo | null = null,
+  ): Promise<void> {
     const conversation = await this.prisma.conversation.findFirst({
       where: { id: conversationId, tenantId },
       include: { instance: true },
@@ -69,16 +82,22 @@ export class ConversationProcessingService implements OnModuleInit {
       tenantId,
       conversationId: conversation.id,
       content: text,
+      senderId: author.senderId,
+      senderName: author.senderName,
+      metadata: buildMetadata(author, quoted),
     });
+
+    const outgoingText = buildOutboundText(text, author) ?? text;
 
     await this.dispatch(
       tenantId,
       conversation,
       outbound.id,
       MessageType.TEXT,
-      text,
+      outgoingText,
       null,
-      text,
+      outgoingText,
+      buildEvolutionQuoted(conversation.externalContactId, quoted),
     );
   }
 
@@ -87,6 +106,8 @@ export class ConversationProcessingService implements OnModuleInit {
     tenantId: string,
     conversationId: string,
     input: DeliverMediaInput,
+    author: OutboundAuthor,
+    quoted: QuotedMessageInfo | null = null,
   ): Promise<void> {
     const conversation = await this.prisma.conversation.findFirst({
       where: { id: conversationId, tenantId },
@@ -109,6 +130,9 @@ export class ConversationProcessingService implements OnModuleInit {
       conversationId: conversation.id,
       content: caption,
       type,
+      senderId: author.senderId,
+      senderName: author.senderName,
+      metadata: buildMetadata(author, quoted),
     });
 
     await this.messages.createAttachment({
@@ -130,7 +154,8 @@ export class ConversationProcessingService implements OnModuleInit {
       type,
       stored.base64,
       { mimeType: stored.mimeType, fileName: stored.fileName },
-      caption,
+      caption ? buildOutboundText(caption, author) : caption,
+      buildEvolutionQuoted(conversation.externalContactId, quoted),
     );
   }
 
@@ -286,6 +311,16 @@ export class ConversationProcessingService implements OnModuleInit {
 
       const conversation = message.conversation;
       const destination = deliveryDestination(conversation.externalContactId);
+      const showAgentName = isRecord(message.metadata) && message.metadata.showAgentName === true;
+      const outgoingText =
+        buildOutboundText(message.content, {
+          senderName: message.senderName,
+          showAgentName,
+        }) ?? '';
+      const evolutionQuoted = buildEvolutionQuoted(
+        conversation.externalContactId,
+        readQuotedFromMetadata(message.metadata),
+      );
 
       try {
         if (!this.evolution.configured || !destination) {
@@ -306,13 +341,15 @@ export class ConversationProcessingService implements OnModuleInit {
             media: (await this.storage.get(attachment.storageKey)).toString('base64'),
             fileName: attachment.fileName,
             mimetype: attachment.mimeType,
-            ...(message.content ? { caption: message.content } : {}),
+            ...(message.content ? { caption: outgoingText } : {}),
+            ...(evolutionQuoted ? { quoted: evolutionQuoted } : {}),
           });
         } else {
           sent = await this.evolution.sendText(
             conversation.instance.instanceName,
             destination,
-            message.content ?? '',
+            outgoingText,
+            evolutionQuoted ?? undefined,
           );
         }
 
@@ -337,6 +374,7 @@ export class ConversationProcessingService implements OnModuleInit {
     mediaOrText: string,
     file: { mimeType: string; fileName: string } | null,
     caption: string | null,
+    quoted: EvolutionQuotedMessage | null,
   ): Promise<void> {
     const destination = deliveryDestination(conversation.externalContactId);
 
@@ -359,11 +397,13 @@ export class ConversationProcessingService implements OnModuleInit {
                 fileName: file.fileName,
                 mimetype: file.mimeType,
                 ...(caption ? { caption } : {}),
+                ...(quoted ? { quoted } : {}),
               })
             : await this.evolution.sendText(
                 conversation.instance.instanceName,
                 destination,
                 mediaOrText,
+                quoted ?? undefined,
               );
 
       await this.messages.markOutboundStatus(messageId, MessageStatus.SENT, sent.externalMessageId);
@@ -562,4 +602,58 @@ function ensureExtension(fileName: string, extension: string): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function authorMetadata(author: OutboundAuthor): Record<string, unknown> {
+  return author.showAgentName && author.senderName ? { showAgentName: true } : {};
+}
+
+function buildMetadata(
+  author: OutboundAuthor,
+  quoted: QuotedMessageInfo | null,
+): Record<string, unknown> {
+  const metadata = authorMetadata(author);
+  if (quoted) {
+    metadata.quoted = quoted;
+  }
+  return metadata;
+}
+
+function buildEvolutionQuoted(
+  externalContactId: string | null,
+  quoted: QuotedMessageInfo | null,
+): EvolutionQuotedMessage | null {
+  if (!quoted?.externalId || !externalContactId) {
+    return null;
+  }
+  return {
+    key: { id: quoted.externalId, remoteJid: externalContactId, fromMe: quoted.fromMe },
+    message: { conversation: quoted.content ?? '' },
+  };
+}
+
+function readQuotedFromMetadata(metadata: unknown): QuotedMessageInfo | null {
+  if (!isRecord(metadata) || !isRecord(metadata.quoted)) {
+    return null;
+  }
+  const quoted = metadata.quoted;
+  return {
+    messageId: typeof quoted.messageId === 'string' ? quoted.messageId : null,
+    externalId: typeof quoted.externalId === 'string' ? quoted.externalId : null,
+    authorName: typeof quoted.authorName === 'string' ? quoted.authorName : null,
+    authorJid: typeof quoted.authorJid === 'string' ? quoted.authorJid : null,
+    fromMe: quoted.fromMe === true,
+    content: typeof quoted.content === 'string' ? quoted.content : null,
+    type: typeof quoted.type === 'string' ? (quoted.type as MessageType) : MessageType.UNKNOWN,
+  };
+}
+
+function buildOutboundText(
+  text: string | null,
+  author: Pick<OutboundAuthor, 'senderName' | 'showAgentName'>,
+): string | null {
+  if (!text || !author.showAgentName || !author.senderName) {
+    return text;
+  }
+  return `*${author.senderName}:*\n${text}`;
 }

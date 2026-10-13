@@ -1,12 +1,18 @@
 import { createHash } from 'node:crypto';
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { ConversationStatus, MessageStatus, MessageType, Prisma } from '@prisma/client';
+import {
+  ConversationStatus,
+  MessageDirection,
+  MessageStatus,
+  MessageType,
+  Prisma,
+} from '@prisma/client';
 import { isGroupJid, phoneFromJid } from '../../common/whatsapp/jid.js';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service.js';
 import { JOB_NAMES, JOB_QUEUE, type JobQueue } from '../../infrastructure/queue/job-queue.types.js';
 import { RealtimeService } from '../../infrastructure/realtime/realtime.service.js';
 import { ContactsService } from '../contacts/contacts.service.js';
-import { MessagesService } from '../conversations/messages.service.js';
+import { MessagesService, type QuotedMessageInfo } from '../conversations/messages.service.js';
 import { WhatsAppDirectoryService } from '../whatsapp/whatsapp-directory.service.js';
 import {
   WhatsAppInstancesService,
@@ -127,6 +133,7 @@ export class WebhookService {
     const content = extractText(message);
     const type = detectType(message);
     const externalMessageId = readString(key?.id);
+    const quoted = await this.resolveInboundQuoted(instance.tenantId, message);
 
     const persisted = await this.persistInboundMessage({
       tenantId: instance.tenantId,
@@ -141,6 +148,7 @@ export class WebhookService {
         pushName,
         ...(participant ? { participantJid: participant } : {}),
         ...(viewOnce ? { viewOnce: true } : {}),
+        ...(quoted ? { quoted } : {}),
         instanceName,
       },
     });
@@ -439,6 +447,42 @@ export class WebhookService {
       throw error;
     }
   }
+
+  /** Extracts the quoted message context of a reply, enriching it from the local history. */
+  private async resolveInboundQuoted(
+    tenantId: string,
+    message: unknown,
+  ): Promise<QuotedMessageInfo | null> {
+    const contextInfo = findContextInfo(message);
+    if (!contextInfo) {
+      return null;
+    }
+
+    const externalId = readString(contextInfo.stanzaId);
+    const authorJid = readString(contextInfo.participant);
+    const quotedRaw = contextInfo.quotedMessage;
+    let content = extractText(quotedRaw);
+    let type = detectType(quotedRaw);
+    let authorName: string | null = null;
+    let fromMe = false;
+    let messageId: string | null = null;
+
+    if (externalId) {
+      const local = await this.prisma.message.findFirst({
+        where: { tenantId, externalMessageId: externalId },
+        select: { id: true, direction: true, senderName: true, content: true, type: true },
+      });
+      if (local) {
+        messageId = local.id;
+        fromMe = local.direction === MessageDirection.OUTBOUND;
+        authorName = local.senderName;
+        content = local.content ?? content;
+        type = local.type;
+      }
+    }
+
+    return { messageId, externalId, authorName, authorJid, fromMe, content, type };
+  }
 }
 
 function computeEventId(
@@ -503,6 +547,30 @@ function unwrapViewOnce(value: unknown): { message: unknown; viewOnce: boolean }
     }
   }
   return { message: value, viewOnce: false };
+}
+
+const CONTEXT_MESSAGE_PARTS = [
+  'extendedTextMessage',
+  'imageMessage',
+  'videoMessage',
+  'audioMessage',
+  'documentMessage',
+  'stickerMessage',
+  'locationMessage',
+  'contactMessage',
+] as const;
+
+function findContextInfo(message: unknown): Record<string, unknown> | null {
+  if (!isRecord(message)) {
+    return null;
+  }
+  for (const part of CONTEXT_MESSAGE_PARTS) {
+    const node = message[part];
+    if (isRecord(node) && isRecord(node.contextInfo)) {
+      return node.contextInfo;
+    }
+  }
+  return null;
 }
 
 function extractText(message: unknown): string | null {

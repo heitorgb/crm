@@ -11,7 +11,9 @@ import { WhatsAppDirectoryService } from '../whatsapp/whatsapp-directory.service
 import {
   ConversationProcessingService,
   type DeliverMediaInput,
+  type OutboundAuthor,
 } from './conversation-processing.service.js';
+import type { QuotedMessageInfo } from './messages.service.js';
 import {
   ContactPhoneRequiredError,
   ConversationNotFoundError,
@@ -31,6 +33,8 @@ export interface ConversationLastMessageView {
   senderName: string | null;
   occurredAt: Date;
 }
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export interface ConversationView {
   id: string;
@@ -268,7 +272,12 @@ export class ConversationsService {
     return this.findOne(id);
   }
 
-  async sendHumanMessage(id: string, content: string): Promise<void> {
+  async sendHumanMessage(
+    id: string,
+    content: string,
+    includeAgentName: boolean,
+    quotedMessageId: string | null = null,
+  ): Promise<void> {
     const { tenantId } = this.tenantContext.requireContext();
     const conversation = await this.prisma.conversation.findFirst({
       where: { id, tenantId },
@@ -286,10 +295,17 @@ export class ConversationsService {
       });
     }
 
-    await this.processing.deliverText(tenantId, id, content);
+    const author = await this.resolveAuthor(includeAgentName);
+    const quoted = await this.resolveQuoted(tenantId, id, quotedMessageId);
+    await this.processing.deliverText(tenantId, id, content, author, quoted);
   }
 
-  async sendHumanMedia(id: string, input: DeliverMediaInput): Promise<void> {
+  async sendHumanMedia(
+    id: string,
+    input: DeliverMediaInput,
+    includeAgentName: boolean,
+    quotedMessageId: string | null = null,
+  ): Promise<void> {
     const { tenantId } = this.tenantContext.requireContext();
     const conversation = await this.prisma.conversation.findFirst({
       where: { id, tenantId },
@@ -316,7 +332,59 @@ export class ConversationsService {
       });
     }
 
-    await this.processing.deliverMedia(tenantId, id, input);
+    const author = await this.resolveAuthor(includeAgentName);
+    const quoted = await this.resolveQuoted(tenantId, id, quotedMessageId);
+    await this.processing.deliverMedia(tenantId, id, input, author, quoted);
+  }
+
+  private async resolveAuthor(showAgentName: boolean): Promise<OutboundAuthor> {
+    const { userId } = this.tenantContext.requireContext();
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { name: true },
+    });
+
+    return { senderId: userId, senderName: user?.name ?? null, showAgentName };
+  }
+
+  private async resolveQuoted(
+    tenantId: string,
+    conversationId: string,
+    quotedMessageId: string | null,
+  ): Promise<QuotedMessageInfo | null> {
+    if (!quotedMessageId) {
+      return null;
+    }
+
+    if (!UUID_PATTERN.test(quotedMessageId)) {
+      return null;
+    }
+
+    const message = await this.prisma.message.findFirst({
+      where: { id: quotedMessageId, tenantId, conversationId },
+      select: {
+        id: true,
+        externalMessageId: true,
+        senderName: true,
+        senderId: true,
+        direction: true,
+        content: true,
+        type: true,
+      },
+    });
+    if (!message) {
+      return null;
+    }
+
+    return {
+      messageId: message.id,
+      externalId: message.externalMessageId,
+      authorName: message.senderName,
+      authorJid: message.senderId,
+      fromMe: message.direction === MessageDirection.OUTBOUND,
+      content: message.content,
+      type: message.type,
+    };
   }
 
   /** Resolves the WhatsApp avatar of a participant that belongs to this conversation. */

@@ -1,5 +1,13 @@
 import { ConversationStatus } from '@prisma/client';
-import { IsEnum, IsOptional, IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
+import {
+  IsBoolean,
+  IsEnum,
+  IsOptional,
+  IsString,
+  IsUUID,
+  MaxLength,
+  MinLength,
+} from 'class-validator';
 import { PaginationQueryDto } from '../../../common/http/pagination.js';
 
 export const CONVERSATION_SORT_FIELDS = ['lastMessageAt', 'createdAt', 'updatedAt'] as const;
@@ -71,6 +79,14 @@ export class SendConversationMessageDto {
   @MinLength(1)
   @MaxLength(4000)
   content!: string;
+
+  @IsOptional()
+  @IsBoolean()
+  includeAgentName?: boolean;
+
+  @IsOptional()
+  @IsUUID()
+  quotedMessageId?: string;
 }
 
 export class StartConversationDto {

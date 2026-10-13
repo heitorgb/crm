@@ -1,7 +1,13 @@
-import { AlertCircle, Check, CheckCheck, Clock } from 'lucide-react';
+import { AlertCircle, Check, CheckCheck, Clock, Reply } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import type { ConversationMessage, MessageStatus } from '@/types/attendance';
-import { formatBubbleTime } from './attendance-utils';
+import type { ConversationMessage, MessageStatus, QuotedMessage } from '@/types/attendance';
+import {
+  formatBubbleTime,
+  messageSnippet,
+  quotedAuthorLabel,
+  readQuotedMessage,
+} from './attendance-utils';
 import { LinkifiedText } from './linkified-text';
 import { isMediaMessage } from './media-message-utils';
 import { MessageMedia } from './message-media';
@@ -11,34 +17,38 @@ interface MessageBubbleProps {
   conversationId: string;
   message: ConversationMessage;
   isGroup: boolean;
+  onReply?: (message: ConversationMessage) => void;
 }
 
-export function MessageBubble({ conversationId, message, isGroup }: MessageBubbleProps) {
+export function MessageBubble({ conversationId, message, isGroup, onReply }: MessageBubbleProps) {
   const isOutbound = message.direction === 'OUTBOUND';
   const showSender = isGroup && !isOutbound;
   const isSticker = message.type === 'STICKER';
   const isMedia = isMediaMessage(message);
+  const quoted = readQuotedMessage(message);
 
   if (isSticker) {
     return (
-      <div className={cn('flex', isOutbound ? 'justify-end' : 'justify-start')}>
+      <div className={cn('group flex items-center gap-1', isOutbound ? 'justify-end' : 'justify-start')}>
         <div className="flex max-w-[50%] flex-col items-start gap-0.5">
           {showSender && message.senderName ? (
             <span className="px-1 text-[11px] font-semibold text-primary">
               {message.senderName}
             </span>
           ) : null}
+          {quoted ? <QuoteBlock quoted={quoted} isOutbound={isOutbound} /> : null}
           <MessageMedia conversationId={conversationId} message={message} />
           <span className="px-1 text-[10px] text-muted-foreground">
             {formatBubbleTime(message.occurredAt)}
           </span>
         </div>
+        {onReply ? <ReplyButton onClick={() => onReply(message)} /> : null}
       </div>
     );
   }
 
   return (
-    <div className={cn('flex gap-2', isOutbound ? 'justify-end' : 'justify-start')}>
+    <div className={cn('group flex items-center gap-1', isOutbound ? 'justify-end' : 'justify-start')}>
       {showSender ? (
         <SenderAvatar
           conversationId={conversationId}
@@ -66,8 +76,21 @@ export function MessageBubble({ conversationId, message, isGroup }: MessageBubbl
               : 'rounded-bl-sm border border-border bg-card text-foreground',
           )}
         >
+          {!isMedia && quoted ? <QuoteBlock quoted={quoted} isOutbound={isOutbound} /> : null}
+          {isOutbound && message.metadata?.showAgentName === true && message.senderName ? (
+            <span className="mb-0.5 block px-0.5 text-[11px] font-semibold text-primary">
+              {message.senderName}
+            </span>
+          ) : null}
           {isMedia ? (
-            <MessageMedia conversationId={conversationId} message={message} />
+            <>
+              {quoted ? (
+                <div className="px-1 pt-1">
+                  <QuoteBlock quoted={quoted} isOutbound={isOutbound} />
+                </div>
+              ) : null}
+              <MessageMedia conversationId={conversationId} message={message} />
+            </>
           ) : (
             <LinkifiedText
               text={message.content ?? `[${message.type.toLowerCase()}]`}
@@ -100,7 +123,38 @@ export function MessageBubble({ conversationId, message, isGroup }: MessageBubbl
           </div>
         </div>
       </div>
+      {onReply ? <ReplyButton onClick={() => onReply(message)} /> : null}
     </div>
+  );
+}
+
+function QuoteBlock({ quoted, isOutbound }: { quoted: QuotedMessage; isOutbound: boolean }) {
+  return (
+    <div
+      className={cn(
+        'mb-1 flex flex-col rounded-md border-l-4 border-primary px-2 py-1 text-left',
+        isOutbound ? 'bg-black/5' : 'bg-surface',
+      )}
+    >
+      <span className="text-[11px] font-semibold text-primary">{quotedAuthorLabel(quoted)}</span>
+      <span className="line-clamp-3 whitespace-pre-wrap break-words text-[11px] leading-snug text-muted-foreground">
+        {messageSnippet(quoted.content, quoted.type)}
+      </span>
+    </div>
+  );
+}
+
+function ReplyButton({ onClick }: { onClick: () => void }) {
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      className="size-7 shrink-0 text-muted-foreground opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:focus-visible:opacity-100"
+      onClick={onClick}
+      aria-label="Responder"
+    >
+      <Reply className="size-4" />
+    </Button>
   );
 }
 

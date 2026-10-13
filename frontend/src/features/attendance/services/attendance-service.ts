@@ -61,17 +61,31 @@ export const attendanceService = {
   refreshGroup: (id: string) =>
     apiRequest<Conversation>(`/conversations/${id}/refresh-group`, { method: 'POST', body: {} }),
 
-  sendMessage: (id: string, content: string) =>
+  sendMessage: (id: string, content: string, includeAgentName: boolean, quotedMessageId?: string) =>
     apiRequest<{ ok: true }>(`/conversations/${id}/messages`, {
       method: 'POST',
-      body: { content },
+      body: {
+        content,
+        includeAgentName,
+        ...(quotedMessageId ? { quotedMessageId } : {}),
+      },
     }),
 
-  sendMedia: (id: string, file: File, caption?: string) => {
+  sendMedia: (
+    id: string,
+    file: File,
+    caption?: string,
+    includeAgentName?: boolean,
+    quotedMessageId?: string,
+  ) => {
     const formData = new FormData();
     formData.append('file', file);
     if (caption && caption.trim().length > 0) {
       formData.append('caption', caption.trim());
+    }
+    formData.append('includeAgentName', includeAgentName ? 'true' : 'false');
+    if (quotedMessageId) {
+      formData.append('quotedMessageId', quotedMessageId);
     }
     return apiUpload<{ ok: true }>(`/conversations/${id}/messages/media`, formData);
   },

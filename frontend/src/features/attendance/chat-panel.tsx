@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -66,6 +66,7 @@ export function ChatPanel({
 }: ChatPanelProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const isGroup = conversation.isGroup;
+  const [replyTo, setReplyTo] = useState<ConversationMessage | null>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -188,6 +189,7 @@ export function ChatPanel({
                   conversationId={message.conversationId}
                   message={message}
                   isGroup={isGroup}
+                  onReply={setReplyTo}
                 />
               </Fragment>
             );
@@ -196,7 +198,12 @@ export function ChatPanel({
         <div ref={bottomRef} />
       </div>
 
-      <MessageComposer key={conversation.id} conversationId={conversation.id} />
+      <MessageComposer
+        key={conversation.id}
+        conversationId={conversation.id}
+        replyTo={replyTo}
+        onCancelReply={() => setReplyTo(null)}
+      />
     </div>
   );
 }

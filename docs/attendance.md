@@ -151,6 +151,13 @@ CRM (sem dependências novas). A tela é **full-bleed**: `MainContent` deixa de 
   (com remetente em grupos e rótulo "Mídia" quando não há texto), horário relativo (Hoje/Ontem/data)
   e indicadores de status/grupo/instância. Estados de carregamento (skeleton), erro (com retry) e
   lista vazia (convite para conectar o WhatsApp).
+- **Fixar conversas**: cada item expõe um menu de ações que **fixa** ou **desafixa** a conversa
+  (exclusivo do CRM — nada é enviado à Evolution). O estado persiste em
+  `Conversation.isPinned` (`POST /api/conversations/:id/pin` e `/unpin`, idempotentes e escopados
+  por tenant) e é compartilhado entre os usuários da empresa via evento `conversation.updated`.
+  Conversas fixadas aparecem **primeiro** na lista, com um ícone discreto; dentro de cada grupo a
+  ordenação continua pela atividade mais recente (`lastMessageAt` desc, com nulos por último e
+  `createdAt`/`id` como desempate).
 - **Chat (centro)**: cabeçalho com avatar, nome, telefone/instância e menu de ações (encerrar/reabrir,
   atualizar grupo, ver contato). Histórico com papel de parede em padrão de *doodles* (estilo
   WhatsApp, `public/chat-doodle.svg`), separadores de dia (Hoje/Ontem)
@@ -242,6 +249,8 @@ fluxo humano existente.
 | PATCH  | `/api/conversations/:id`                         | autenticado      |
 | POST   | `/api/conversations/:id/takeover`                | autenticado      |
 | POST   | `/api/conversations/:id/close`                   | autenticado      |
+| POST   | `/api/conversations/:id/pin`                     | autenticado      |
+| POST   | `/api/conversations/:id/unpin`                   | autenticado      |
 | POST   | `/api/conversations/:id/refresh-group`           | autenticado      |
 | GET    | `/api/conversations/:id/messages`                | autenticado      |
 | POST   | `/api/conversations/:id/messages`                | autenticado      |

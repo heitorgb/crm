@@ -73,6 +73,18 @@ export class ConversationsController {
     return this.conversations.close(id);
   }
 
+  @Post(':id/pin')
+  @HttpCode(200)
+  pin(@Param('id', ParseUUIDPipe) id: string) {
+    return this.conversations.pin(id);
+  }
+
+  @Post(':id/unpin')
+  @HttpCode(200)
+  unpin(@Param('id', ParseUUIDPipe) id: string) {
+    return this.conversations.unpin(id);
+  }
+
   @Post(':id/refresh-group')
   @HttpCode(200)
   refreshGroup(@Param('id', ParseUUIDPipe) id: string) {

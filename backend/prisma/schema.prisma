@@ -239,6 +239,7 @@ model Conversation {
   isGroup            Boolean            @default(false) @map("is_group")
   groupName          String?            @map("group_name")
   avatarUrl          String?            @map("avatar_url")
+  isPinned           Boolean            @default(false) @map("is_pinned")
   lastMessageAt      DateTime?          @map("last_message_at")
   closedAt           DateTime?          @map("closed_at")
   createdAt          DateTime           @default(now()) @map("created_at")
@@ -253,6 +254,7 @@ model Conversation {
   @@unique([whatsappInstanceId, externalContactId])
   @@index([tenantId, status])
   @@index([tenantId, lastMessageAt])
+  @@index([tenantId, isPinned, lastMessageAt])
   @@map("conversations")
 }
 

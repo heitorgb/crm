@@ -86,6 +86,9 @@ export function MessageBubble({ conversationId, message, isGroup }: MessageBubbl
               isMedia && !message.content ? 'px-1 pt-0.5' : 'mt-0.5 px-0.5',
             )}
           >
+            {message.metadata?.viewOnce === true ? (
+              <span className="mr-auto italic opacity-70">Visualização única</span>
+            ) : null}
             <span
               className={cn(
                 isOutbound ? 'text-foreground/60' : 'text-muted-foreground',

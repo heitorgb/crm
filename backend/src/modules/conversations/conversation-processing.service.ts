@@ -202,6 +202,16 @@ export class ConversationProcessingService implements OnModuleInit {
         );
         return;
       }
+      if (content.base64.length > maxBytes * 2) {
+        await this.markMediaError(
+          tenantId,
+          conversation.id,
+          messageId,
+          message.metadata,
+          'too_large',
+        );
+        return;
+      }
 
       const buffer = decodeBase64(content.base64);
       if (!buffer || buffer.length === 0) {
@@ -483,7 +493,10 @@ function normalizePhone(value: string): string {
 
 function deliveryDestination(externalContactId: string | null): string {
   const value = externalContactId ?? '';
-  return value.endsWith('@g.us') ? value : normalizePhone(value);
+  if (value.endsWith('@g.us') || value.endsWith('@lid')) {
+    return value;
+  }
+  return normalizePhone(value);
 }
 
 function decodeBase64(value: string): Buffer | null {

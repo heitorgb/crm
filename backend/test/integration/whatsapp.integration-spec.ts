@@ -656,6 +656,34 @@ describe('WhatsApp attendance (integration)', () => {
       emit.mockRestore();
     });
 
+    it('captures media wrapped in a view-once message', async () => {
+      const instanceName = `view-once-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+
+      await postWebhook({
+        event: 'messages.upsert',
+        instance: instanceName,
+        data: {
+          key: { remoteJid: '5511999999999@s.whatsapp.net', fromMe: false, id: randomUUID() },
+          pushName: 'Contato Teste',
+          message: {
+            viewOnceMessageV2: {
+              message: {
+                imageMessage: { mimetype: 'image/jpeg', viewOnce: true, caption: 'olha isso' },
+              },
+            },
+          },
+        },
+      });
+
+      const message = await prisma.message.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId, direction: 'INBOUND' },
+      });
+      expect(message.type).toBe('IMAGE');
+      expect(message.content).toBe('olha isso');
+      expect((message.metadata as { viewOnce?: boolean }).viewOnce).toBe(true);
+    });
+
     it('reuses the existing contact for the same phone inside the tenant', async () => {
       const instanceName = `dedupe-${randomUUID()}`;
       await createInstance(ownerA, instanceName);
@@ -1135,6 +1163,27 @@ describe('WhatsApp attendance (integration)', () => {
         expect.objectContaining({ conversationId, direction: 'OUTBOUND' }),
       );
       emit.mockRestore();
+    });
+
+    it('sends to a LID conversation using the full JID', async () => {
+      const instanceName = `lid-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      await postWebhook(evolutionPayload(instanceName, randomUUID(), 'oi', '75209205874877@lid'));
+
+      const conversation = await prisma.conversation.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId },
+      });
+      expect(conversation.externalContactId).toBe('75209205874877@lid');
+
+      await app.inject({
+        method: 'POST',
+        url: `/api/conversations/${conversation.id}/messages`,
+        headers: authHeaders(ownerA),
+        payload: { content: 'Olá' },
+      });
+
+      expect(evolution.sent).toHaveLength(1);
+      expect(evolution.sent[0].number).toBe('75209205874877@lid');
     });
 
     it('filters conversations by WhatsApp instance and by contact', async () => {

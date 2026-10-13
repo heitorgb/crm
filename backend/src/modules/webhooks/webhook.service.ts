@@ -35,6 +35,17 @@ export class WebhookService {
   ) {}
 
   async ingestEvolution(payload: unknown): Promise<WebhookIngestResult> {
+    try {
+      return await this.processEvolution(payload);
+    } catch (error) {
+      this.logger.error(
+        `Failed to process webhook event: ${error instanceof Error ? error.message : 'unknown'}`,
+      );
+      return { accepted: false, ignored: 'processing_error' };
+    }
+  }
+
+  private async processEvolution(payload: unknown): Promise<WebhookIngestResult> {
     if (!isRecord(payload)) {
       return { accepted: false, ignored: 'invalid_payload' };
     }
@@ -111,7 +122,8 @@ export class WebhookService {
       await this.ensureGroupMetadata(conversation, instance, remoteJid);
     }
 
-    const message = data?.message;
+    const rawMessage = data?.message;
+    const { message, viewOnce } = unwrapViewOnce(rawMessage);
     const content = extractText(message);
     const type = detectType(message);
     const externalMessageId = readString(key?.id);
@@ -128,6 +140,7 @@ export class WebhookService {
         remoteJid,
         pushName,
         ...(participant ? { participantJid: participant } : {}),
+        ...(viewOnce ? { viewOnce: true } : {}),
         instanceName,
       },
     });
@@ -475,6 +488,21 @@ export function readInstanceName(payload: Record<string, unknown>): string | nul
   }
   const data = isRecord(payload.data) ? payload.data : null;
   return data ? readString(data.instance) : null;
+}
+
+const VIEW_ONCE_KEYS = ['viewOnceMessage', 'viewOnceMessageV2', 'viewOnceMessageV2Extension'];
+
+function unwrapViewOnce(value: unknown): { message: unknown; viewOnce: boolean } {
+  if (!isRecord(value)) {
+    return { message: value, viewOnce: false };
+  }
+  for (const key of VIEW_ONCE_KEYS) {
+    const wrapper = value[key];
+    if (isRecord(wrapper) && isRecord(wrapper.message)) {
+      return { message: wrapper.message, viewOnce: true };
+    }
+  }
+  return { message: value, viewOnce: false };
 }
 
 function extractText(message: unknown): string | null {

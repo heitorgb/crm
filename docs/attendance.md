@@ -254,6 +254,14 @@ responde `409 CONVERSATION_NOT_HUMAN_OWNED`. O bot só responde enquanto a conve
 
 ### Presença e apresentação do chat
 
+- **Visualização única**: o webhook desembrulha `viewOnceMessage`/`viewOnceMessageV2`
+  (`unwrapViewOnce`), registrando o tipo e a legenda internos e marcando `metadata.viewOnce`; o chat
+  exibe o rótulo "Visualização única". Sem isso a mensagem cairia como `UNKNOWN`.
+- **JIDs `@lid`**: conversas endereçadas por LID (`<lid>@lid`) são aceitas e o envio usa o JID
+  completo (`deliveryDestination`), sem reduzi-lo a dígitos.
+- O webhook é resiliente: qualquer erro inesperado ao processar um evento é registrado em log e a
+  Evolution recebe `200` (`ignored: processing_error`), evitando *retry storm* que trava o
+  processamento da instância.
 - O webhook aceita `presence.update` da Evolution e publica `conversation.presence` somente na
   sala do tenant da instância, após localizar a conversa por tenant, instância e JID.
 - Presença é transitória: não grava `WebhookEvent` nem passa pela deduplicação de mensagens.

@@ -733,6 +733,151 @@ describe('WhatsApp attendance (integration)', () => {
       expect((message.metadata as { viewOnce?: boolean }).viewOnce).toBe(true);
     });
 
+    it('flags a view-once message whose content is withheld by WhatsApp', async () => {
+      const instanceName = `view-once-empty-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+
+      await postWebhook({
+        event: 'messages.upsert',
+        instance: instanceName,
+        data: {
+          key: { remoteJid: '5511999999999@s.whatsapp.net', fromMe: false, id: randomUUID() },
+          pushName: 'Contato Teste',
+          messageType: 'viewOnceMessageV2',
+          message: { viewOnceMessageV2: { message: {} } },
+        },
+      });
+
+      const message = await prisma.message.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId, direction: 'INBOUND' },
+      });
+      expect(message.type).toBe('UNKNOWN');
+      expect((message.metadata as { viewOnce?: boolean }).viewOnce).toBe(true);
+    });
+
+    it('detects view-once from the wire messageType without the envelope', async () => {
+      const instanceName = `view-once-type-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+
+      await postWebhook({
+        event: 'messages.upsert',
+        instance: instanceName,
+        data: {
+          key: { remoteJid: '5511999999999@s.whatsapp.net', fromMe: false, id: randomUUID() },
+          pushName: 'Contato Teste',
+          messageType: 'viewOnceMessageV2',
+          message: { imageMessage: { mimetype: 'image/jpeg', viewOnce: true } },
+        },
+      });
+
+      const message = await prisma.message.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId, direction: 'INBOUND' },
+      });
+      expect(message.type).toBe('IMAGE');
+      expect((message.metadata as { viewOnce?: boolean }).viewOnce).toBe(true);
+    });
+
+    it('does not download or attach the media of a view-once message', async () => {
+      const instanceName = `view-once-skip-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+
+      await postWebhook({
+        event: 'messages.upsert',
+        instance: instanceName,
+        data: {
+          key: { remoteJid: '5511999999999@s.whatsapp.net', fromMe: false, id: randomUUID() },
+          pushName: 'Contato Teste',
+          message: {
+            viewOnceMessageV2: {
+              message: { imageMessage: { mimetype: 'image/jpeg', viewOnce: true } },
+            },
+          },
+        },
+      });
+
+      const message = await prisma.message.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId, direction: 'INBOUND' },
+      });
+      const metadata = message.metadata as { viewOnce?: boolean; mediaError?: string };
+      expect(metadata.viewOnce).toBe(true);
+      expect(metadata.mediaError).toBeUndefined();
+      expect(await prisma.messageAttachment.count({ where: { messageId: message.id } })).toBe(0);
+    });
+
+    it('persists a view-once message from a group keeping the author identity', async () => {
+      const instanceName = `view-once-group-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+
+      await postWebhook({
+        event: 'messages.upsert',
+        instance: instanceName,
+        data: {
+          key: {
+            remoteJid: '120363000000000099@g.us',
+            fromMe: false,
+            id: randomUUID(),
+            participant: '5511888888888@s.whatsapp.net',
+          },
+          pushName: 'Ana Vilma',
+          message: {
+            viewOnceMessageV2: {
+              message: { videoMessage: { mimetype: 'video/mp4', viewOnce: true } },
+            },
+          },
+        },
+      });
+
+      const message = await prisma.message.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId, direction: 'INBOUND' },
+      });
+      expect(message.type).toBe('VIDEO');
+      expect(message.senderId).toBe('5511888888888@s.whatsapp.net');
+      expect(message.senderName).toBe('Ana Vilma');
+      expect((message.metadata as { viewOnce?: boolean }).viewOnce).toBe(true);
+    });
+
+    it('does not flag a regular image as view-once', async () => {
+      const instanceName = `regular-image-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+
+      await postWebhook({
+        event: 'messages.upsert',
+        instance: instanceName,
+        data: {
+          key: { remoteJid: '5511999999999@s.whatsapp.net', fromMe: false, id: randomUUID() },
+          pushName: 'Contato Teste',
+          message: { imageMessage: { mimetype: 'image/jpeg', caption: 'foto' } },
+        },
+      });
+
+      const message = await prisma.message.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId, direction: 'INBOUND' },
+      });
+      expect(message.type).toBe('IMAGE');
+      expect((message.metadata as { viewOnce?: boolean }).viewOnce).toBeUndefined();
+    });
+
+    it('does not flag an unknown message as view-once', async () => {
+      const instanceName = `unknown-message-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+
+      await postWebhook({
+        event: 'messages.upsert',
+        instance: instanceName,
+        data: {
+          key: { remoteJid: '5511999999999@s.whatsapp.net', fromMe: false, id: randomUUID() },
+          pushName: 'Contato Teste',
+          message: { someUnsupportedMessage: { foo: 'bar' } },
+        },
+      });
+
+      const message = await prisma.message.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId, direction: 'INBOUND' },
+      });
+      expect(message.type).toBe('UNKNOWN');
+      expect((message.metadata as { viewOnce?: boolean }).viewOnce).toBeUndefined();
+    });
+
     it('reuses the existing contact for the same phone inside the tenant', async () => {
       const instanceName = `dedupe-${randomUUID()}`;
       await createInstance(ownerA, instanceName);

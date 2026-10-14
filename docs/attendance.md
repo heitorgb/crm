@@ -349,9 +349,16 @@ responde `409 CONVERSATION_NOT_HUMAN_OWNED`. O bot só responde enquanto a conve
 
 ### Presença e apresentação do chat
 
-- **Visualização única**: o webhook desembrulha `viewOnceMessage`/`viewOnceMessageV2`
-  (`unwrapViewOnce`), registrando o tipo e a legenda internos e marcando `metadata.viewOnce`; o chat
-  exibe o rótulo "Visualização única". Sem isso a mensagem cairia como `UNKNOWN`.
+- **Visualização única**: o webhook desembrulha os envelopes `viewOnceMessage`/
+  `viewOnceMessageV2`/`viewOnceMessageV2Extension` (`unwrapViewOnce`, recursivo, cobrindo também
+  `ephemeralMessage`/`deviceSentMessage`/`documentWithCaptionMessage`) e ainda usa
+  `data.messageType` da Evolution como pista, marcando `metadata.viewOnce = true` mesmo quando o
+  conteúdo vem omitido. O tipo interno (imagem/vídeo) e a legenda são preservados, mas a mídia
+  **não é baixada nem exibida** (o job `media.process` é ignorado para view-once) e a mensagem nunca
+  aparece como `[unknown]`: o chat renderiza um bloco no estilo WhatsApp Web com ícone, texto em
+  itálico ("Você recebeu uma mensagem de visualização única…"), link "Saiba mais" e horário,
+  respeitando avatar/nome e o agrupamento existente. Sem esse tratamento a mensagem cairia como
+  `UNKNOWN`.
 - **JIDs `@lid`**: conversas endereçadas por LID (`<lid>@lid`) são aceitas e o envio usa o JID
   completo (`deliveryDestination`), sem reduzi-lo a dígitos.
 - O webhook é resiliente: qualquer erro inesperado ao processar um evento é registrado em log e a

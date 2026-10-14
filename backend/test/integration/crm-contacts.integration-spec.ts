@@ -116,6 +116,34 @@ describe('Contacts (integration)', () => {
     });
   });
 
+  describe('blocking', () => {
+    it('defaults new contacts to unblocked', async () => {
+      const created = await createContact(ownerA, { name: 'Normal' });
+
+      expect(created.statusCode).toBe(201);
+      expect(created.json().isBlocked).toBe(false);
+    });
+
+    it('creates a blocked contact and allows unblocking it', async () => {
+      const created = await createContact(ownerA, {
+        name: 'Bloqueado',
+        phone: '+55 11 90000-0000',
+        isBlocked: true,
+      });
+      expect(created.statusCode).toBe(201);
+      expect(created.json().isBlocked).toBe(true);
+
+      const updated = await app.inject({
+        method: 'PATCH',
+        url: `/api/contacts/${created.json().id}`,
+        headers: authHeaders(ownerA),
+        payload: { isBlocked: false },
+      });
+      expect(updated.statusCode).toBe(200);
+      expect(updated.json().isBlocked).toBe(false);
+    });
+  });
+
   describe('validation', () => {
     it('requires a name and validates the email', async () => {
       const missingName = await createContact(ownerA, { customerId: customerA });

@@ -690,6 +690,38 @@ describe('WhatsApp attendance (integration)', () => {
       expect(evolution.sent).toHaveLength(0);
     });
 
+    it('ignores inbound messages from a blocked contact', async () => {
+      const instanceName = `blocked-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      await prisma.contact.create({
+        data: { tenantId: ownerA.tenantId, phone: '5511999999999', name: 'Bloqueado', isBlocked: true },
+      });
+
+      const response = await postWebhook(evolutionPayload(instanceName, randomUUID(), 'oi'));
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json().ignored).toBe('blocked_contact');
+      expect(await prisma.conversation.count({ where: { tenantId: ownerA.tenantId } })).toBe(0);
+      expect(await prisma.message.count({ where: { tenantId: ownerA.tenantId } })).toBe(0);
+    });
+
+    it('accepts inbound messages again after unblocking the contact', async () => {
+      const instanceName = `unblocked-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      const contact = await prisma.contact.create({
+        data: { tenantId: ownerA.tenantId, phone: '5511999999999', name: 'Bloqueado', isBlocked: true },
+      });
+
+      await postWebhook(evolutionPayload(instanceName, randomUUID(), 'bloqueado'));
+      await prisma.contact.update({ where: { id: contact.id }, data: { isBlocked: false } });
+
+      const response = await postWebhook(evolutionPayload(instanceName, randomUUID(), 'liberado'));
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json().conversationId).toBeDefined();
+      expect(await prisma.message.count({ where: { tenantId: ownerA.tenantId } })).toBe(1);
+    });
+
     it('publishes inbound message events with their direction', async () => {
       const instanceName = `dir-in-${randomUUID()}`;
       await createInstance(ownerA, instanceName);

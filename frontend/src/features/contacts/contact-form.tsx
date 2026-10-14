@@ -23,6 +23,7 @@ interface EditableContact {
   phone: string | null;
   position: string | null;
   isPrimary: boolean;
+  isBlocked?: boolean;
   customerId?: string | null;
 }
 
@@ -44,6 +45,7 @@ export function ContactForm({ open, onOpenChange, contact, customerId }: Contact
   const [phone, setPhone] = useState(contact?.phone ?? '');
   const [position, setPosition] = useState(contact?.position ?? '');
   const [isPrimary, setIsPrimary] = useState(contact?.isPrimary ?? false);
+  const [isBlocked, setIsBlocked] = useState(contact?.isBlocked ?? false);
   const [error, setError] = useState<string | null>(null);
 
   const pending = createContact.isPending || updateContact.isPending;
@@ -66,6 +68,7 @@ export function ContactForm({ open, onOpenChange, contact, customerId }: Contact
       phone: phone.trim(),
       position: position.trim().length > 0 ? position.trim() : null,
       isPrimary,
+      isBlocked,
       ...(fixedCustomerId ? { customerId: fixedCustomerId } : {}),
     };
 
@@ -129,6 +132,18 @@ export function ContactForm({ open, onOpenChange, contact, customerId }: Contact
               Contato principal
             </Label>
             <Switch id="contact-primary" checked={isPrimary} onCheckedChange={setIsPrimary} />
+          </div>
+
+          <div className="flex items-center justify-between rounded-md border border-border p-3">
+            <div className="space-y-0.5">
+              <Label htmlFor="contact-blocked" className="text-sm">
+                Bloqueado
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                Não receber novas mensagens deste contato no CRM.
+              </p>
+            </div>
+            <Switch id="contact-blocked" checked={isBlocked} onCheckedChange={setIsBlocked} />
           </div>
 
           {error ? <p className="text-xs font-medium text-danger">{error}</p> : null}

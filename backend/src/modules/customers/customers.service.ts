@@ -38,6 +38,7 @@ export interface CustomerContactView {
   phone: string | null;
   position: string | null;
   isPrimary: boolean;
+  isBlocked: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -114,6 +115,7 @@ export class CustomersService {
             phone: true,
             position: true,
             isPrimary: true,
+            isBlocked: true,
             createdAt: true,
             updatedAt: true,
           },

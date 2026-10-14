@@ -125,6 +125,14 @@ export function ContactDetailPage() {
               <span>{contact.position ?? '—'}</span>
             </div>
             <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">Mensagens</span>
+              {contact.isBlocked ? (
+                <StatusBadge tone="danger">Bloqueado</StatusBadge>
+              ) : (
+                <span className="text-xs text-muted-foreground">Recebendo</span>
+              )}
+            </div>
+            <div className="flex items-center justify-between">
               <span className="text-muted-foreground">Criado em</span>
               <span>{formatDateTime(contact.createdAt)}</span>
             </div>

@@ -19,6 +19,7 @@ export interface CustomerContact {
   phone: string | null;
   position: string | null;
   isPrimary: boolean;
+  isBlocked: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -48,6 +49,7 @@ export interface Contact {
   position: string | null;
   avatarUrl: string | null;
   isPrimary: boolean;
+  isBlocked: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -78,6 +80,7 @@ export interface ContactInput {
   phone?: string | null;
   position?: string | null;
   isPrimary?: boolean;
+  isBlocked?: boolean;
 }
 
 export interface TagInput {

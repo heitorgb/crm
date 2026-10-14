@@ -42,6 +42,10 @@ export class CreateContactDto {
   @IsOptional()
   @IsBoolean()
   isPrimary?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  isBlocked?: boolean;
 }
 
 export class UpdateContactDto {
@@ -73,6 +77,10 @@ export class UpdateContactDto {
   @IsOptional()
   @IsBoolean()
   isPrimary?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  isBlocked?: boolean;
 }
 
 export class ListContactsQueryDto extends PaginationQueryDto {

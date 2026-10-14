@@ -21,15 +21,18 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
-import type { Conversation, ConversationMessage } from '@/types/attendance';
+import type { Conversation, ConversationMessage, QuotedMessage } from '@/types/attendance';
 import {
   areGrouped,
+  computeMessageScrollTop,
   conversationLabel,
   conversationStatusLabel,
   conversationStatusTone,
   conversationSubtitle,
   dayKey,
+  findQuotedMessage,
   formatDayLabel,
+  QUOTE_HIGHLIGHT_MS,
 } from './attendance-utils';
 import { MessageBubble } from './message-bubble';
 import { MessageComposer } from './message-composer';
@@ -74,6 +77,10 @@ export function ChatPanel({
   const isGroup = conversation.isGroup;
   const [replyTo, setReplyTo] = useState<ConversationMessage | null>(null);
   const [showJumpToBottom, setShowJumpToBottom] = useState(false);
+  const [highlightedId, setHighlightedId] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const highlightTimerRef = useRef<number | null>(null);
+  const noticeTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!atBottomRef.current) {
@@ -81,6 +88,18 @@ export function ChatPanel({
     }
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [messages.length, conversation.id]);
+
+  useEffect(
+    () => () => {
+      if (highlightTimerRef.current !== null) {
+        window.clearTimeout(highlightTimerRef.current);
+      }
+      if (noticeTimerRef.current !== null) {
+        window.clearTimeout(noticeTimerRef.current);
+      }
+    },
+    [],
+  );
 
   const handleScroll = (): void => {
     const element = scrollRef.current;
@@ -99,8 +118,62 @@ export function ChatPanel({
     setShowJumpToBottom(false);
   };
 
+  const showNotice = (text: string): void => {
+    setNotice(text);
+    if (noticeTimerRef.current !== null) {
+      window.clearTimeout(noticeTimerRef.current);
+    }
+    noticeTimerRef.current = window.setTimeout(() => {
+      setNotice(null);
+      noticeTimerRef.current = null;
+    }, 2600);
+  };
+
+  const highlightMessage = (messageId: string): void => {
+    setHighlightedId(messageId);
+    if (highlightTimerRef.current !== null) {
+      window.clearTimeout(highlightTimerRef.current);
+    }
+    highlightTimerRef.current = window.setTimeout(() => {
+      setHighlightedId(null);
+      highlightTimerRef.current = null;
+    }, QUOTE_HIGHLIGHT_MS);
+  };
+
+  const handleNavigateToQuote = (quoted: QuotedMessage): void => {
+    const target = findQuotedMessage(messages, conversation.id, quoted);
+    const container = scrollRef.current;
+    if (!target || !container) {
+      showNotice('Mensagem original não disponível');
+      return;
+    }
+
+    const element = container.querySelector<HTMLElement>(
+      `[data-message-id="${CSS.escape(target.id)}"]`,
+    );
+    if (!element) {
+      showNotice('Mensagem original não disponível');
+      return;
+    }
+
+    const containerRect = container.getBoundingClientRect();
+    const elementRect = element.getBoundingClientRect();
+    const top = computeMessageScrollTop({
+      containerTop: containerRect.top,
+      containerHeight: container.clientHeight,
+      scrollTop: container.scrollTop,
+      scrollHeight: container.scrollHeight,
+      elementTop: elementRect.top,
+      elementHeight: elementRect.height,
+    });
+
+    atBottomRef.current = false;
+    container.scrollTo({ top, behavior: 'smooth' });
+    highlightMessage(target.id);
+  };
+
   return (
-    <div className="flex min-w-0 flex-1 flex-col">
+    <div className="relative flex min-w-0 flex-1 flex-col">
       <div className="flex items-center gap-2 border-b border-border bg-card px-2 py-2 sm:px-4 sm:py-3">
         <Button
           variant="ghost"
@@ -224,7 +297,9 @@ export function ChatPanel({
                   whatsappInstanceId={conversation.whatsappInstanceId}
                   groupedWithPrevious={areGrouped(previous, message, isGroup)}
                   groupedWithNext={areGrouped(message, next, isGroup)}
+                  highlighted={highlightedId === message.id}
                   onReply={setReplyTo}
+                  onNavigateToQuote={handleNavigateToQuote}
                 />
               </Fragment>
             );
@@ -252,6 +327,17 @@ export function ChatPanel({
         replyTo={replyTo}
         onCancelReply={() => setReplyTo(null)}
       />
+
+      {notice ? (
+        <div className="pointer-events-none absolute inset-x-0 bottom-24 z-30 flex justify-center px-4">
+          <span
+            role="status"
+            className="pointer-events-auto rounded-md bg-foreground/90 px-3 py-1.5 text-xs font-medium text-background shadow-md"
+          >
+            {notice}
+          </span>
+        </div>
+      ) : null}
     </div>
   );
 }

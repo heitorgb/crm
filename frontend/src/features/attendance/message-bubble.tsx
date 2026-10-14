@@ -1,3 +1,4 @@
+import type { MouseEvent } from 'react';
 import {
   AlertCircle,
   Check,
@@ -43,7 +44,9 @@ interface MessageBubbleProps {
   whatsappInstanceId: string;
   groupedWithPrevious?: boolean;
   groupedWithNext?: boolean;
+  highlighted?: boolean;
   onReply?: (message: ConversationMessage) => void;
+  onNavigateToQuote?: (quoted: QuotedMessage) => void;
 }
 
 export function MessageBubble({
@@ -53,11 +56,14 @@ export function MessageBubble({
   whatsappInstanceId,
   groupedWithPrevious = false,
   groupedWithNext = false,
+  highlighted = false,
   onReply,
+  onNavigateToQuote,
 }: MessageBubbleProps) {
   const isOutbound = message.direction === 'OUTBOUND';
   const showSender = isGroup && !isOutbound && !groupedWithPrevious;
   const stackSpacing = groupedWithPrevious ? 'mt-0.5' : 'mt-2';
+  const highlightClass = highlighted ? 'rounded-lg bg-primary/10 ring-2 ring-primary/40' : null;
   const isSticker = message.type === 'STICKER';
   const isMedia = isMediaMessage(message);
   const isViewOnce = isViewOnceMessage(message);
@@ -67,10 +73,12 @@ export function MessageBubble({
   if (isViewOnce) {
     return (
       <div
+        data-message-id={message.id}
         className={cn(
           'group flex items-start gap-1',
           stackSpacing,
           isOutbound ? 'justify-end' : 'justify-start',
+          highlightClass,
         )}
       >
         {isGroup && !isOutbound ? (
@@ -141,10 +149,12 @@ export function MessageBubble({
   if (isSticker) {
     return (
       <div
+        data-message-id={message.id}
         className={cn(
           'group flex items-center gap-1',
           stackSpacing,
           isOutbound ? 'justify-end' : 'justify-start',
+          highlightClass,
         )}
       >
         <div className="flex max-w-[50%] flex-col items-start gap-0.5">
@@ -153,7 +163,9 @@ export function MessageBubble({
               {message.senderName}
             </span>
           ) : null}
-          {quoted ? <QuoteBlock quoted={quoted} isOutbound={isOutbound} /> : null}
+          {quoted ? (
+            <QuoteBlock quoted={quoted} isOutbound={isOutbound} onNavigate={onNavigateToQuote} />
+          ) : null}
           <MessageMedia conversationId={conversationId} message={message} />
           <span className="px-1 text-[10px] text-muted-foreground">
             {formatBubbleTime(message.occurredAt)}
@@ -167,10 +179,12 @@ export function MessageBubble({
   if (message.type === 'REACTION') {
     return (
       <div
+        data-message-id={message.id}
         className={cn(
           'group flex items-center gap-1',
           stackSpacing,
           isOutbound ? 'justify-end' : 'justify-start',
+          highlightClass,
         )}
       >
         <div
@@ -196,10 +210,12 @@ export function MessageBubble({
 
   return (
     <div
+      data-message-id={message.id}
       className={cn(
         'group flex items-start gap-1',
         stackSpacing,
         isOutbound ? 'justify-end' : 'justify-start',
+        highlightClass,
       )}
     >
       {isGroup && !isOutbound ? (
@@ -240,7 +256,9 @@ export function MessageBubble({
             groupedWithPrevious && (isOutbound ? 'rounded-tr-sm' : 'rounded-tl-sm'),
           )}
         >
-          {!isMedia && quoted ? <QuoteBlock quoted={quoted} isOutbound={isOutbound} /> : null}
+          {!isMedia && quoted ? (
+            <QuoteBlock quoted={quoted} isOutbound={isOutbound} onNavigate={onNavigateToQuote} />
+          ) : null}
           {isOutbound && message.metadata?.showAgentName === true && message.senderName ? (
             <span className="mb-0.5 block px-0.5 text-[11px] font-semibold text-primary">
               {message.senderName}
@@ -248,7 +266,13 @@ export function MessageBubble({
           ) : null}
           {isMedia ? (
             <>
-              {quoted ? <QuoteBlock quoted={quoted} isOutbound={isOutbound} /> : null}
+              {quoted ? (
+                <QuoteBlock
+                  quoted={quoted}
+                  isOutbound={isOutbound}
+                  onNavigate={onNavigateToQuote}
+                />
+              ) : null}
               <MessageMedia conversationId={conversationId} message={message} />
             </>
           ) : contacts.length > 0 ? (
@@ -331,27 +355,50 @@ function QuotedTypeIcon({ type }: { type: MessageType }) {
   }
 }
 
-function QuoteBlock({ quoted, isOutbound }: { quoted: QuotedMessage; isOutbound: boolean }) {
-  const hasMediaIcon = quoted.type !== 'TEXT' && quoted.type !== 'UNKNOWN';
+interface QuoteBlockProps {
+  quoted: QuotedMessage;
+  isOutbound: boolean;
+  onNavigate?: (quoted: QuotedMessage) => void;
+}
 
-  return (
-    <div
-      className={cn(
-        'mb-1 flex flex-col rounded-md border-l-4 px-2 py-1 text-left',
-        quotedColorClass(quoted),
-        isOutbound ? 'bg-black/10' : 'bg-surface',
-      )}
-    >
-      <span className="text-[11px] font-semibold leading-tight">
-        {quotedAuthorLabel(quoted)}
-      </span>
+function QuoteBlock({ quoted, isOutbound, onNavigate }: QuoteBlockProps) {
+  const hasMediaIcon = quoted.type !== 'TEXT' && quoted.type !== 'UNKNOWN';
+  const className = cn(
+    'mb-1 flex flex-col rounded-md border-l-4 px-2 py-1 text-left',
+    quotedColorClass(quoted),
+    isOutbound ? 'bg-black/10' : 'bg-surface',
+    onNavigate ? 'cursor-pointer transition-[filter] hover:brightness-95' : null,
+  );
+  const content = (
+    <>
+      <span className="text-[11px] font-semibold leading-tight">{quotedAuthorLabel(quoted)}</span>
       <span className="flex items-center gap-1">
         {hasMediaIcon ? <QuotedTypeIcon type={quoted.type} /> : null}
         <span className="line-clamp-3 whitespace-pre-wrap break-words text-[11px] leading-snug text-muted-foreground">
           {messageSnippet(quoted.content, quoted.type)}
         </span>
       </span>
-    </div>
+    </>
+  );
+
+  if (!onNavigate) {
+    return <div className={className}>{content}</div>;
+  }
+
+  const handleClick = (event: MouseEvent<HTMLButtonElement>): void => {
+    event.stopPropagation();
+    onNavigate(quoted);
+  };
+
+  return (
+    <button
+      type="button"
+      className={className}
+      onClick={handleClick}
+      aria-label="Ir para a mensagem citada"
+    >
+      {content}
+    </button>
   );
 }
 

@@ -35,9 +35,9 @@ npm run preview
 O Vite faz proxy de `/api` para `http://localhost:3000` (backend). Para apontar para outra API, use
 `VITE_API_BASE_URL`.
 
-Login real usa `POST /api/auth/login` (access token em memória/cookie HttpOnly do refresh). A opção
-**Explorar demonstração** cria uma sessão fictícia em `sessionStorage` para navegar pela UI sem
-backend — claramente rotulada e sem simular regras de negócio.
+Login real usa `POST /api/auth/login` (access token em memória/cookie HttpOnly do refresh). A entrada
+no CRM é exclusivamente pela autenticação real com e-mail e senha; não há sessão fictícia nem modo
+de demonstração na tela de login.
 
 ## Identidade visual (tokens)
 

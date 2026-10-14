@@ -1,33 +1,16 @@
 import { useState, type FormEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { AlertCircle, ArrowRight, Loader2, Lock, Mail, Sparkles } from 'lucide-react';
+import { AlertCircle, Loader2, Lock, Mail, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useLogin } from '@/features/auth/queries';
 import { ApiError } from '@/lib/api-client';
-import { useAuthStore } from '@/stores/auth-store';
-import type { AuthSession } from '@/types/auth';
-
-const demoSession: AuthSession = {
-  accessToken: 'demo-session',
-  tokenType: 'Bearer',
-  expiresIn: 3600,
-  expiresAt: Date.now() + 3600 * 1000,
-  user: { id: 'demo-user', name: 'Ana Martins', email: 'ana@orderup.com.br' },
-  tenant: { id: 'demo-tenant', name: 'OrderUp Demo' },
-  role: 'OWNER',
-  membershipId: 'demo-membership',
-};
 
 export function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const login = useLogin();
-  const setSession = useAuthStore((state) => state.setSession);
-  const setMemberships = useAuthStore((state) => state.setMemberships);
-  const navigate = useNavigate();
 
   const errorMessage =
     login.error instanceof ApiError
@@ -39,20 +22,6 @@ export function LoginPage() {
   const handleSubmit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
     login.mutate({ email: email.trim(), password });
-  };
-
-  const handleDemo = (): void => {
-    setSession(demoSession);
-    setMemberships([
-      {
-        id: demoSession.membershipId,
-        tenantId: demoSession.tenant.id,
-        tenantName: demoSession.tenant.name,
-        role: demoSession.role,
-        active: true,
-      },
-    ]);
-    navigate('/atendimento/conversas', { replace: true });
   };
 
   return (
@@ -160,24 +129,6 @@ export function LoginPage() {
                 Entrar
               </Button>
             </form>
-
-            <div className="relative">
-              <div className="absolute inset-0 flex items-center">
-                <span className="w-full border-t border-border" />
-              </div>
-              <div className="relative flex justify-center text-[11px] uppercase">
-                <span className="bg-card px-2 text-muted-foreground">ou</span>
-              </div>
-            </div>
-
-            <Button variant="outline" className="w-full" onClick={handleDemo}>
-              <Sparkles />
-              Explorar demonstração
-              <ArrowRight />
-            </Button>
-            <p className="text-center text-[11px] text-muted-foreground">
-              A demonstração usa dados fictícios e não acessa o backend.
-            </p>
           </CardContent>
         </Card>
       </div>

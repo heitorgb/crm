@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { MessageSquare, RefreshCw } from 'lucide-react';
+import { ConfirmDialog } from '@/components/common/confirm-dialog';
 import { EmptyState } from '@/components/common/empty-state';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
@@ -11,12 +12,14 @@ import { useWhatsAppInstances } from '@/features/whatsapp/queries';
 import { ChatPanel } from './chat-panel';
 import { ContactPanel } from './contact-panel';
 import { ConversationList } from './conversation-list';
+import { conversationLabel } from './attendance-utils';
 import { isMediaPending } from './media-message-utils';
 import {
   useCloseConversation,
   useConversation,
   useConversationMessages,
   useConversations,
+  useDeleteConversation,
   useMarkConversationRead,
   useRefreshGroup,
   useSetConversationArchived,
@@ -52,6 +55,8 @@ export function AttendancePage() {
   const [archivedView, setArchivedView] = useState(false);
   const [panelOpen, setPanelOpen] = useState(true);
   const [infoOpen, setInfoOpen] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<Conversation | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const selectedId = searchParams.get('conversation');
 
@@ -73,6 +78,7 @@ export function AttendancePage() {
   const refreshGroup = useRefreshGroup();
   const setPinned = useSetConversationPinned();
   const setArchived = useSetConversationArchived();
+  const deleteConversation = useDeleteConversation();
   const markConversationRead = useMarkConversationRead();
   const { mutate: markRead } = markConversationRead;
   const lastMarkedRef = useRef<{ id: string; count: number } | null>(null);
@@ -111,6 +117,32 @@ export function AttendancePage() {
         },
       },
     );
+  };
+
+  const handleDeleteRequest = (conversation: Conversation): void => {
+    setDeleteError(null);
+    setPendingDelete(conversation);
+  };
+
+  const handleDeleteCancel = (): void => {
+    setPendingDelete(null);
+    setDeleteError(null);
+  };
+
+  const handleDeleteConfirm = async (): Promise<void> => {
+    if (!pendingDelete) {
+      return;
+    }
+    setDeleteError(null);
+    try {
+      await deleteConversation.mutateAsync(pendingDelete.id);
+      if (activeId === pendingDelete.id) {
+        handleDeselect();
+      }
+      setPendingDelete(null);
+    } catch {
+      setDeleteError('Não foi possível excluir a conversa. Tente novamente.');
+    }
   };
 
   useEffect(() => {
@@ -188,6 +220,8 @@ export function AttendancePage() {
             onArchivedChange={handleArchivedChange}
             onToggleArchive={handleToggleArchive}
             archivePendingId={setArchived.isPending ? (setArchived.variables?.id ?? null) : null}
+            onDelete={handleDeleteRequest}
+            deletePendingId={deleteConversation.isPending ? (deleteConversation.variables ?? null) : null}
           />
         </div>
 
@@ -281,6 +315,30 @@ export function AttendancePage() {
           />
         </SheetContent>
       </Sheet>
+
+      <ConfirmDialog
+        open={Boolean(pendingDelete)}
+        onOpenChange={(open) => {
+          if (!open && deleteConversation.isPending) {
+            return;
+          }
+          if (!open) {
+            handleDeleteCancel();
+          }
+        }}
+        title="Excluir conversa"
+        description={
+          deleteError ? (
+            <span className="text-danger">{deleteError}</span>
+          ) : pendingDelete ? (
+            `A conversa "${conversationLabel(pendingDelete)}" será removida da listagem do CRM. O histórico é preservado e nada é excluído no WhatsApp.`
+          ) : undefined
+        }
+        confirmLabel="Excluir"
+        destructive
+        loading={deleteConversation.isPending}
+        onConfirm={() => void handleDeleteConfirm()}
+      />
     </div>
   );
 }

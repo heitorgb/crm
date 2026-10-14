@@ -77,6 +77,9 @@ export const attendanceService = {
   unarchive: (id: string) =>
     apiRequest<Conversation>(`/conversations/${id}/unarchive`, { method: 'POST', body: {} }),
 
+  deleteConversation: (id: string) =>
+    apiRequest<void>(`/conversations/${id}`, { method: 'DELETE' }),
+
   refreshGroup: (id: string) =>
     apiRequest<Conversation>(`/conversations/${id}/refresh-group`, { method: 'POST', body: {} }),
 

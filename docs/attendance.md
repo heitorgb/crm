@@ -169,14 +169,29 @@ CRM (sem dependências novas). A tela é **full-bleed**: `MainContent` deixa de 
   mensagem é de fato persistida, preservando a idempotência de eventos repetidos), devolvendo a
   conversa à caixa de entrada e emitindo `conversation.updated`. O tempo real usa o evento e a room
   existentes (`tenant:{tenantId}`).
+- **Excluir conversas**: cada item expõe a ação **Excluir conversa** (em vermelho, separada de
+  fixar/arquivar) que abre um diálogo de confirmação informando que a conversa sai da listagem do
+  CRM. A exclusão é **lógica**: grava `Conversation.deletedAt` (coluna `deleted_at`; migração
+  `add_conversation_deleted`) e a conversa (com mensagens e anexos) é filtrada de todas as
+  listagens — caixa de entrada, arquivadas, detalhe e contador de não lidas. Nada é excluído no
+  WhatsApp e o histórico é preservado. A operação é escopada por tenant (um usuário nunca exclui
+  conversa de outra empresa) e publica `conversation.deleted` na sala `tenant:{tenantId}`; a
+  interface remove a conversa da lista e, se ela estiver aberta, limpa a seleção. Diferente do
+  arquivamento, a exclusão **não é revertida** por eventos de atualização nem por novas mensagens
+  recebidas; ela só é restaurada quando o operador **inicia um atendimento** com o mesmo contato
+  (`POST /api/conversations/start`, que reabre e limpa `deletedAt`). Arquivar, desarquivar, fixar,
+  marcar como lida, encerrar e reabrir continuam funcionando de forma independente.
 - **Chat (centro)**: cabeçalho com avatar, nome, telefone/instância e menu de ações (encerrar/reabrir,
   atualizar grupo, ver contato). Histórico com papel de parede em padrão de *doodles* (estilo
   WhatsApp, `public/chat-doodle.svg`) com baixo contraste — o *doodle* é atenuado por uma camada do
   `background` do tema atual, funcionando nos temas claro e escuro sem preto absoluto —, separadores
   de dia (Hoje/Ontem) e balões assimétricos — enviados em verde da marca com *ticks* de status
   (`PENDING`/`SENT`/`DELIVERED`/`READ`/`FAILED`) e recebidos em card. Mensagens consecutivas do mesmo
-  remetente (mesma direção, mesmo dia e intervalo curto) são agrupadas com espaçamento reduzido,
-  exibindo nome e foto apenas no primeiro balão do grupo; a rolagem é automática somente quando o
+  participante (mesma direção, mesma identidade de remetente, mesmo dia e intervalo curto) são
+  agrupadas com espaçamento reduzido, exibindo nome e foto apenas no primeiro balão do grupo. A
+  identidade em grupos usa `senderId` e, como fallback, `senderName`; mensagens sem identificação
+  não são agrupadas entre si, evitando confundir remetentes diferentes. Reações nunca entram em um
+  bloco, para que continuem identificáveis; a rolagem é automática somente quando o
   usuário está no fim do histórico, e um botão flutuante ("Ir para as últimas mensagens") aparece ao
   navegar por mensagens antigas. URLs no texto (e em legendas de mídia) são exibidas como links
   clicáveis que abrem em nova aba. Compositor com anexo (imagem/vídeo/áudio/PDF), texto
@@ -289,6 +304,7 @@ fluxo humano existente.
 | POST   | `/api/conversations/:id/unpin`                   | autenticado      |
 | POST   | `/api/conversations/:id/archive`                 | autenticado      |
 | POST   | `/api/conversations/:id/unarchive`               | autenticado      |
+| DELETE | `/api/conversations/:id`                         | autenticado      |
 | POST   | `/api/conversations/:id/read`                    | autenticado      |
 | POST   | `/api/conversations/:id/refresh-group`           | autenticado      |
 | GET    | `/api/conversations/:id/messages`                | autenticado      |
@@ -422,6 +438,14 @@ são dublês nos testes; a integração real só é testada com ambiente configu
 (idempotência, persistência, isolamento entre tenants, emissão de `conversation.updated`), o cálculo
 das não lidas (exclui `OUTBOUND`, incrementa em nova mensagem, não duplica webhooks repetidos,
 preserva mensagens recebidas após a leitura e exclui arquivadas do total do tenant).
+
+`test/integration/conversation-delete.integration-spec.ts` cobre a exclusão lógica (some da caixa de
+entrada e das arquivadas, detalhe 404, some do total de não lidas, é escopada por tenant, exige
+autenticação, não é revertida por nova mensagem, publica `conversation.deleted` e preserva
+fixar/arquivar/desarquivar/ler/encerrar/reabrir). No frontend, `npm test` (Vitest) cobre o
+agrupamento visual em `src/features/attendance/attendance-utils.test.ts` (mesmo participante,
+participantes diferentes, sem identificação, direções, janela temporal, mudança de dia, reações e
+mídia).
 
 ## Fora de escopo
 

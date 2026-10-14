@@ -112,6 +112,18 @@ export function useSetConversationArchived() {
   });
 }
 
+export function useDeleteConversation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => attendanceService.deleteConversation(id),
+    onSuccess: (_result, id) => {
+      queryClient.removeQueries({ queryKey: attendanceKeys.conversation(id) });
+      queryClient.removeQueries({ queryKey: attendanceKeys.messages(id) });
+      void queryClient.invalidateQueries({ queryKey: attendanceKeys.all });
+    },
+  });
+}
+
 export function useMarkConversationRead() {
   const queryClient = useQueryClient();
   return useMutation({

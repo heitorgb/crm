@@ -242,6 +242,7 @@ model Conversation {
   avatarUrl          String?            @map("avatar_url")
   isPinned           Boolean            @default(false) @map("is_pinned")
   isArchived         Boolean            @default(false) @map("is_archived")
+  deletedAt          DateTime?          @map("deleted_at")
   lastReadAt         DateTime?          @map("last_read_at")
   lastMessageAt      DateTime?          @map("last_message_at")
   closedAt           DateTime?          @map("closed_at")

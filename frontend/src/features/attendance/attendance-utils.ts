@@ -107,6 +107,54 @@ export function messageSnippet(content: string | null, type: MessageType): strin
   return MESSAGE_TYPE_LABEL[type] ?? 'Mensagem';
 }
 
+const GROUP_WINDOW_MS = 5 * 60 * 1000;
+
+/**
+ * Identity of the participant that authored a message. Two consecutive
+ * messages only belong to the same visual block when this key matches.
+ * Messages without any usable identity get a unique key, so distinct senders
+ * (or unidentified ones) are never merged into the same block.
+ */
+function participantKey(message: ConversationMessage, isGroup: boolean): string {
+  if (message.direction === 'OUTBOUND') {
+    return `outbound:${message.senderId ?? 'self'}`;
+  }
+  if (!isGroup) {
+    return 'inbound:peer';
+  }
+  const identity = message.senderId ?? message.senderName;
+  return identity ? `inbound:${identity}` : `inbound:unidentified:${message.id}`;
+}
+
+/**
+ * Whether two adjacent messages render as a single compact block. They must
+ * share direction, participant identity, day and stay within the time window.
+ * Reactions are always standalone so their target stays identifiable.
+ */
+export function areGrouped(
+  previous: ConversationMessage | undefined,
+  message: ConversationMessage | undefined,
+  isGroup: boolean,
+): boolean {
+  if (!previous || !message) {
+    return false;
+  }
+  if (previous.direction !== message.direction) {
+    return false;
+  }
+  if (previous.type === 'REACTION' || message.type === 'REACTION') {
+    return false;
+  }
+  if (dayKey(previous.occurredAt) !== dayKey(message.occurredAt)) {
+    return false;
+  }
+  if (participantKey(previous, isGroup) !== participantKey(message, isGroup)) {
+    return false;
+  }
+  const gap = new Date(message.occurredAt).getTime() - new Date(previous.occurredAt).getTime();
+  return gap >= 0 && gap <= GROUP_WINDOW_MS;
+}
+
 export function readQuotedMessage(message: ConversationMessage): QuotedMessage | null {
   const raw = message.metadata?.quoted;
   if (!raw || typeof raw !== 'object') {

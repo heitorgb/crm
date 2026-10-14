@@ -23,6 +23,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 import type { Conversation, ConversationMessage } from '@/types/attendance';
 import {
+  areGrouped,
   conversationLabel,
   conversationStatusLabel,
   conversationStatusTone,
@@ -34,35 +35,7 @@ import { MessageBubble } from './message-bubble';
 import { MessageComposer } from './message-composer';
 import { SenderAvatar } from './sender-avatar';
 
-const GROUP_WINDOW_MS = 5 * 60 * 1000;
 const SCROLL_BOTTOM_THRESHOLD = 96;
-
-function areGrouped(
-  previous: ConversationMessage | undefined,
-  message: ConversationMessage | undefined,
-  isGroup: boolean,
-): boolean {
-  if (!previous || !message) {
-    return false;
-  }
-  if (previous.direction !== message.direction) {
-    return false;
-  }
-  if (previous.type === 'REACTION' || message.type === 'REACTION') {
-    return false;
-  }
-  if (dayKey(previous.occurredAt) !== dayKey(message.occurredAt)) {
-    return false;
-  }
-  if (isGroup && message.direction === 'INBOUND' && previous.senderId !== message.senderId) {
-    return false;
-  }
-  if (message.direction === 'OUTBOUND' && previous.senderId !== message.senderId) {
-    return false;
-  }
-  const gap = new Date(message.occurredAt).getTime() - new Date(previous.occurredAt).getTime();
-  return gap >= 0 && gap <= GROUP_WINDOW_MS;
-}
 
 interface ChatPanelProps {
   conversation: Conversation;

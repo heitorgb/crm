@@ -126,7 +126,7 @@ export function MessageBubble({
     >
       {isGroup && !isOutbound ? (
         groupedWithPrevious ? (
-          <span className="size-7 shrink-0" aria-hidden />
+          <span className="mt-0.5 size-7 shrink-0" aria-hidden />
         ) : (
           <SenderAvatar
             conversationId={conversationId}

@@ -86,7 +86,7 @@ export class ConversationsService {
 
   async list(query: ListConversationsQueryDto): Promise<PageResult<ConversationView>> {
     const { tenantId } = this.tenantContext.requireContext();
-    const where: Prisma.ConversationWhereInput = { tenantId };
+    const where: Prisma.ConversationWhereInput = { tenantId, deletedAt: null };
 
     if (query.status) where.status = query.status;
     if (query.whatsappInstanceId) where.whatsappInstanceId = query.whatsappInstanceId;
@@ -137,7 +137,7 @@ export class ConversationsService {
   async findOne(id: string): Promise<ConversationView> {
     const { tenantId } = this.tenantContext.requireContext();
     const conversation = await this.prisma.conversation.findFirst({
-      where: { id, tenantId },
+      where: { id, tenantId, deletedAt: null },
       include: CONVERSATION_INCLUDE,
     });
 
@@ -205,7 +205,7 @@ export class ConversationsService {
         OR: [{ contactId: contact.id }, { externalContactId: { in: variants } }],
       },
       orderBy: { createdAt: 'desc' },
-      select: { id: true, status: true, contactId: true },
+      select: { id: true, status: true, contactId: true, deletedAt: true },
     });
 
     if (existing) {
@@ -216,6 +216,10 @@ export class ConversationsService {
       }
       if (!existing.contactId) {
         data.contactId = contact.id;
+      }
+      // An explicit new conversation with the contact restores a hidden conversation.
+      if (existing.deletedAt) {
+        data.deletedAt = null;
       }
       if (Object.keys(data).length > 0) {
         await this.prisma.conversation.update({ where: { id: existing.id }, data });
@@ -356,6 +360,30 @@ export class ConversationsService {
   }
 
   /**
+   * Removes a conversation from the CRM listings without discarding its history.
+   * Logical deletion: the row and its messages/attachments live on, hidden from
+   * every listing query. Tenant-scoped.
+   */
+  async softDelete(id: string): Promise<void> {
+    const { tenantId } = this.tenantContext.requireContext();
+    const conversation = await this.prisma.conversation.findFirst({
+      where: { id, tenantId, deletedAt: null },
+      select: { id: true },
+    });
+
+    if (!conversation) {
+      throw new ConversationNotFoundError();
+    }
+
+    await this.prisma.conversation.update({
+      where: { id },
+      data: { deletedAt: new Date() },
+    });
+
+    this.realtime.emitToTenant(tenantId, 'conversation.deleted', { conversationId: id });
+  }
+
+  /**
    * Marks the conversation as read for every authorized user of the tenant.
    * The read marker advances to the latest inbound message already persisted,
    * so a message received during the operation is never lost from the counter.
@@ -399,6 +427,7 @@ export class ConversationsService {
       JOIN "conversations" c ON c."id" = m."conversation_id"
       WHERE c."tenant_id" = ${tenantId}::uuid
         AND c."is_archived" = false
+        AND c."deleted_at" IS NULL
         AND m."direction" = 'INBOUND'
         AND (c."last_read_at" IS NULL OR m."occurred_at" > c."last_read_at")
     `;
@@ -423,6 +452,7 @@ export class ConversationsService {
       FROM "messages" m
       JOIN "conversations" c ON c."id" = m."conversation_id"
       WHERE c."tenant_id" = ${tenantId}::uuid
+        AND c."deleted_at" IS NULL
         AND m."conversation_id" IN (${Prisma.join(conversationIds)})
         AND m."direction" = 'INBOUND'
         AND (c."last_read_at" IS NULL OR m."occurred_at" > c."last_read_at")
@@ -623,7 +653,7 @@ export class ConversationsService {
 
   private async requireConversation(tenantId: string, id: string): Promise<void> {
     const conversation = await this.prisma.conversation.findFirst({
-      where: { id, tenantId },
+      where: { id, tenantId, deletedAt: null },
       select: { id: true },
     });
     if (!conversation) {

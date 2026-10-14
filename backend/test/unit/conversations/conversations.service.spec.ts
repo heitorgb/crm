@@ -9,6 +9,7 @@ import {
 } from '../../../src/modules/conversations/conversations.errors.js';
 import { ConversationsService } from '../../../src/modules/conversations/conversations.service.js';
 import type { ConversationView } from '../../../src/modules/conversations/conversations.service.js';
+import type { ListConversationsQueryDto } from '../../../src/modules/conversations/dto/conversation.dto.js';
 
 const context: TenantContext = {
   tenantId: 'tenant-1',
@@ -22,8 +23,11 @@ interface PrismaMock {
   message: { findFirst: ReturnType<typeof vi.fn> };
   whatsAppInstance: { findFirst: ReturnType<typeof vi.fn> };
   $queryRaw: ReturnType<typeof vi.fn>;
+  $transaction: ReturnType<typeof vi.fn>;
   conversation: {
     findFirst: ReturnType<typeof vi.fn>;
+    findMany: ReturnType<typeof vi.fn>;
+    count: ReturnType<typeof vi.fn>;
     create: ReturnType<typeof vi.fn>;
     update: ReturnType<typeof vi.fn>;
   };
@@ -44,7 +48,14 @@ function createService(): {
     message: { findFirst: vi.fn() },
     whatsAppInstance: { findFirst: vi.fn() },
     $queryRaw: vi.fn(),
-    conversation: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn() },
+    $transaction: vi.fn(),
+    conversation: {
+      findFirst: vi.fn(),
+      findMany: vi.fn(),
+      count: vi.fn(),
+      create: vi.fn(),
+      update: vi.fn(),
+    },
   };
 
   const realtime: RealtimeMock = {
@@ -213,5 +224,51 @@ describe('ConversationsService.unreadTotal', () => {
     prisma.$queryRaw.mockResolvedValue([]);
 
     await expect(service.unreadTotal()).resolves.toEqual({ total: 0 });
+  });
+});
+
+describe('ConversationsService.softDelete', () => {
+  it('logically deletes the conversation and publishes the removal', async () => {
+    const { service, prisma, realtime } = createService();
+    prisma.conversation.findFirst.mockResolvedValue({ id: 'conv-1' });
+    prisma.conversation.update.mockResolvedValue({});
+
+    await service.softDelete('conv-1');
+
+    expect(prisma.conversation.findFirst).toHaveBeenCalledWith({
+      where: { id: 'conv-1', tenantId: 'tenant-1', deletedAt: null },
+      select: { id: true },
+    });
+    expect(prisma.conversation.update).toHaveBeenCalledWith({
+      where: { id: 'conv-1' },
+      data: { deletedAt: expect.any(Date) },
+    });
+    expect(realtime.emitToTenant).toHaveBeenCalledWith('tenant-1', 'conversation.deleted', {
+      conversationId: 'conv-1',
+    });
+  });
+
+  it('rejects a conversation from another tenant without deleting or emitting', async () => {
+    const { service, prisma, realtime } = createService();
+    prisma.conversation.findFirst.mockResolvedValue(null);
+
+    await expect(service.softDelete('conv-1')).rejects.toBeInstanceOf(ConversationNotFoundError);
+    expect(prisma.conversation.update).not.toHaveBeenCalled();
+    expect(realtime.emitToTenant).not.toHaveBeenCalled();
+  });
+});
+
+describe('ConversationsService.list', () => {
+  it('scopes the listing to the tenant and excludes logically deleted conversations', async () => {
+    const { service, prisma } = createService();
+    prisma.$transaction.mockResolvedValue([0, []]);
+
+    await service.list({ page: 1, perPage: 20 } as ListConversationsQueryDto);
+
+    const expectedWhere = expect.objectContaining({ tenantId: 'tenant-1', deletedAt: null });
+    expect(prisma.conversation.count).toHaveBeenCalledWith({ where: expectedWhere });
+    expect(prisma.conversation.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expectedWhere }),
+    );
   });
 });

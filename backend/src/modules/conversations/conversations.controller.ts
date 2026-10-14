@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   Param,
@@ -106,6 +107,12 @@ export class ConversationsController {
   @HttpCode(200)
   markRead(@Param('id', ParseUUIDPipe) id: string) {
     return this.conversations.markAsRead(id);
+  }
+
+  @Delete(':id')
+  @HttpCode(204)
+  async remove(@Param('id', ParseUUIDPipe) id: string): Promise<void> {
+    await this.conversations.softDelete(id);
   }
 
   @Post(':id/refresh-group')

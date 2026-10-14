@@ -20,12 +20,14 @@ export function useAttendanceRealtime(): { connected: boolean } {
     socket.on('message.created', invalidate);
     socket.on('message.updated', invalidate);
     socket.on('conversation.updated', invalidate);
+    socket.on('conversation.deleted', invalidate);
 
     return () => {
       socket.off('connect', invalidate);
       socket.off('message.created', invalidate);
       socket.off('message.updated', invalidate);
       socket.off('conversation.updated', invalidate);
+      socket.off('conversation.deleted', invalidate);
     };
   }, [socket, queryClient]);
 

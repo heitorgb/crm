@@ -7,6 +7,7 @@ import {
   Pin,
   PinOff,
   Smartphone,
+  Trash2,
 } from 'lucide-react';
 import { EmptyState } from '@/components/common/empty-state';
 import { SearchInput } from '@/components/common/search-input';
@@ -16,6 +17,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import {
@@ -58,6 +60,8 @@ interface ConversationListProps {
   onArchivedChange: (value: boolean) => void;
   onToggleArchive: (conversation: Conversation) => void;
   archivePendingId: string | null;
+  onDelete: (conversation: Conversation) => void;
+  deletePendingId: string | null;
 }
 
 export function ConversationList({
@@ -80,6 +84,8 @@ export function ConversationList({
   onArchivedChange,
   onToggleArchive,
   archivePendingId,
+  onDelete,
+  deletePendingId,
 }: ConversationListProps) {
   return (
     <div className="flex h-full min-h-0 w-full flex-col border-r border-border bg-card">
@@ -177,6 +183,7 @@ export function ConversationList({
             const unread = item.unreadCount;
             const pinPending = pinPendingId === item.id;
             const archivePending = archivePendingId === item.id;
+            const deletePending = deletePendingId === item.id;
             return (
               <div
                 key={item.id}
@@ -255,7 +262,7 @@ export function ConversationList({
                         variant="ghost"
                         size="icon"
                         className="size-7 bg-card/90 text-muted-foreground"
-                        disabled={pinPending || archivePending}
+                        disabled={pinPending || archivePending || deletePending}
                         aria-label="Ações da conversa"
                       >
                         <MoreVertical className="size-4" />
@@ -264,17 +271,26 @@ export function ConversationList({
                     <DropdownMenuContent align="end">
                       <DropdownMenuItem
                         onSelect={() => onTogglePin(item)}
-                        disabled={pinPending || archivePending}
+                        disabled={pinPending || archivePending || deletePending}
                       >
                         {item.isPinned ? <PinOff /> : <Pin />}
                         {item.isPinned ? 'Desafixar' : 'Fixar'}
                       </DropdownMenuItem>
                       <DropdownMenuItem
                         onSelect={() => onToggleArchive(item)}
-                        disabled={pinPending || archivePending}
+                        disabled={pinPending || archivePending || deletePending}
                       >
                         {archived ? <ArchiveRestore /> : <Archive />}
                         {archived ? 'Desarquivar' : 'Arquivar'}
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        onSelect={() => onDelete(item)}
+                        disabled={pinPending || archivePending || deletePending}
+                        destructive
+                      >
+                        <Trash2 />
+                        Excluir conversa
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>

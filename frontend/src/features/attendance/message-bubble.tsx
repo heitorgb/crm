@@ -54,7 +54,7 @@ export function MessageBubble({
 }: MessageBubbleProps) {
   const isOutbound = message.direction === 'OUTBOUND';
   const showSender = isGroup && !isOutbound && !groupedWithPrevious;
-  const stackSpacing = groupedWithPrevious ? 'mt-1' : 'mt-3';
+  const stackSpacing = groupedWithPrevious ? 'mt-0.5' : 'mt-2';
   const isSticker = message.type === 'STICKER';
   const isMedia = isMediaMessage(message);
   const quoted = readQuotedMessage(message);
@@ -119,7 +119,7 @@ export function MessageBubble({
   return (
     <div
       className={cn(
-        'group flex items-center gap-1',
+        'group flex items-start gap-1',
         stackSpacing,
         isOutbound ? 'justify-end' : 'justify-start',
       )}
@@ -142,14 +142,19 @@ export function MessageBubble({
         )}
       >
         {showSender && message.senderName ? (
-          <span className="mb-0.5 px-1 text-[11px] font-semibold text-primary">
+          <span
+            className={cn(
+              'mb-0.5 text-[11px] font-semibold leading-tight text-primary',
+              isMedia ? 'px-1' : 'px-3',
+            )}
+          >
             {message.senderName}
           </span>
         ) : null}
         <div
           className={cn(
             'rounded-lg text-sm shadow-sm',
-            isMedia ? 'overflow-hidden p-1' : 'px-3 py-2',
+            isMedia ? 'overflow-hidden p-1' : 'px-3 py-1.5',
             isOutbound
               ? 'bg-primary-light text-foreground'
               : 'border border-border bg-card text-foreground',
@@ -165,11 +170,7 @@ export function MessageBubble({
           ) : null}
           {isMedia ? (
             <>
-              {quoted ? (
-                <div className="px-1 pt-1">
-                  <QuoteBlock quoted={quoted} isOutbound={isOutbound} />
-                </div>
-              ) : null}
+              {quoted ? <QuoteBlock quoted={quoted} isOutbound={isOutbound} /> : null}
               <MessageMedia conversationId={conversationId} message={message} />
             </>
           ) : contacts.length > 0 ? (
@@ -189,7 +190,7 @@ export function MessageBubble({
           <div
             className={cn(
               'flex items-center justify-end gap-0.5 text-[10px] leading-none',
-              isMedia && !message.content ? 'px-1 pt-0.5' : 'mt-1 px-0.5',
+              isMedia && !message.content ? 'px-1 pt-0.5' : 'mt-0.5 px-0.5',
             )}
           >
             {message.metadata?.viewOnce === true ? (

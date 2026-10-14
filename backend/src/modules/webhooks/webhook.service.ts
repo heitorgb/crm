@@ -131,6 +131,12 @@ export class WebhookService {
           pushName,
         );
 
+    // A blocked contact never reaches the inbox: no conversation is created and
+    // no message is persisted. The event is acknowledged so WhatsApp does not retry.
+    if (contact?.isBlocked) {
+      return { accepted: true, ignored: 'blocked_contact' };
+    }
+
     const conversation = await this.findOrCreateConversation(
       instance.tenantId,
       instance.id,

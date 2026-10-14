@@ -25,6 +25,7 @@ export interface ContactView {
   position: string | null;
   avatarUrl: string | null;
   isPrimary: boolean;
+  isBlocked: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -131,6 +132,7 @@ export class ContactsService {
           phone: normalizePhone(dto.phone),
           position: normalizeNullableString(dto.position),
           isPrimary: dto.isPrimary ?? false,
+          isBlocked: dto.isBlocked ?? false,
         },
         include: CONTACT_INCLUDE,
       });
@@ -156,6 +158,7 @@ export class ContactsService {
     if (dto.phone !== undefined) data.phone = normalizePhone(dto.phone);
     if (dto.position !== undefined) data.position = normalizeNullableString(dto.position);
     if (dto.isPrimary !== undefined) data.isPrimary = dto.isPrimary;
+    if (dto.isBlocked !== undefined) data.isBlocked = dto.isBlocked;
 
     try {
       const contact = await this.prisma.contact.update({
@@ -255,6 +258,7 @@ export class ContactsService {
       where: {
         tenantId,
         customerId: null,
+        isBlocked: false,
         phone: { not: null, notIn: [...deduped.keys()] },
         conversations: { none: {} },
       },
@@ -341,6 +345,7 @@ function toContactView(contact: PrismaContact): ContactView {
     position: contact.position,
     avatarUrl: contact.avatarUrl,
     isPrimary: contact.isPrimary,
+    isBlocked: contact.isBlocked,
     createdAt: contact.createdAt,
     updatedAt: contact.updatedAt,
   };

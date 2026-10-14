@@ -7,6 +7,7 @@ import type {
   MessageType,
   QuotedMessage,
 } from '@/types/attendance';
+import type { PageResult } from '@/types/crm';
 
 export const conversationStatusTone: Record<ConversationStatus, 'success' | 'secondary'> = {
   OPEN: 'success',
@@ -236,6 +237,32 @@ export function computeMessageScrollTop(metrics: MessageScrollMetrics): number {
   const desired = metrics.scrollTop + elementCenter - metrics.containerHeight / 2;
   const maxScrollTop = Math.max(0, metrics.scrollHeight - metrics.containerHeight);
   return Math.min(Math.max(desired, 0), maxScrollTop);
+}
+
+/**
+ * Combines the older history pages (loaded newest page first) with the live
+ * newest page into a single ascending timeline. Duplicated ids are dropped, so
+ * an overlap caused by messages arriving between two fetches never renders the
+ * same message twice.
+ */
+export function buildTimeline(
+  historyPages: PageResult<ConversationMessage>[] | undefined,
+  newestMessages: ConversationMessage[],
+): ConversationMessage[] {
+  const ordered = [
+    ...(historyPages ? [...historyPages].reverse().flatMap((page) => page.data) : []),
+    ...newestMessages,
+  ];
+  const seen = new Set<string>();
+  const timeline: ConversationMessage[] = [];
+  for (const message of ordered) {
+    if (seen.has(message.id)) {
+      continue;
+    }
+    seen.add(message.id);
+    timeline.push(message);
+  }
+  return timeline;
 }
 
 export function readMessageContacts(

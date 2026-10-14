@@ -120,7 +120,7 @@ export function ContactListPage() {
                   <TableHead>Contato</TableHead>
                   <TableHead className="hidden lg:table-cell">Telefone</TableHead>
                   <TableHead className="hidden lg:table-cell">Cargo / observação</TableHead>
-                  <TableHead>Principal</TableHead>
+                  <TableHead>Status</TableHead>
                   <TableHead className="text-right">Ações</TableHead>
                 </TableRow>
               </TableHeader>
@@ -152,11 +152,13 @@ export function ContactListPage() {
                     </TableCell>
                     <TableCell className="hidden lg:table-cell">{contact.position ?? '—'}</TableCell>
                     <TableCell>
-                      {contact.isPrimary ? (
-                        <StatusBadge tone="info">Principal</StatusBadge>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">—</span>
-                      )}
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {contact.isPrimary ? <StatusBadge tone="info">Principal</StatusBadge> : null}
+                        {contact.isBlocked ? <StatusBadge tone="danger">Bloqueado</StatusBadge> : null}
+                        {!contact.isPrimary && !contact.isBlocked ? (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        ) : null}
+                      </div>
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center justify-end gap-1">

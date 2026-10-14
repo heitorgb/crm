@@ -1,9 +1,10 @@
-import { Fragment, useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   ArrowDown,
   ArrowLeft,
   Info,
+  Loader2,
   MessageSquare,
   MoreVertical,
   RefreshCw,
@@ -39,6 +40,7 @@ import { MessageComposer } from './message-composer';
 import { SenderAvatar } from './sender-avatar';
 
 const SCROLL_BOTTOM_THRESHOLD = 96;
+const LOAD_OLDER_THRESHOLD = 300;
 
 interface ChatPanelProps {
   conversation: Conversation;
@@ -46,6 +48,9 @@ interface ChatPanelProps {
   messagesPending: boolean;
   messagesError: boolean;
   onRetryMessages: () => void;
+  hasOlderMessages: boolean;
+  loadingOlderMessages: boolean;
+  onLoadOlderMessages: () => void;
   onBack: () => void;
   onToggleInfo: () => void;
   closePending: boolean;
@@ -62,6 +67,9 @@ export function ChatPanel({
   messagesPending,
   messagesError,
   onRetryMessages,
+  hasOlderMessages,
+  loadingOlderMessages,
+  onLoadOlderMessages,
   onBack,
   onToggleInfo,
   closePending,
@@ -74,6 +82,9 @@ export function ChatPanel({
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const atBottomRef = useRef(true);
+  const previousScrollHeightRef = useRef(0);
+  const prependingRef = useRef(false);
+  const loadingOlderRef = useRef(false);
   const isGroup = conversation.isGroup;
   const [replyTo, setReplyTo] = useState<ConversationMessage | null>(null);
   const [showJumpToBottom, setShowJumpToBottom] = useState(false);
@@ -101,6 +112,25 @@ export function ChatPanel({
     [],
   );
 
+  useEffect(() => {
+    loadingOlderRef.current = loadingOlderMessages;
+    if (!loadingOlderMessages) {
+      prependingRef.current = false;
+    }
+  }, [loadingOlderMessages]);
+
+  useLayoutEffect(() => {
+    const element = scrollRef.current;
+    if (!prependingRef.current || !element) {
+      return;
+    }
+    const delta = element.scrollHeight - previousScrollHeightRef.current;
+    if (delta > 0) {
+      element.scrollTop += delta;
+    }
+    prependingRef.current = false;
+  }, [messages.length]);
+
   const handleScroll = (): void => {
     const element = scrollRef.current;
     if (!element) {
@@ -110,6 +140,17 @@ export function ChatPanel({
     const atBottom = distance < SCROLL_BOTTOM_THRESHOLD;
     atBottomRef.current = atBottom;
     setShowJumpToBottom(!atBottom && messages.length > 0);
+
+    if (
+      element.scrollTop <= LOAD_OLDER_THRESHOLD &&
+      hasOlderMessages &&
+      !loadingOlderRef.current
+    ) {
+      loadingOlderRef.current = true;
+      prependingRef.current = true;
+      previousScrollHeightRef.current = element.scrollHeight;
+      onLoadOlderMessages();
+    }
   };
 
   const scrollToBottom = (): void => {
@@ -276,34 +317,41 @@ export function ChatPanel({
             />
           </div>
         ) : (
-          messages.map((message, index) => {
-            const previous = messages[index - 1];
-            const next = messages[index + 1];
-            const showDay =
-              !previous || dayKey(previous.occurredAt) !== dayKey(message.occurredAt);
-            return (
-              <Fragment key={message.id}>
-                {showDay ? (
-                  <div className="flex justify-center pb-1 pt-4">
-                    <span className="rounded-md bg-card/90 px-2.5 py-1 text-[11px] font-medium text-muted-foreground shadow-sm">
-                      {formatDayLabel(message.occurredAt)}
-                    </span>
-                  </div>
-                ) : null}
-                <MessageBubble
-                  conversationId={message.conversationId}
-                  message={message}
-                  isGroup={isGroup}
-                  whatsappInstanceId={conversation.whatsappInstanceId}
-                  groupedWithPrevious={areGrouped(previous, message, isGroup)}
-                  groupedWithNext={areGrouped(message, next, isGroup)}
-                  highlighted={highlightedId === message.id}
-                  onReply={setReplyTo}
-                  onNavigateToQuote={handleNavigateToQuote}
-                />
-              </Fragment>
-            );
-          })
+          <>
+            {loadingOlderMessages ? (
+              <div className="flex justify-center py-2">
+                <Loader2 className="size-4 animate-spin text-muted-foreground" aria-hidden />
+              </div>
+            ) : null}
+            {messages.map((message, index) => {
+              const previous = messages[index - 1];
+              const next = messages[index + 1];
+              const showDay =
+                !previous || dayKey(previous.occurredAt) !== dayKey(message.occurredAt);
+              return (
+                <Fragment key={message.id}>
+                  {showDay ? (
+                    <div className="flex justify-center pb-1 pt-4">
+                      <span className="rounded-md bg-card/90 px-2.5 py-1 text-[11px] font-medium text-muted-foreground shadow-sm">
+                        {formatDayLabel(message.occurredAt)}
+                      </span>
+                    </div>
+                  ) : null}
+                  <MessageBubble
+                    conversationId={message.conversationId}
+                    message={message}
+                    isGroup={isGroup}
+                    whatsappInstanceId={conversation.whatsappInstanceId}
+                    groupedWithPrevious={areGrouped(previous, message, isGroup)}
+                    groupedWithNext={areGrouped(message, next, isGroup)}
+                    highlighted={highlightedId === message.id}
+                    onReply={setReplyTo}
+                    onNavigateToQuote={handleNavigateToQuote}
+                  />
+                </Fragment>
+              );
+            })}
+          </>
         )}
         <div ref={bottomRef} />
         {showJumpToBottom ? (

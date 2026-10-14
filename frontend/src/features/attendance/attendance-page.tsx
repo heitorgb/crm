@@ -54,7 +54,7 @@ export function AttendancePage() {
   const [status, setStatus] = useState<ConversationStatus | 'ALL'>('ALL');
   const [instanceId, setInstanceId] = useState<string>('ALL');
   const [archivedView, setArchivedView] = useState(false);
-  const [panelOpen, setPanelOpen] = useState(true);
+  const [panelOpen, setPanelOpen] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
   const [historyRequestedId, setHistoryRequestedId] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<Conversation | null>(null);

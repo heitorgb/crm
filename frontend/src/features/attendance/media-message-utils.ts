@@ -26,8 +26,18 @@ export function isMediaMessage(message: ConversationMessage): boolean {
   return MEDIA_TYPES.includes(message.type);
 }
 
+/**
+ * A view-once message is received through the view-once envelope. WhatsApp does
+ * not let the CRM open or download its content, so it is never treated as
+ * pending media and its payload is not rendered.
+ */
+export function isViewOnceMessage(message: ConversationMessage): boolean {
+  return message.metadata?.viewOnce === true;
+}
+
 export function isMediaPending(message: ConversationMessage): boolean {
   return (
+    !isViewOnceMessage(message) &&
     isMediaMessage(message) &&
     message.attachments.length === 0 &&
     mediaErrorLabel(message.metadata) === null

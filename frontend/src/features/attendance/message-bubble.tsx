@@ -2,6 +2,7 @@ import {
   AlertCircle,
   Check,
   CheckCheck,
+  CircleDashed,
   Clock,
   FileText,
   Image as ImageIcon,
@@ -29,9 +30,11 @@ import {
 } from './attendance-utils';
 import { LinkifiedText } from './linkified-text';
 import { MessageContact } from './message-contact';
-import { isMediaMessage } from './media-message-utils';
+import { isMediaMessage, isViewOnceMessage } from './media-message-utils';
 import { MessageMedia } from './message-media';
 import { SenderAvatar } from './sender-avatar';
+
+const VIEW_ONCE_HELP_URL = 'https://faq.whatsapp.com/';
 
 interface MessageBubbleProps {
   conversationId: string;
@@ -54,11 +57,86 @@ export function MessageBubble({
 }: MessageBubbleProps) {
   const isOutbound = message.direction === 'OUTBOUND';
   const showSender = isGroup && !isOutbound && !groupedWithPrevious;
-  const stackSpacing = groupedWithPrevious ? 'mt-1' : 'mt-3';
+  const stackSpacing = groupedWithPrevious ? 'mt-0.5' : 'mt-2';
   const isSticker = message.type === 'STICKER';
   const isMedia = isMediaMessage(message);
+  const isViewOnce = isViewOnceMessage(message);
   const quoted = readQuotedMessage(message);
   const contacts = message.type === 'CONTACT' ? readMessageContacts(message.metadata) : [];
+
+  if (isViewOnce) {
+    return (
+      <div
+        className={cn(
+          'group flex items-start gap-1',
+          stackSpacing,
+          isOutbound ? 'justify-end' : 'justify-start',
+        )}
+      >
+        {isGroup && !isOutbound ? (
+          groupedWithPrevious ? (
+            <span className="mt-0.5 size-7 shrink-0" aria-hidden />
+          ) : (
+            <SenderAvatar
+              conversationId={conversationId}
+              jid={message.senderId}
+              name={message.senderName}
+            />
+          )
+        ) : null}
+        <div
+          className={cn(
+            'flex max-w-[85%] flex-col sm:max-w-[70%]',
+            isOutbound ? 'items-end' : 'items-start',
+          )}
+        >
+          {showSender && message.senderName ? (
+            <span className="mb-0.5 px-3 text-[11px] font-semibold leading-tight text-primary">
+              {message.senderName}
+            </span>
+          ) : null}
+          <div
+            className={cn(
+              'rounded-lg px-3 py-2 text-sm shadow-sm',
+              isOutbound
+                ? 'bg-primary-light text-foreground'
+                : 'border border-border bg-card text-foreground',
+              !groupedWithNext && (isOutbound ? 'rounded-br-sm' : 'rounded-bl-sm'),
+              groupedWithPrevious && (isOutbound ? 'rounded-tr-sm' : 'rounded-tl-sm'),
+            )}
+          >
+            <div className="flex items-start gap-2">
+              <CircleDashed className="mt-0.5 size-4 shrink-0 opacity-70" aria-hidden />
+              <p className="text-xs italic leading-snug text-muted-foreground">
+                Você recebeu uma mensagem de visualização única. Por motivos de privacidade, você só
+                pode abrir essa mensagem no seu celular.{' '}
+                <a
+                  href={VIEW_ONCE_HELP_URL}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  className="font-medium not-italic text-primary hover:underline"
+                >
+                  Saiba mais
+                </a>
+              </p>
+            </div>
+            <div className="mt-1 flex items-center justify-end gap-0.5 text-[10px] leading-none">
+              <span
+                className={cn(
+                  'tabular-nums',
+                  isOutbound ? 'text-foreground/55' : 'text-muted-foreground',
+                )}
+              >
+                {formatBubbleTime(message.occurredAt)}
+              </span>
+              {isOutbound ? <DeliveryTicks status={message.status} /> : null}
+            </div>
+          </div>
+        </div>
+        {onReply ? <ReplyButton onClick={() => onReply(message)} /> : null}
+      </div>
+    );
+  }
 
   if (isSticker) {
     return (
@@ -119,7 +197,7 @@ export function MessageBubble({
   return (
     <div
       className={cn(
-        'group flex items-center gap-1',
+        'group flex items-start gap-1',
         stackSpacing,
         isOutbound ? 'justify-end' : 'justify-start',
       )}
@@ -142,14 +220,19 @@ export function MessageBubble({
         )}
       >
         {showSender && message.senderName ? (
-          <span className="mb-0.5 px-1 text-[11px] font-semibold text-primary">
+          <span
+            className={cn(
+              'mb-0.5 text-[11px] font-semibold leading-tight text-primary',
+              isMedia ? 'px-1' : 'px-3',
+            )}
+          >
             {message.senderName}
           </span>
         ) : null}
         <div
           className={cn(
             'rounded-lg text-sm shadow-sm',
-            isMedia ? 'overflow-hidden p-1' : 'px-3 py-2',
+            isMedia ? 'overflow-hidden p-1' : 'px-3 py-1.5',
             isOutbound
               ? 'bg-primary-light text-foreground'
               : 'border border-border bg-card text-foreground',
@@ -165,11 +248,7 @@ export function MessageBubble({
           ) : null}
           {isMedia ? (
             <>
-              {quoted ? (
-                <div className="px-1 pt-1">
-                  <QuoteBlock quoted={quoted} isOutbound={isOutbound} />
-                </div>
-              ) : null}
+              {quoted ? <QuoteBlock quoted={quoted} isOutbound={isOutbound} /> : null}
               <MessageMedia conversationId={conversationId} message={message} />
             </>
           ) : contacts.length > 0 ? (
@@ -189,12 +268,9 @@ export function MessageBubble({
           <div
             className={cn(
               'flex items-center justify-end gap-0.5 text-[10px] leading-none',
-              isMedia && !message.content ? 'px-1 pt-0.5' : 'mt-1 px-0.5',
+              isMedia && !message.content ? 'px-1 pt-0.5' : 'mt-0.5 px-0.5',
             )}
           >
-            {message.metadata?.viewOnce === true ? (
-              <span className="mr-auto italic opacity-70">Visualização única</span>
-            ) : null}
             <span
               className={cn(
                 'tabular-nums',

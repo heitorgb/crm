@@ -109,7 +109,9 @@ export class WebhookService {
     }
 
     const rawMessage = data?.message;
+    const incomingType = readString(data?.messageType);
     const { message, viewOnce } = unwrapViewOnce(rawMessage);
+    const isViewOnce = viewOnce || isViewOnceMessageType(incomingType);
     const reaction = readReaction(message);
     if (reaction && !reaction.emoji) {
       return { accepted: true, ignored: 'reaction_removed' };
@@ -165,7 +167,7 @@ export class WebhookService {
         remoteJid,
         pushName,
         ...(participant ? { participantJid: participant } : {}),
-        ...(viewOnce ? { viewOnce: true } : {}),
+        ...(isViewOnce ? { viewOnce: true } : {}),
         ...(reaction
           ? {
               reaction: {
@@ -184,7 +186,8 @@ export class WebhookService {
       return { accepted: true, ignored: 'duplicate_message' };
     }
 
-    if (isMediaType(type)) {
+    // View-once media must never be downloaded or exposed: the UI only renders the privacy notice.
+    if (isMediaType(type) && !isViewOnce) {
       await this.queue.enqueue(JOB_NAMES.MEDIA_PROCESS, {
         tenantId: instance.tenantId,
         messageId: persisted.id,
@@ -563,18 +566,59 @@ export function readInstanceName(payload: Record<string, unknown>): string | nul
 }
 
 const VIEW_ONCE_KEYS = ['viewOnceMessage', 'viewOnceMessageV2', 'viewOnceMessageV2Extension'];
+const MESSAGE_CONTAINER_KEYS = [
+  'ephemeralMessage',
+  'deviceSentMessage',
+  'documentWithCaptionMessage',
+];
 
+/** Evolution reports the wire message type; it is a reliable view-once hint. */
+function isViewOnceMessageType(messageType: string | null): boolean {
+  return messageType !== null && VIEW_ONCE_KEYS.includes(messageType);
+}
+
+/**
+ * Unwraps view-once and other container envelopes (ephemeral, device-sent,
+ * document-with-caption) so the inner type and caption are preserved. The
+ * view-once flag is returned whenever a view-once wrapper is present, even if
+ * the inner content is absent from the event (WhatsApp withholds it).
+ */
 function unwrapViewOnce(value: unknown): { message: unknown; viewOnce: boolean } {
-  if (!isRecord(value)) {
-    return { message: value, viewOnce: false };
-  }
-  for (const key of VIEW_ONCE_KEYS) {
-    const wrapper = value[key];
-    if (isRecord(wrapper) && isRecord(wrapper.message)) {
-      return { message: wrapper.message, viewOnce: true };
+  let current: unknown = value;
+  let viewOnce = false;
+  const maxDepth = VIEW_ONCE_KEYS.length + MESSAGE_CONTAINER_KEYS.length;
+
+  for (let depth = 0; depth < maxDepth; depth += 1) {
+    if (!isRecord(current)) {
+      break;
     }
+    const record = current;
+
+    const viewOnceKey = VIEW_ONCE_KEYS.find((key) => key in record);
+    if (viewOnceKey) {
+      viewOnce = true;
+      const wrapper = record[viewOnceKey];
+      if (isRecord(wrapper) && isRecord(wrapper.message)) {
+        current = wrapper.message;
+        continue;
+      }
+      break;
+    }
+
+    const containerKey = MESSAGE_CONTAINER_KEYS.find((key) => {
+      const wrapper = record[key];
+      return isRecord(wrapper) && isRecord(wrapper.message);
+    });
+    if (containerKey) {
+      const wrapper = record[containerKey];
+      current = isRecord(wrapper) ? wrapper.message : current;
+      continue;
+    }
+
+    break;
   }
-  return { message: value, viewOnce: false };
+
+  return { message: current, viewOnce };
 }
 
 interface ParsedReaction {

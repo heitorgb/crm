@@ -179,6 +179,65 @@ export function quotedAuthorLabel(quoted: QuotedMessage): string {
   return quoted.authorName ?? 'Mensagem';
 }
 
+export const QUOTE_HIGHLIGHT_MS = 1800;
+
+/**
+ * Resolves a quoted message to the corresponding message already loaded in the
+ * conversation. It matches by the internal identifier first and falls back to
+ * the external WhatsApp identifier. Content is never used, since distinct
+ * messages can share the exact same text. The result is always restricted to
+ * the given conversation, so a quote can never resolve across conversations.
+ */
+export function findQuotedMessage(
+  messages: ConversationMessage[],
+  conversationId: string,
+  quoted: QuotedMessage | null | undefined,
+): ConversationMessage | null {
+  if (!quoted) {
+    return null;
+  }
+  const withinConversation = (message: ConversationMessage): boolean =>
+    message.conversationId === conversationId;
+  if (quoted.messageId) {
+    const byId = messages.find(
+      (message) => message.id === quoted.messageId && withinConversation(message),
+    );
+    if (byId) {
+      return byId;
+    }
+  }
+  if (quoted.externalId) {
+    const byExternalId = messages.find(
+      (message) => message.externalMessageId === quoted.externalId && withinConversation(message),
+    );
+    if (byExternalId) {
+      return byExternalId;
+    }
+  }
+  return null;
+}
+
+export interface MessageScrollMetrics {
+  containerTop: number;
+  containerHeight: number;
+  scrollTop: number;
+  scrollHeight: number;
+  elementTop: number;
+  elementHeight: number;
+}
+
+/**
+ * Computes the scrollTop that centers the target element inside the message
+ * viewport, clamped to the scrollable range. Only the message container moves,
+ * so navigating to a quoted message never scrolls the surrounding page.
+ */
+export function computeMessageScrollTop(metrics: MessageScrollMetrics): number {
+  const elementCenter = metrics.elementTop - metrics.containerTop + metrics.elementHeight / 2;
+  const desired = metrics.scrollTop + elementCenter - metrics.containerHeight / 2;
+  const maxScrollTop = Math.max(0, metrics.scrollHeight - metrics.containerHeight);
+  return Math.min(Math.max(desired, 0), maxScrollTop);
+}
+
 export function readMessageContacts(
   metadata: Record<string, unknown> | null,
 ): ContactEntry[] {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { ConversationMessage } from '@/types/attendance';
-import { areGrouped } from './attendance-utils';
+import type { ConversationMessage, QuotedMessage } from '@/types/attendance';
+import { areGrouped, computeMessageScrollTop, findQuotedMessage } from './attendance-utils';
 
 const WINDOW_MS = 5 * 60 * 1000;
 const BASE = new Date('2026-10-14T12:00:00.000Z');
@@ -127,5 +127,113 @@ describe('areGrouped', () => {
 
     expect(areGrouped(undefined, only, true)).toBe(false);
     expect(areGrouped(only, undefined, true)).toBe(false);
+  });
+});
+
+function quoted(overrides: Partial<QuotedMessage> = {}): QuotedMessage {
+  return {
+    messageId: null,
+    externalId: null,
+    authorName: 'Ana',
+    authorJid: 'ana@s.whatsapp.net',
+    fromMe: false,
+    content: 'texto citado',
+    type: 'TEXT',
+    ...overrides,
+  };
+}
+
+describe('findQuotedMessage', () => {
+  it('matches the original message by its internal identifier', () => {
+    const original = message({ id: 'orig-1' });
+    const other = message({ id: 'other-1' });
+
+    expect(findQuotedMessage([other, original], 'conv-1', quoted({ messageId: 'orig-1' }))?.id).toBe(
+      'orig-1',
+    );
+  });
+
+  it('falls back to the external identifier when the internal id is unavailable', () => {
+    const original = message({ id: 'orig-1', externalMessageId: 'wamid.abc' });
+
+    const found = findQuotedMessage(
+      [original],
+      'conv-1',
+      quoted({ messageId: null, externalId: 'wamid.abc' }),
+    );
+
+    expect(found?.id).toBe('orig-1');
+  });
+
+  it('returns null when the original message is not in the loaded set', () => {
+    expect(findQuotedMessage([message()], 'conv-1', quoted({ messageId: 'orig-1' }))).toBeNull();
+  });
+
+  it('never matches by content, even when the text is identical', () => {
+    const other = message({ id: 'other-1', content: 'mesmo texto' });
+
+    const found = findQuotedMessage(
+      [other],
+      'conv-1',
+      quoted({ messageId: 'orig-1', content: 'mesmo texto' }),
+    );
+
+    expect(found).toBeNull();
+  });
+
+  it('returns null when the quote has no usable identifier', () => {
+    expect(
+      findQuotedMessage([message()], 'conv-1', quoted({ messageId: null, externalId: null })),
+    ).toBeNull();
+  });
+
+  it('returns null when there is no quote', () => {
+    expect(findQuotedMessage([message()], 'conv-1', null)).toBeNull();
+  });
+
+  it('only resolves messages from the provided conversation', () => {
+    const foreign = message({ id: 'orig-1', conversationId: 'conv-2' });
+
+    expect(findQuotedMessage([foreign], 'conv-1', quoted({ messageId: 'orig-1' }))).toBeNull();
+    expect(
+      findQuotedMessage([message({ id: 'orig-1' })], 'conv-1', quoted({ messageId: 'orig-1' })),
+    ).not.toBeNull();
+  });
+});
+
+describe('computeMessageScrollTop', () => {
+  const base = {
+    containerTop: 100,
+    containerHeight: 400,
+    scrollTop: 500,
+    scrollHeight: 2000,
+  };
+
+  it('centers the target element inside the message viewport', () => {
+    const top = computeMessageScrollTop({ ...base, elementTop: 300, elementHeight: 40 });
+
+    expect(top).toBe(520);
+  });
+
+  it('never scrolls above the beginning of the history', () => {
+    const top = computeMessageScrollTop({
+      ...base,
+      scrollTop: 0,
+      elementTop: 110,
+      elementHeight: 20,
+    });
+
+    expect(top).toBe(0);
+  });
+
+  it('never scrolls past the end of the history', () => {
+    const top = computeMessageScrollTop({
+      ...base,
+      scrollTop: 1600,
+      elementTop: 1500,
+      elementHeight: 40,
+    });
+
+    expect(top).toBe(1600);
   });
 });

@@ -1,8 +1,9 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiRequestBlob } from '@/lib/api-client';
 import {
   attachmentPath,
   attendanceService,
+  MESSAGES_PAGE_SIZE,
   type ListConversationsParams,
 } from './services/attendance-service';
 
@@ -13,6 +14,7 @@ export const attendanceKeys = {
   conversation: (id: string) => ['attendance', 'conversation', id] as const,
   unreadCount: ['attendance', 'unread-count'] as const,
   messages: (id: string) => ['attendance', 'messages', id] as const,
+  historyMessages: (id: string) => ['attendance-history', 'messages', id] as const,
   participantAvatar: (conversationId: string, jid: string) =>
     ['attendance', 'participant-avatar', conversationId, jid] as const,
   attachment: (
@@ -54,9 +56,27 @@ export function useUnreadCount() {
 export function useConversationMessages(id: string | undefined) {
   return useQuery({
     queryKey: attendanceKeys.messages(id ?? ''),
-    queryFn: () => attendanceService.listMessages(id as string, 1, 100),
+    queryFn: () => attendanceService.listMessages(id as string, 1, MESSAGES_PAGE_SIZE),
     enabled: Boolean(id),
     refetchInterval: 10000,
+  });
+}
+
+/**
+ * Older history pages, loaded gradually as the operator scrolls up. It lives in
+ * its own key namespace so realtime invalidations of the newest page never
+ * refetch the whole history.
+ */
+export function useConversationHistoryMessages(id: string | undefined, enabled: boolean) {
+  return useInfiniteQuery({
+    queryKey: attendanceKeys.historyMessages(id ?? ''),
+    queryFn: ({ pageParam }) =>
+      attendanceService.listMessages(id as string, pageParam, MESSAGES_PAGE_SIZE),
+    initialPageParam: 2,
+    getNextPageParam: (lastPage) =>
+      lastPage.meta.page < lastPage.meta.totalPages ? lastPage.meta.page + 1 : undefined,
+    enabled: Boolean(id) && enabled,
+    staleTime: Infinity,
   });
 }
 
@@ -119,6 +139,7 @@ export function useDeleteConversation() {
     onSuccess: (_result, id) => {
       queryClient.removeQueries({ queryKey: attendanceKeys.conversation(id) });
       queryClient.removeQueries({ queryKey: attendanceKeys.messages(id) });
+      queryClient.removeQueries({ queryKey: attendanceKeys.historyMessages(id) });
       void queryClient.invalidateQueries({ queryKey: attendanceKeys.all });
     },
   });

@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { ConversationMessage, QuotedMessage } from '@/types/attendance';
-import { areGrouped, computeMessageScrollTop, findQuotedMessage } from './attendance-utils';
+import type { PageResult } from '@/types/crm';
+import {
+  areGrouped,
+  buildTimeline,
+  computeMessageScrollTop,
+  findQuotedMessage,
+} from './attendance-utils';
 
 const WINDOW_MS = 5 * 60 * 1000;
 const BASE = new Date('2026-10-14T12:00:00.000Z');
@@ -198,6 +204,51 @@ describe('findQuotedMessage', () => {
     expect(
       findQuotedMessage([message({ id: 'orig-1' })], 'conv-1', quoted({ messageId: 'orig-1' })),
     ).not.toBeNull();
+  });
+});
+
+function historyPage(data: ConversationMessage[]): PageResult<ConversationMessage> {
+  return { data, meta: { page: 1, perPage: 100, total: 0, totalPages: 1 } };
+}
+
+describe('buildTimeline', () => {
+  it('returns just the newest messages when no history page is loaded', () => {
+    const newest = [message({ id: 'm3' }), message({ id: 'm4' })];
+
+    expect(buildTimeline(undefined, newest).map((item) => item.id)).toEqual(['m3', 'm4']);
+  });
+
+  it('prepends older pages in ascending order', () => {
+    const page2 = historyPage([message({ id: 'm2' })]);
+    const page3 = historyPage([message({ id: 'm1' })]);
+    const newest = [message({ id: 'm3' }), message({ id: 'm4' })];
+
+    const ids = buildTimeline([page2, page3], newest).map((item) => item.id);
+
+    expect(ids).toEqual(['m1', 'm2', 'm3', 'm4']);
+  });
+
+  it('drops duplicates caused by an overlap with the newest page', () => {
+    const page2 = historyPage([message({ id: 'm2' })]);
+    const newest = [message({ id: 'm2' }), message({ id: 'm3' })];
+
+    const ids = buildTimeline([page2], newest).map((item) => item.id);
+
+    expect(ids).toEqual(['m2', 'm3']);
+  });
+
+  it('keeps a single copy when pages overlap', () => {
+    const page2 = historyPage([message({ id: 'm2' }), message({ id: 'm3' })]);
+    const page3 = historyPage([message({ id: 'm1' }), message({ id: 'm2' })]);
+    const newest = [message({ id: 'm3' }), message({ id: 'm4' })];
+
+    const ids = buildTimeline([page2, page3], newest).map((item) => item.id);
+
+    expect(ids).toEqual(['m1', 'm2', 'm3', 'm4']);
+  });
+
+  it('returns an empty timeline when nothing is loaded', () => {
+    expect(buildTimeline(undefined, [])).toEqual([]);
   });
 });
 

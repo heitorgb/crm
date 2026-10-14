@@ -13,6 +13,8 @@ export function attachmentPath(
   return `/conversations/${conversationId}/messages/${messageId}/attachments/${attachmentId}${query}`;
 }
 
+export const MESSAGES_PAGE_SIZE = 100;
+
 export interface ListConversationsParams {
   page?: number;
   perPage?: number;

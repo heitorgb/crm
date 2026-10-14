@@ -12,11 +12,12 @@ import { useWhatsAppInstances } from '@/features/whatsapp/queries';
 import { ChatPanel } from './chat-panel';
 import { ContactPanel } from './contact-panel';
 import { ConversationList } from './conversation-list';
-import { conversationLabel } from './attendance-utils';
+import { buildTimeline, conversationLabel } from './attendance-utils';
 import { isMediaPending } from './media-message-utils';
 import {
   useCloseConversation,
   useConversation,
+  useConversationHistoryMessages,
   useConversationMessages,
   useConversations,
   useDeleteConversation,
@@ -55,6 +56,7 @@ export function AttendancePage() {
   const [archivedView, setArchivedView] = useState(false);
   const [panelOpen, setPanelOpen] = useState(true);
   const [infoOpen, setInfoOpen] = useState(false);
+  const [historyRequestedId, setHistoryRequestedId] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<Conversation | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
@@ -73,6 +75,8 @@ export function AttendancePage() {
 
   const conversationQuery = useConversation(activeId ?? undefined);
   const messagesQuery = useConversationMessages(activeId ?? undefined);
+  const historyEnabled = activeId !== null && historyRequestedId === activeId;
+  const historyQuery = useConversationHistoryMessages(activeId ?? undefined, historyEnabled);
   const closeConversation = useCloseConversation();
   const reopenConversation = useTakeoverConversation();
   const refreshGroup = useRefreshGroup();
@@ -85,10 +89,30 @@ export function AttendancePage() {
 
   const conversation = conversationQuery.data ?? null;
   const unreadCount = conversationQuery.data?.unreadCount ?? 0;
-  const visibleMessages = (messagesQuery.data?.data ?? []).filter(
-    (message) => !isMediaPending(message),
-  );
+  const visibleMessages = buildTimeline(
+    historyQuery.data?.pages,
+    messagesQuery.data?.data ?? [],
+  ).filter((message) => !isMediaPending(message));
+  const totalPages = messagesQuery.data?.meta.totalPages ?? 1;
+  const hasOlderMessages = historyQuery.data
+    ? historyQuery.hasNextPage === true
+    : totalPages > 1;
+  const loadingOlderMessages =
+    historyQuery.isFetchingNextPage || (historyEnabled && historyQuery.isPending);
   const mobileChatView = selectedId !== null;
+
+  const handleLoadOlderMessages = (): void => {
+    if (!activeId) {
+      return;
+    }
+    if (!historyEnabled) {
+      setHistoryRequestedId(activeId);
+      return;
+    }
+    if (historyQuery.hasNextPage && !historyQuery.isFetchingNextPage) {
+      void historyQuery.fetchNextPage();
+    }
+  };
 
   const handleSelect = (id: string): void => {
     setSearchParams({ conversation: id }, { replace: true });
@@ -247,6 +271,9 @@ export function AttendancePage() {
               messagesPending={messagesQuery.isPending}
               messagesError={messagesQuery.isError}
               onRetryMessages={() => void messagesQuery.refetch()}
+              hasOlderMessages={hasOlderMessages}
+              loadingOlderMessages={loadingOlderMessages}
+              onLoadOlderMessages={handleLoadOlderMessages}
               onBack={handleDeselect}
               onToggleInfo={handleToggleInfo}
               closePending={closeConversation.isPending}

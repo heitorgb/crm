@@ -230,7 +230,17 @@ CRM (sem dependências novas). A tela é **full-bleed**: `MainContent` deixa de 
   `type` e `messageId` local quando resolvido): no inbound, lendo `contextInfo.quotedMessage` do
   webhook e enriquecendo com o histórico local para descobrir autor e direção; no outbound, a partir
   da mensagem referenciada (sempre escopada por tenant/conversa). No reenvio de falha a citação é
-  reconstruída do metadata.
+   reconstruída do metadata.
+- **Mensagens enviadas pelo celular / WhatsApp Web**: o webhook trata `messages.upsert` com
+  `key.fromMe = true` como mensagem `OUTBOUND` enviada pela própria conta conectada, exibindo-a na
+  conversa ao lado das mensagens enviadas pelo CRM. A instância, o contato e a conversa são
+  resolvidos pelo `remoteJid` (com fallback de telefone em `participantAlt`/`remoteJidAlt` e suporte a
+  `@lid`, sem inventar contato quando não há telefone). A mensagem é deduplicada por
+  `(tenantId, externalMessageId)`: um evento do provedor para uma mensagem **já salva pelo envio do
+  CRM** é reconciliado no registro existente (`metadata` enriquecido), sem criar duplicata nem emitir
+  novo `message.created`; eventos repetidos são idempotentes. Mensagens externas de mídia também são
+  baixadas (`getBase64FromMediaMessage` com `fromMe` correspondente) e anexadas. Mensagens `OUTBOUND`
+  não alteram contadores de não lidas nem o estado de leitura.
 - **Painel de contato (direita)**: dados do contato/grupo, cliente, assunto e ações. Em telas menores
   vira um `Sheet`; no mobile a lista e o chat se alternam (botão voltar no cabeçalho do chat).
 - **Tempo real**: eventos Socket.IO invalidam as queries; um aviso "Reconectando ao servidor…" é

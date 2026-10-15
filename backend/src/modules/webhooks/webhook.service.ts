@@ -103,11 +103,15 @@ export class WebhookService {
     const key = data && isRecord(data.key) ? data.key : null;
     const fromMe = key?.fromMe === true;
     const remoteJid = readString(key?.remoteJid);
+    const direction = fromMe ? MessageDirection.OUTBOUND : MessageDirection.INBOUND;
 
-    if (fromMe || !remoteJid) {
-      return { accepted: true, ignored: 'outbound_or_missing_contact' };
+    if (!remoteJid) {
+      return { accepted: true, ignored: 'missing_contact' };
     }
 
+    // Messages sent from the phone or WhatsApp Web arrive with fromMe=true and
+    // no CRM action. They are stored as OUTBOUND (see `direction`) so they
+    // appear next to the ones sent through the CRM.
     const rawMessage = data?.message;
     const incomingType = readString(data?.messageType);
     const { message, viewOnce } = unwrapViewOnce(rawMessage);
@@ -133,7 +137,8 @@ export class WebhookService {
 
     // A blocked contact never reaches the inbox: no conversation is created and
     // no message is persisted. The event is acknowledged so WhatsApp does not retry.
-    if (contact?.isBlocked) {
+    // A message the user chose to send from their own phone still syncs.
+    if (contact?.isBlocked && !fromMe) {
       return { accepted: true, ignored: 'blocked_contact' };
     }
 
@@ -143,6 +148,7 @@ export class WebhookService {
       remoteJid,
       contact?.id ?? null,
       isGroup,
+      !fromMe,
     );
 
     if (isGroup) {
@@ -155,20 +161,25 @@ export class WebhookService {
     const quoted = await this.resolveInboundQuoted(instance.tenantId, message);
     const contacts = extractContacts(message);
 
-    const senderId = reaction
-      ? (participant ?? participantAlt ?? (isGroup ? null : remoteJid))
-      : isGroup
-        ? participant
-        : null;
+    const senderId = fromMe
+      ? null
+      : reaction
+        ? (participant ?? participantAlt ?? (isGroup ? null : remoteJid))
+        : isGroup
+          ? participant
+          : null;
+    const senderName = fromMe ? null : isGroup || reaction ? pushName : null;
 
-    const persisted = await this.persistInboundMessage({
+    const persisted = await this.persistWebhookMessage({
       tenantId: instance.tenantId,
       conversationId: conversation.id,
+      direction,
       content,
       type,
       externalMessageId,
       senderId,
-      senderName: isGroup || reaction ? pushName : null,
+      senderName,
+      occurredAt: fromMe ? readMessageTimestamp(data) : null,
       metadata: {
         remoteJid,
         pushName,
@@ -192,6 +203,18 @@ export class WebhookService {
       return { accepted: true, ignored: 'duplicate_message' };
     }
 
+    // A provider event for a message the CRM already stored when it was sent
+    // (same provider id) is reconciled in place: no new row and no realtime
+    // event, so the open chat never shows the same message twice.
+    if (!persisted.created) {
+      return {
+        accepted: true,
+        ignored: 'reconciled_message',
+        conversationId: conversation.id,
+        messageId: persisted.id,
+      };
+    }
+
     // View-once media must never be downloaded or exposed: the UI only renders the privacy notice.
     if (isMediaType(type) && !isViewOnce) {
       await this.queue.enqueue(JOB_NAMES.MEDIA_PROCESS, {
@@ -203,12 +226,12 @@ export class WebhookService {
     this.realtime.emitToConversation(instance.tenantId, conversation.id, 'message.created', {
       conversationId: conversation.id,
       messageId: persisted.id,
-      direction: 'INBOUND',
+      direction,
     });
     this.realtime.emitToTenant(instance.tenantId, 'message.created', {
       conversationId: conversation.id,
       messageId: persisted.id,
-      direction: 'INBOUND',
+      direction,
     });
     this.realtime.emitToTenant(instance.tenantId, 'conversation.updated', {
       conversationId: conversation.id,
@@ -325,6 +348,7 @@ export class WebhookService {
     externalContactId: string,
     contactId: string | null,
     isGroup: boolean,
+    reopenClosed = true,
   ) {
     const existing = await this.prisma.conversation.findFirst({
       where: { tenantId, whatsappInstanceId, externalContactId },
@@ -333,7 +357,7 @@ export class WebhookService {
 
     if (existing) {
       const data: Prisma.ConversationUncheckedUpdateInput = {};
-      if (existing.status === ConversationStatus.CLOSED) {
+      if (reopenClosed && existing.status === ConversationStatus.CLOSED) {
         data.status = ConversationStatus.OPEN;
         data.closedAt = null;
       }
@@ -443,43 +467,84 @@ export class WebhookService {
     }
   }
 
-  private async persistInboundMessage(input: {
+  /**
+   * Persists a WhatsApp message with idempotency on `(tenantId, externalMessageId)`.
+   * A provider event for a message already stored by the CRM send (same id) is
+   * reconciled in place and flagged as not created, so no duplicate row or
+   * realtime event is produced. Distinct messages with equal content are kept.
+   */
+  private async persistWebhookMessage(input: {
     tenantId: string;
     conversationId: string;
+    direction: MessageDirection;
     content: string | null;
     type: MessageType;
     externalMessageId: string | null;
     senderId: string | null;
     senderName: string | null;
+    occurredAt: Date | null;
     metadata: Record<string, unknown>;
-  }) {
+  }): Promise<{ id: string; created: boolean } | null> {
+    if (input.direction === MessageDirection.OUTBOUND && input.externalMessageId) {
+      const existing = await this.prisma.message.findFirst({
+        where: { tenantId: input.tenantId, externalMessageId: input.externalMessageId },
+        select: { id: true, direction: true, metadata: true },
+      });
+      if (existing) {
+        if (existing.direction === MessageDirection.OUTBOUND) {
+          const merged = {
+            ...(isRecord(existing.metadata) ? existing.metadata : {}),
+            ...input.metadata,
+          };
+          await this.prisma.message.update({
+            where: { id: existing.id },
+            data: { metadata: merged as Prisma.InputJsonValue },
+          });
+        }
+        return { id: existing.id, created: false };
+      }
+    }
+
     try {
       const message = await this.prisma.message.create({
         data: {
           tenantId: input.tenantId,
           conversationId: input.conversationId,
-          direction: 'INBOUND',
+          direction: input.direction,
           type: input.type,
           content: input.content,
           externalMessageId: input.externalMessageId,
-          status: 'RECEIVED',
+          status:
+            input.direction === MessageDirection.OUTBOUND
+              ? MessageStatus.SENT
+              : MessageStatus.RECEIVED,
           senderId: input.senderId,
           senderName: input.senderName,
           metadata: input.metadata as Prisma.InputJsonValue,
+          ...(input.occurredAt ? { occurredAt: input.occurredAt } : {}),
         },
         select: { id: true },
       });
 
       await this.prisma.conversation.update({
         where: { id: input.conversationId },
-        // A new inbound message returns an archived conversation to the inbox.
-        data: { lastMessageAt: new Date(), isArchived: false },
+        // A new inbound message returns an archived conversation to the inbox;
+        // an outbound one (sent by the user from their phone) must not.
+        data: {
+          lastMessageAt: new Date(),
+          ...(input.direction === MessageDirection.INBOUND ? { isArchived: false } : {}),
+        },
       });
 
-      return message;
+      return { id: message.id, created: true };
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-        return null;
+        // A concurrent event (or the CRM send itself) stored the same provider id.
+        const raced = await this.prisma.message.findFirst({
+          where: { tenantId: input.tenantId, externalMessageId: input.externalMessageId },
+          select: { id: true },
+        });
+        return raced ? { id: raced.id, created: false } : null;
       }
       throw error;
     }
@@ -760,6 +825,29 @@ function isMediaType(type: MessageType): boolean {
 
 function readString(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+/**
+ * Evolution reports `messageTimestamp` in seconds. It is used only to order
+ * messages sent from the phone/Web; unknown or invalid values fall back to the
+ * persistence instant.
+ */
+function readMessageTimestamp(data: Record<string, unknown> | null): Date | null {
+  const raw = data?.messageTimestamp;
+  const seconds =
+    typeof raw === 'number'
+      ? raw
+      : typeof raw === 'string' && raw.length > 0
+        ? Number(raw)
+        : Number.NaN;
+
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return null;
+  }
+
+  const millis = seconds > 1e12 ? seconds : seconds * 1000;
+  const date = new Date(millis);
+  return Number.isNaN(date.getTime()) ? null : date;
 }
 
 function toArray(value: unknown): unknown[] {

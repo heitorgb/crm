@@ -171,7 +171,7 @@ export class ConversationProcessingService implements OnModuleInit {
         where: { id: messageId, tenantId },
         include: { conversation: { include: { instance: true } } },
       });
-      if (!message || message.direction !== 'INBOUND') {
+      if (!message) {
         return;
       }
 
@@ -183,6 +183,9 @@ export class ConversationProcessingService implements OnModuleInit {
       const conversation = message.conversation;
       const remoteJid = conversation.externalContactId;
       const externalId = message.externalMessageId;
+      // Media the user sent from the phone/Web is stored too, so it can be
+      // downloaded from the provider with the matching direction.
+      const fromMe = message.direction === 'OUTBOUND';
       if (!externalId || !remoteJid) {
         await this.markMediaError(
           tenantId,
@@ -198,7 +201,7 @@ export class ConversationProcessingService implements OnModuleInit {
       try {
         content = await this.evolution.getBase64FromMediaMessage(
           conversation.instance.instanceName,
-          { id: externalId, remoteJid, fromMe: false },
+          { id: externalId, remoteJid, fromMe },
         );
       } catch (error) {
         this.logger.warn(

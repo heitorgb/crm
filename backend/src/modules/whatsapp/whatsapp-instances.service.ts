@@ -55,6 +55,7 @@ export interface ResolvedInstance {
 const WEBHOOK_EVENTS = [
   'MESSAGES_UPSERT',
   'MESSAGES_UPDATE',
+  'MESSAGES_EDITED',
   'GROUPS_UPSERT',
   'PRESENCE_UPDATE',
 ];

@@ -66,6 +66,19 @@ export interface QuotedMessageInfo {
   type: MessageType;
 }
 
+export interface ApplyMessageEditInput {
+  tenantId: string;
+  whatsappInstanceId: string;
+  externalMessageId: string;
+  content: string | null;
+  type: MessageType;
+}
+
+export interface AppliedMessageEdit {
+  messageId: string;
+  conversationId: string;
+}
+
 export interface CreateAttachmentInput {
   tenantId: string;
   messageId: string;
@@ -342,6 +355,46 @@ export class MessagesService {
       conversationId: message.conversationId,
       status: input.status,
     };
+  }
+
+  /**
+   * Applies a WhatsApp message edit in place. The original row keeps its id,
+   * conversation, direction and sender; only the content (and, when the row was
+   * still UNKNOWN, its type) changes and an edit marker is merged into metadata.
+   * The lookup is scoped by tenant and instance, so an edit can never touch a
+   * message from another conversation or tenant. Returns null when the original
+   * message is not (yet) stored, so the caller can ignore it safely.
+   */
+  async applyEditByExternalId(input: ApplyMessageEditInput): Promise<AppliedMessageEdit | null> {
+    const message = await this.prisma.message.findFirst({
+      where: {
+        tenantId: input.tenantId,
+        externalMessageId: input.externalMessageId,
+        conversation: { whatsappInstanceId: input.whatsappInstanceId },
+      },
+      select: { id: true, conversationId: true, type: true, metadata: true },
+    });
+    if (!message) {
+      return null;
+    }
+
+    const metadata = isRecord(message.metadata) ? message.metadata : {};
+    const updatedMetadata: Record<string, unknown> = {
+      ...metadata,
+      edited: true,
+      editedAt: new Date().toISOString(),
+    };
+
+    await this.prisma.message.update({
+      where: { id: message.id },
+      data: {
+        content: input.content,
+        metadata: updatedMetadata as Prisma.InputJsonValue,
+        ...(message.type === MessageType.UNKNOWN ? { type: input.type } : {}),
+      },
+    });
+
+    return { messageId: message.id, conversationId: message.conversationId };
   }
 
   private async requireConversation(tenantId: string, conversationId: string): Promise<void> {

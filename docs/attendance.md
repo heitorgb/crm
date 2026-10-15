@@ -419,6 +419,21 @@ Referência do evento: [implementação da Evolution](https://github.com/Evoluti
   Evolution emitir o recibo — se o destinatário tiver desativado confirmações de leitura, o azul
   pode nunca aparecer.
 
+### Edição de mensagem
+
+- A Evolution reporta edições pelo evento `messages.edited` (assinado junto com `MESSAGES_UPDATE`)
+  e, em alguns fluxos, também por `messages.update` (`keyId` + `message.editedMessage.message`) ou
+  por um `messages.upsert` com `protocolMessage`/`editedMessage`. O webhook reconhece os três
+  formatos.
+- A edição **atualiza a mensagem original no lugar** (casada por `externalMessageId` dentro do
+  tenant e da instância), preservando `id`, conversa, direção e remetente. Nunca cria uma nova
+  mensagem nem o registro `[unknown]`; o novo conteúdo vai para `content` e `metadata.edited`/
+  `metadata.editedAt` marcam a edição (sem migração de schema).
+- Processar o mesmo evento mais de uma vez é idempotente (dedupe por evento + update in-place),
+  mas edições sucessivas da mesma mensagem são distintas. Se o original ainda não existir (edição
+  antes da mensagem), o evento é ignorado com segurança. Ao aplicar, emite `message.updated` na
+  room da conversa e `conversation.updated` no tenant; o frontend exibe "editada" no balão.
+
 ## Digest agendado
 
 - `LeadDigestPreference` por membership: `frequency = DAILY` (MVP), `deliveryTime` (`HH:mm`),

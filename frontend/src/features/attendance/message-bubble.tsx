@@ -295,6 +295,9 @@ export function MessageBubble({
               isMedia && !message.content ? 'px-1 pt-0.5' : 'mt-0.5 px-0.5',
             )}
           >
+            {message.metadata?.edited === true ? (
+              <span className="mr-0.5 italic text-muted-foreground/80">editada</span>
+            ) : null}
             <span
               className={cn(
                 'tabular-nums',

@@ -471,6 +471,7 @@ describe('WhatsApp attendance (integration)', () => {
       expect(webhook?.events).toEqual([
         'MESSAGES_UPSERT',
         'MESSAGES_UPDATE',
+        'MESSAGES_EDITED',
         'GROUPS_UPSERT',
         'PRESENCE_UPDATE',
       ]);
@@ -1373,6 +1374,208 @@ describe('WhatsApp attendance (integration)', () => {
 
       const message = await prisma.message.findUniqueOrThrow({ where: { id: messageId } });
       expect(message.status).toBe('SENT');
+    });
+  });
+
+  describe('message edits', () => {
+    const remoteJid = '5511999999999@s.whatsapp.net';
+
+    async function seedConversation(): Promise<{ instanceName: string }> {
+      const instanceName = `edit-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      await postWebhook(evolutionPayload(instanceName, randomUUID(), 'Mensagem original'));
+      return { instanceName };
+    }
+
+    function editedEvent(instanceName: string, originalId: string, text: string, fromMe = false) {
+      return {
+        event: 'messages.edited',
+        instance: instanceName,
+        data: {
+          key: { remoteJid, fromMe, id: originalId },
+          type: 14,
+          editedMessage: { conversation: text },
+        },
+      };
+    }
+
+    function editedUpdate(instanceName: string, originalId: string, text: string) {
+      return {
+        event: 'messages.update',
+        instance: instanceName,
+        data: [
+          {
+            keyId: originalId,
+            remoteJid,
+            fromMe: true,
+            status: 'SERVER_ACK',
+            message: { editedMessage: { message: { conversation: text } } },
+          },
+        ],
+      };
+    }
+
+    function editedUpsert(
+      instanceName: string,
+      editId: string,
+      originalId: string,
+      text: string,
+    ) {
+      return {
+        event: 'messages.upsert',
+        instance: instanceName,
+        data: {
+          key: { remoteJid, fromMe: false, id: editId },
+          pushName: 'Contato Teste',
+          message: {
+            protocolMessage: {
+              key: { remoteJid, fromMe: false, id: originalId },
+              type: 14,
+              editedMessage: { conversation: text },
+            },
+          },
+        },
+      };
+    }
+
+    function outboundFromPhone(instanceName: string, messageId: string, text: string) {
+      return {
+        event: 'messages.upsert',
+        instance: instanceName,
+        data: {
+          key: { remoteJid, fromMe: true, id: messageId },
+          pushName: 'Atendente',
+          message: { conversation: text },
+          messageTimestamp: Math.floor(Date.now() / 1000),
+        },
+      };
+    }
+
+    it('updates an inbound message edited by the participant', async () => {
+      const { instanceName } = await seedConversation();
+      const original = await prisma.message.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId },
+      });
+      const emit = vi.spyOn(app.get(RealtimeService), 'emitToConversation');
+
+      const response = await postWebhook(
+        editedEvent(instanceName, original.externalMessageId as string, 'Mensagem editada'),
+      );
+
+      expect(response.statusCode).toBe(200);
+      const updated = await prisma.message.findUniqueOrThrow({ where: { id: original.id } });
+      expect(updated.content).toBe('Mensagem editada');
+      expect(updated.type).toBe('TEXT');
+      expect((updated.metadata as Record<string, unknown>).edited).toBe(true);
+      expect(await prisma.message.count({ where: { tenantId: ownerA.tenantId } })).toBe(1);
+      expect(emit).toHaveBeenCalledWith(
+        ownerA.tenantId,
+        original.conversationId,
+        'message.updated',
+        expect.objectContaining({ messageId: original.id }),
+      );
+      emit.mockRestore();
+    });
+
+    it('updates an outbound message sent from the phone', async () => {
+      const instanceName = `edit-out-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      const externalId = randomUUID();
+      await postWebhook(outboundFromPhone(instanceName, externalId, 'Enviada do celular'));
+      const original = await prisma.message.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId },
+      });
+
+      await postWebhook(editedUpdate(instanceName, externalId, 'Corrigida do celular'));
+
+      const updated = await prisma.message.findUniqueOrThrow({ where: { id: original.id } });
+      expect(updated.content).toBe('Corrigida do celular');
+      expect(updated.direction).toBe('OUTBOUND');
+      expect(await prisma.message.count({ where: { tenantId: ownerA.tenantId } })).toBe(1);
+    });
+
+    it('applies an edit delivered as messages.upsert without creating a spurious message', async () => {
+      const { instanceName } = await seedConversation();
+      const original = await prisma.message.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId },
+      });
+
+      const response = await postWebhook(
+        editedUpsert(
+          instanceName,
+          randomUUID(),
+          original.externalMessageId as string,
+          'Editada via upsert',
+        ),
+      );
+
+      expect(response.statusCode).toBe(200);
+      const updated = await prisma.message.findUniqueOrThrow({ where: { id: original.id } });
+      expect(updated.content).toBe('Editada via upsert');
+      expect(await prisma.message.count({ where: { tenantId: ownerA.tenantId } })).toBe(1);
+      expect(
+        await prisma.message.count({ where: { tenantId: ownerA.tenantId, type: 'UNKNOWN' } }),
+      ).toBe(0);
+    });
+
+    it('is idempotent for a repeated edit and still applies a later edit', async () => {
+      const { instanceName } = await seedConversation();
+      const original = await prisma.message.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId },
+      });
+      const externalId = original.externalMessageId as string;
+
+      const first = editedEvent(instanceName, externalId, 'Primeira edição');
+      await postWebhook(first);
+      const duplicate = await postWebhook(first);
+      expect(duplicate.json().ignored).toBe('duplicate_event');
+
+      await postWebhook(editedEvent(instanceName, externalId, 'Segunda edição'));
+
+      const updated = await prisma.message.findUniqueOrThrow({ where: { id: original.id } });
+      expect(updated.content).toBe('Segunda edição');
+      expect(await prisma.message.count({ where: { tenantId: ownerA.tenantId } })).toBe(1);
+    });
+
+    it('ignores an edit without the original message id', async () => {
+      const { instanceName } = await seedConversation();
+
+      const response = await postWebhook({
+        event: 'messages.edited',
+        instance: instanceName,
+        data: { type: 14, editedMessage: { conversation: 'sem alvo' } },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(await prisma.message.count({ where: { tenantId: ownerA.tenantId } })).toBe(1);
+    });
+
+    it('ignores an edit received before the original without inventing a message', async () => {
+      const instanceName = `edit-early-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+
+      const response = await postWebhook(editedEvent(instanceName, randomUUID(), 'Editada cedo'));
+
+      expect(response.statusCode).toBe(200);
+      expect(await prisma.message.count({ where: { tenantId: ownerA.tenantId } })).toBe(0);
+    });
+
+    it('never edits a message from another tenant', async () => {
+      await seedConversation();
+      const original = await prisma.message.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId },
+      });
+
+      const foreignInstance = `edit-b-${randomUUID()}`;
+      await createInstance(ownerB, foreignInstance);
+
+      const response = await postWebhook(
+        editedEvent(foreignInstance, original.externalMessageId as string, 'Ataque'),
+      );
+
+      expect(response.statusCode).toBe(200);
+      const unchanged = await prisma.message.findUniqueOrThrow({ where: { id: original.id } });
+      expect(unchanged.content).toBe('Mensagem original');
     });
   });
 

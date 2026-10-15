@@ -988,6 +988,292 @@ describe('WhatsApp attendance (integration)', () => {
     });
   });
 
+  describe('external outbound messages (fromMe)', () => {
+    function outboundPayload(
+      instanceName: string,
+      messageId: string,
+      text: string,
+      options: { remoteJid?: string; participant?: string; pushName?: string } = {},
+    ) {
+      const {
+        remoteJid = '5511999999999@s.whatsapp.net',
+        participant,
+        pushName = 'Atendente',
+      } = options;
+      return {
+        event: 'messages.upsert',
+        instance: instanceName,
+        data: {
+          key: {
+            remoteJid,
+            fromMe: true,
+            id: messageId,
+            ...(participant ? { participant } : {}),
+          },
+          pushName,
+          message: { conversation: text },
+          messageTimestamp: Math.floor(Date.now() / 1000),
+        },
+      };
+    }
+
+    it('syncs a message sent from the phone as OUTBOUND', async () => {
+      const instanceName = `out-phone-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      const emit = vi.spyOn(app.get(RealtimeService), 'emitToTenant');
+
+      try {
+        const response = await postWebhook(
+          outboundPayload(instanceName, randomUUID(), 'Enviado do celular'),
+        );
+
+        expect(response.statusCode).toBe(200);
+        expect(response.json().accepted).toBe(true);
+
+        const conversations = await prisma.conversation.findMany({
+          where: { tenantId: ownerA.tenantId },
+        });
+        expect(conversations).toHaveLength(1);
+        expect(conversations[0].contactId).not.toBeNull();
+        expect(conversations[0].lastMessageAt).not.toBeNull();
+
+        const contact = await prisma.contact.findFirstOrThrow({
+          where: { tenantId: ownerA.tenantId },
+        });
+        expect(contact.phone).toBe('5511999999999');
+
+        const message = await prisma.message.findFirstOrThrow({
+          where: { tenantId: ownerA.tenantId },
+        });
+        expect(message.direction).toBe('OUTBOUND');
+        expect(message.status).toBe('SENT');
+        expect(message.content).toBe('Enviado do celular');
+
+        expect(emit).toHaveBeenCalledWith(
+          ownerA.tenantId,
+          'message.created',
+          expect.objectContaining({ direction: 'OUTBOUND', messageId: message.id }),
+        );
+
+        // Visible through the same API the attendance screen reads from.
+        const listed = await app.inject({
+          method: 'GET',
+          url: `/api/conversations/${conversations[0].id}/messages`,
+          headers: authHeaders(ownerA),
+        });
+        expect(listed.statusCode).toBe(200);
+        expect(listed.json().data).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ id: message.id, direction: 'OUTBOUND' }),
+          ]),
+        );
+
+        const inbox = await app.inject({
+          method: 'GET',
+          url: '/api/conversations',
+          headers: authHeaders(ownerA),
+        });
+        expect(inbox.json().data[0].lastMessage).toMatchObject({
+          content: 'Enviado do celular',
+          direction: 'OUTBOUND',
+        });
+        expect(inbox.json().data[0].unreadCount).toBe(0);
+      } finally {
+        emit.mockRestore();
+      }
+    });
+
+    it('syncs a message sent from WhatsApp Web and reuses the same conversation', async () => {
+      const instanceName = `out-web-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+
+      await postWebhook(outboundPayload(instanceName, randomUUID(), 'Primeira do Web'));
+      await postWebhook(outboundPayload(instanceName, randomUUID(), 'Segunda do Web'));
+
+      const conversations = await prisma.conversation.findMany({
+        where: { tenantId: ownerA.tenantId },
+      });
+      expect(conversations).toHaveLength(1);
+
+      const contacts = await prisma.contact.findMany({ where: { tenantId: ownerA.tenantId } });
+      expect(contacts).toHaveLength(1);
+
+      const messages = await prisma.message.findMany({
+        where: { tenantId: ownerA.tenantId },
+        orderBy: { createdAt: 'asc' },
+      });
+      expect(messages).toHaveLength(2);
+      expect(messages.every((message) => message.direction === 'OUTBOUND')).toBe(true);
+      expect(messages.map((message) => message.content)).toEqual([
+        'Primeira do Web',
+        'Segunda do Web',
+      ]);
+    });
+
+    it('keeps distinct messages with the same content (dedup by provider id)', async () => {
+      const instanceName = `out-distinct-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+
+      await postWebhook(outboundPayload(instanceName, randomUUID(), 'ok'));
+      await postWebhook(outboundPayload(instanceName, randomUUID(), 'ok'));
+
+      expect(await prisma.message.count({ where: { tenantId: ownerA.tenantId } })).toBe(2);
+    });
+
+    it('is idempotent for a repeated external event', async () => {
+      const instanceName = `out-repeat-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      const payload = outboundPayload(instanceName, randomUUID(), 'Enviada uma vez');
+
+      await postWebhook(payload);
+      const second = await postWebhook(payload);
+
+      expect(second.json().ignored).toBe('duplicate_event');
+      expect(await prisma.message.count({ where: { tenantId: ownerA.tenantId } })).toBe(1);
+    });
+
+    it('reconciles an external event for a message already sent by the CRM', async () => {
+      const instanceName = `out-crm-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      await postWebhook(evolutionPayload(instanceName, randomUUID(), 'Olá'));
+
+      const conversation = await prisma.conversation.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId },
+      });
+      await app.inject({
+        method: 'POST',
+        url: `/api/conversations/${conversation.id}/messages`,
+        headers: authHeaders(ownerA),
+        payload: { content: 'Resposta enviada pelo CRM' },
+      });
+
+      const outbound = await prisma.message.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId, direction: 'OUTBOUND' },
+      });
+      expect(outbound.externalMessageId).toBeTruthy();
+      const total = await prisma.message.count({ where: { tenantId: ownerA.tenantId } });
+
+      const response = await postWebhook(
+        outboundPayload(instanceName, outbound.externalMessageId as string, 'Resposta enviada pelo CRM'),
+      );
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json().ignored).toBe('reconciled_message');
+      expect(response.json().messageId).toBe(outbound.id);
+      expect(await prisma.message.count({ where: { tenantId: ownerA.tenantId } })).toBe(total);
+    });
+
+    it('syncs a group message sent from the phone without creating a contact', async () => {
+      const instanceName = `out-group-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      const groupJid = '120363333333333333@g.us';
+
+      const response = await postWebhook(
+        outboundPayload(instanceName, randomUUID(), 'Mensagem no grupo', { remoteJid: groupJid }),
+      );
+
+      expect(response.json().accepted).toBe(true);
+      const conversation = await prisma.conversation.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId },
+      });
+      expect(conversation.isGroup).toBe(true);
+      expect(conversation.externalContactId).toBe(groupJid);
+      expect(conversation.groupName).toBe('Grupo Teste');
+      expect(conversation.contactId).toBeNull();
+      expect(await prisma.contact.count({ where: { tenantId: ownerA.tenantId } })).toBe(0);
+
+      const message = await prisma.message.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId },
+      });
+      expect(message.direction).toBe('OUTBOUND');
+      expect(message.senderId).toBeNull();
+    });
+
+    it('acknowledges without persisting when no remote JID is present', async () => {
+      const instanceName = `out-nojid-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+
+      const response = await postWebhook({
+        event: 'messages.upsert',
+        instance: instanceName,
+        data: { key: { fromMe: true, id: randomUUID() }, message: { conversation: 'x' } },
+      });
+
+      expect(response.json().ignored).toBe('missing_contact');
+      expect(await prisma.message.count({ where: { tenantId: ownerA.tenantId } })).toBe(0);
+      expect(await prisma.conversation.count({ where: { tenantId: ownerA.tenantId } })).toBe(0);
+    });
+
+    it('stores a fromMe message addressed by a LID without inventing a contact', async () => {
+      const instanceName = `out-lid-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      const lid = '75209205874877@lid';
+
+      const response = await postWebhook(
+        outboundPayload(instanceName, randomUUID(), 'Enviada para um LID', { remoteJid: lid }),
+      );
+
+      expect(response.json().accepted).toBe(true);
+      const conversation = await prisma.conversation.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId },
+      });
+      expect(conversation.externalContactId).toBe(lid);
+      expect(conversation.contactId).toBeNull();
+      expect(await prisma.message.count({ where: { tenantId: ownerA.tenantId } })).toBe(1);
+    });
+
+    it('downloads media sent from the phone with fromMe=true', async () => {
+      const instanceName = `out-media-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      const image = await sharp({
+        create: { width: 4, height: 4, channels: 3, background: { r: 10, g: 20, b: 30 } },
+      })
+        .png()
+        .toBuffer();
+      evolution.mediaBase64 = image.toString('base64');
+      evolution.mediaMimeType = 'image/png';
+      const spy = vi.spyOn(evolution, 'getBase64FromMediaMessage');
+
+      try {
+        await postWebhook({
+          event: 'messages.upsert',
+          instance: instanceName,
+          data: {
+            key: { remoteJid: '5511999999999@s.whatsapp.net', fromMe: true, id: randomUUID() },
+            message: { imageMessage: { mimetype: 'image/png', caption: 'Foto do celular' } },
+          },
+        });
+
+        expect(spy).toHaveBeenCalledWith(
+          instanceName,
+          expect.objectContaining({ fromMe: true }),
+        );
+        const message = await prisma.message.findFirstOrThrow({
+          where: { tenantId: ownerA.tenantId },
+        });
+        expect(message.type).toBe('IMAGE');
+        expect(message.direction).toBe('OUTBOUND');
+        expect(
+          await prisma.messageAttachment.count({ where: { messageId: message.id } }),
+        ).toBe(1);
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it('never writes external outbound messages into another tenant', async () => {
+      const instanceName = `out-iso-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      await createInstance(ownerB, `out-iso-b-${randomUUID()}`);
+
+      await postWebhook(outboundPayload(instanceName, randomUUID(), 'Só do tenant A'));
+
+      expect(await prisma.message.count({ where: { tenantId: ownerA.tenantId } })).toBe(1);
+      expect(await prisma.message.count({ where: { tenantId: ownerB.tenantId } })).toBe(0);
+      expect(await prisma.conversation.count({ where: { tenantId: ownerB.tenantId } })).toBe(0);
+    });
+  });
+
   describe('message status receipts', () => {
     async function seedOutbound(): Promise<{
       instanceName: string;

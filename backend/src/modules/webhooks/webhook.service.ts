@@ -95,12 +95,27 @@ export class WebhookService {
       return { accepted: true };
     }
 
+    if (eventType === 'messages.edited') {
+      await this.handleMessageEdited(instance, payload);
+      return { accepted: true };
+    }
+
     if (eventType !== 'messages.upsert') {
       return { accepted: true, ignored: 'unsupported_event' };
     }
 
     const data = isRecord(payload.data) ? payload.data : null;
     const key = data && isRecord(data.key) ? data.key : null;
+
+    // Evolution may deliver an edit as `messages.upsert` (protocolMessage or an
+    // `editedMessage` wrapper) when its own edit detection misses the envelope.
+    // Route it to the in-place update instead of creating a bogus `[unknown]`.
+    const upsertEdit = data ? parseMessageEdit(data) : null;
+    if (upsertEdit) {
+      await this.applyMessageEdit(instance, upsertEdit);
+      return { accepted: true, ignored: 'message_edited' };
+    }
+
     const fromMe = key?.fromMe === true;
     const remoteJid = readString(key?.remoteJid);
     const direction = fromMe ? MessageDirection.OUTBOUND : MessageDirection.INBOUND;
@@ -279,6 +294,64 @@ export class WebhookService {
     }
   }
 
+  private async handleMessageEdited(
+    instance: ResolvedInstance,
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    const entries = toArray(payload.data).filter(isRecord);
+
+    for (const entry of entries) {
+      const edit = parseMessageEdit(entry);
+      if (!edit) {
+        continue;
+      }
+      await this.applyMessageEdit(instance, edit);
+    }
+  }
+
+  /**
+   * Applies an edit to the stored original message. The row is matched by the
+   * WhatsApp message id inside the tenant and instance, never created anew. An
+   * edit that arrives before the original (or without a resolvable id) is
+   * ignored safely: no message is invented and no valid content is overwritten.
+   */
+  private async applyMessageEdit(
+    instance: ResolvedInstance,
+    edit: ParsedMessageEdit,
+  ): Promise<void> {
+    if (edit.type === MessageType.UNKNOWN && edit.content === null) {
+      this.logger.warn(`Ignoring message edit without usable content (instance ${instance.instanceName})`);
+      return;
+    }
+
+    const updated = await this.messages.applyEditByExternalId({
+      tenantId: instance.tenantId,
+      whatsappInstanceId: instance.id,
+      externalMessageId: edit.externalMessageId,
+      content: edit.content,
+      type: edit.type,
+    });
+    if (!updated) {
+      this.logger.warn(
+        `Original message not found for edit ${edit.externalMessageId} (instance ${instance.instanceName}); ignoring safely`,
+      );
+      return;
+    }
+
+    this.realtime.emitToConversation(
+      instance.tenantId,
+      updated.conversationId,
+      'message.updated',
+      {
+        conversationId: updated.conversationId,
+        messageId: updated.messageId,
+      },
+    );
+    this.realtime.emitToTenant(instance.tenantId, 'conversation.updated', {
+      conversationId: updated.conversationId,
+    });
+  }
+
   private async handleMessageUpdate(
     instance: ResolvedInstance,
     payload: Record<string, unknown>,
@@ -286,6 +359,14 @@ export class WebhookService {
     const updates = toArray(payload.data).filter(isRecord);
 
     for (const update of updates) {
+      // Baileys also reports edits as a `messages.update` whose `message` holds
+      // the edited content; apply it in place and skip the status logic.
+      const edit = parseMessageEdit(update);
+      if (edit) {
+        await this.applyMessageEdit(instance, edit);
+        continue;
+      }
+
       const externalMessageId = readString(update.keyId);
       const status = mapEvolutionStatus(readString(update.status));
       if (!externalMessageId || !status) {
@@ -596,17 +677,26 @@ function computeEventId(
   const key = data && isRecord(data.key) ? data.key : null;
   const messageId = readString(key?.id);
   if (messageId) {
-    return `${instanceName}:${eventType}:${messageId}`;
+    // Editing the same message twice must not collapse into a single event, so
+    // the edited content is part of the identity while exact retries still match.
+    const suffix =
+      eventType === 'messages.edited' ? `:${contentFingerprint(data?.editedMessage)}` : '';
+    return `${instanceName}:${eventType}:${messageId}${suffix}`;
   }
 
   const updateId = data ? readString(data.keyId) : null;
   if (updateId) {
     const status = readString(data?.status);
-    return `${instanceName}:${eventType}:${updateId}${status ? `:${status}` : ''}`;
+    const suffix = data && isRecord(data.message) ? `:${contentFingerprint(data.message)}` : '';
+    return `${instanceName}:${eventType}:${updateId}${status ? `:${status}` : ''}${suffix}`;
   }
 
   const hash = createHash('sha256').update(JSON.stringify(payload)).digest('hex').slice(0, 40);
   return `${instanceName}:${eventType}:${hash}`;
+}
+
+function contentFingerprint(value: unknown): string {
+  return createHash('sha256').update(JSON.stringify(value ?? null)).digest('hex').slice(0, 16);
 }
 
 function mapEvolutionStatus(value: string | null): MessageStatus | null {
@@ -715,6 +805,87 @@ function readReaction(message: unknown): ParsedReaction | null {
     emoji: readString(reaction.text),
     targetMessageId: key ? readString(key.id) : null,
     targetFromMe: key?.fromMe === true,
+  };
+}
+
+interface ParsedMessageEdit {
+  externalMessageId: string;
+  content: string | null;
+  type: MessageType;
+}
+
+const MESSAGE_EDIT_PROTOCOL_TYPE = 14;
+
+/**
+ * Recognizes the shapes Evolution/Baileys use to report a message edit:
+ *  - `messages.edited`: `data` is the edit protocolMessage (`key` + `editedMessage`);
+ *  - `messages.upsert`: `data.message.protocolMessage` (same protocolMessage shape);
+ *  - `messages.update`: `data.keyId` plus `data.message.editedMessage.message`;
+ *  - a future-proof `data.message.editedMessage.message` wrapper (target `data.key.id`).
+ * Returns null for anything that is not an edit, so status receipts, reactions
+ * and regular messages keep their normal flow.
+ */
+function parseMessageEdit(entry: Record<string, unknown>): ParsedMessageEdit | null {
+  const direct = readProtocolEdit(entry);
+  if (direct) {
+    return fromProtocolEdit(direct);
+  }
+
+  const message = isRecord(entry.message) ? entry.message : null;
+  if (!message) {
+    return null;
+  }
+
+  const directProtocol = readProtocolEdit(message.protocolMessage);
+  if (directProtocol) {
+    return fromProtocolEdit(directProtocol);
+  }
+
+  const edited = isRecord(message.editedMessage) ? message.editedMessage : null;
+  if (!edited) {
+    return null;
+  }
+
+  const inner = isRecord(edited.message) ? edited.message : null;
+  const nestedProtocol = inner ? readProtocolEdit(inner.protocolMessage) : null;
+  if (nestedProtocol) {
+    return fromProtocolEdit(nestedProtocol);
+  }
+
+  const key = isRecord(entry.key) ? entry.key : null;
+  const externalMessageId = readString(entry.keyId) ?? (key ? readString(key.id) : null);
+  const content = inner ?? edited;
+  if (!externalMessageId) {
+    return null;
+  }
+  return buildMessageEdit(externalMessageId, content);
+}
+
+function readProtocolEdit(value: unknown): Record<string, unknown> | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  if (value.type !== MESSAGE_EDIT_PROTOCOL_TYPE && !isRecord(value.editedMessage)) {
+    return null;
+  }
+  return value;
+}
+
+function fromProtocolEdit(protocol: Record<string, unknown>): ParsedMessageEdit | null {
+  const key = isRecord(protocol.key) ? protocol.key : null;
+  const externalMessageId = key ? readString(key.id) : null;
+  const edited = isRecord(protocol.editedMessage) ? protocol.editedMessage : null;
+  if (!externalMessageId || !edited) {
+    return null;
+  }
+  return buildMessageEdit(externalMessageId, edited);
+}
+
+function buildMessageEdit(externalMessageId: string, content: unknown): ParsedMessageEdit {
+  return {
+    externalMessageId,
+    content: extractText(content),
+    type: detectType(content),
   };
 }
 

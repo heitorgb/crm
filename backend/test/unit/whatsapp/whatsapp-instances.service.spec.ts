@@ -69,7 +69,7 @@ describe('WhatsAppInstancesService webhook reconciliation', () => {
     expect(evolution.setWebhook).toHaveBeenCalledWith(
       'inst-1',
       'https://crm.example/api/webhooks/evolution?token=secret',
-      ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'GROUPS_UPSERT', 'PRESENCE_UPDATE'],
+      ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'MESSAGES_EDITED', 'GROUPS_UPSERT', 'PRESENCE_UPDATE'],
     );
   });
 

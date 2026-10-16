@@ -199,7 +199,11 @@ describe('WhatsApp attendance (integration)', () => {
     await cleanupTenants(prisma, [ownerA, userA, ownerB]);
   });
 
-  async function createInstance(tenant: SeededTenant, instanceName: string): Promise<string> {
+  async function createInstance(
+    tenant: SeededTenant,
+    instanceName: string,
+    status: 'CONNECTED' | 'DISCONNECTED' = 'CONNECTED',
+  ): Promise<string> {
     const response = await app.inject({
       method: 'POST',
       url: '/api/whatsapp/instances',
@@ -210,7 +214,9 @@ describe('WhatsApp attendance (integration)', () => {
         credentials: { apiKey: 'super-secret-key', webhookSecret: 'super-secret-webhook' },
       },
     });
-    return response.json().id as string;
+    const id = response.json().id as string;
+    await prisma.whatsAppInstance.update({ where: { id }, data: { status } });
+    return id;
   }
 
   function evolutionPayload(
@@ -218,12 +224,18 @@ describe('WhatsApp attendance (integration)', () => {
     messageId: string,
     text: string,
     remoteJid = '5511999999999@s.whatsapp.net',
+    remoteJidAlt?: string,
   ) {
     return {
       event: 'messages.upsert',
       instance: instanceName,
       data: {
-        key: { remoteJid, fromMe: false, id: messageId },
+        key: {
+          remoteJid,
+          fromMe: false,
+          id: messageId,
+          ...(remoteJidAlt ? { remoteJidAlt } : {}),
+        },
         pushName: 'Contato Teste',
         message: { conversation: text },
       },
@@ -551,7 +563,7 @@ describe('WhatsApp attendance (integration)', () => {
 
   describe('contact sync', () => {
     async function connectAndSync(tenant: SeededTenant, instanceName: string) {
-      const instanceId = await createInstance(tenant, instanceName);
+      const instanceId = await createInstance(tenant, instanceName, 'DISCONNECTED');
       const response = await app.inject({
         method: 'GET',
         url: `/api/whatsapp/instances/${instanceId}/status`,
@@ -2331,7 +2343,7 @@ describe('WhatsApp attendance (integration)', () => {
       emit.mockRestore();
     });
 
-    it('sends to a LID conversation using the full JID', async () => {
+    it('keeps the LID as the destination when there is no resolvable phone', async () => {
       const instanceName = `lid-${randomUUID()}`;
       await createInstance(ownerA, instanceName);
       await postWebhook(evolutionPayload(instanceName, randomUUID(), 'oi', '75209205874877@lid'));
@@ -2340,6 +2352,7 @@ describe('WhatsApp attendance (integration)', () => {
         where: { tenantId: ownerA.tenantId },
       });
       expect(conversation.externalContactId).toBe('75209205874877@lid');
+      expect(conversation.contactId).toBeNull();
 
       await app.inject({
         method: 'POST',
@@ -2350,6 +2363,66 @@ describe('WhatsApp attendance (integration)', () => {
 
       expect(evolution.sent).toHaveLength(1);
       expect(evolution.sent[0].number).toBe('75209205874877@lid');
+    });
+
+    it('sends to the resolved phone when a LID conversation carries a PN alternative', async () => {
+      const instanceName = `lid-pn-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      await postWebhook(
+        evolutionPayload(
+          instanceName,
+          randomUUID(),
+          'oi',
+          '75209205874877@lid',
+          '5511888888888@s.whatsapp.net',
+        ),
+      );
+
+      const conversation = await prisma.conversation.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId },
+      });
+      expect(conversation.externalContactId).toBe('75209205874877@lid');
+      expect(conversation.contactId).not.toBeNull();
+
+      const contact = await prisma.contact.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId },
+      });
+      expect(contact.phone).toBe('5511888888888');
+
+      await app.inject({
+        method: 'POST',
+        url: `/api/conversations/${conversation.id}/messages`,
+        headers: authHeaders(ownerA),
+        payload: { content: 'Olá' },
+      });
+
+      expect(evolution.sent).toHaveLength(1);
+      expect(evolution.sent[0].number).toBe('5511888888888');
+    });
+
+    it('blocks the send and persists nothing when the instance is not connected', async () => {
+      const instanceName = `not-connected-${randomUUID()}`;
+      await createInstance(ownerA, instanceName, 'DISCONNECTED');
+      await postWebhook(evolutionPayload(instanceName, randomUUID(), 'oi'));
+
+      const conversation = await prisma.conversation.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId },
+      });
+
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/conversations/${conversation.id}/messages`,
+        headers: authHeaders(ownerA),
+        payload: { content: 'Olá' },
+      });
+
+      expect(response.statusCode).toBe(409);
+      expect(response.json().code).toBe('WHATSAPP_INSTANCE_NOT_CONNECTED');
+      expect(evolution.sent).toHaveLength(0);
+      const outbound = await prisma.message.count({
+        where: { tenantId: ownerA.tenantId, direction: 'OUTBOUND' },
+      });
+      expect(outbound).toBe(0);
     });
 
     it('returns the most recent messages first when paginating', async () => {

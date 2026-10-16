@@ -5,6 +5,7 @@ import type { PrismaService } from '../../../src/infrastructure/prisma/prisma.se
 import type { JobQueue } from '../../../src/infrastructure/queue/job-queue.types.js';
 import type { RealtimeService } from '../../../src/infrastructure/realtime/realtime.service.js';
 import { ConversationProcessingService } from '../../../src/modules/conversations/conversation-processing.service.js';
+import { WhatsAppInstanceNotConnectedError } from '../../../src/modules/conversations/conversations.errors.js';
 import {
   EvolutionRequestError,
   type EvolutionClient,
@@ -81,7 +82,8 @@ function seedMessage(
     conversation: {
       id: 'conversation-1',
       externalContactId: '5511999999999@s.whatsapp.net',
-      instance: { instanceName: 'inst-1' },
+      contact: { phone: null },
+      instance: { instanceName: 'inst-1', status: 'CONNECTED' },
     },
   });
 }
@@ -159,7 +161,8 @@ describe('ConversationProcessingService.dispatch', () => {
       id: 'conversation-1',
       tenantId: 'tenant-1',
       externalContactId: '5511999999999@s.whatsapp.net',
-      instance: { instanceName: 'inst-1' },
+      contact: { phone: null },
+      instance: { instanceName: 'inst-1', status: 'CONNECTED' },
     });
   }
 
@@ -198,5 +201,68 @@ describe('ConversationProcessingService.dispatch', () => {
 
     expect(messages.markOutboundFailed).toHaveBeenCalledWith('message-1', 'EVOLUTION_NETWORK_UNCERTAIN');
     expect(queue.enqueue).not.toHaveBeenCalled();
+  });
+
+  it('sends to the resolved contact phone when the conversation is addressed by a LID', async () => {
+    const { service, prisma, evolution } = createHarness();
+    seedConversation(prisma);
+    prisma.conversation.findFirst.mockResolvedValue({
+      id: 'conversation-1',
+      tenantId: 'tenant-1',
+      externalContactId: '75209205874877@lid',
+      contact: { phone: '5511999999999' },
+      instance: { instanceName: 'inst-1', status: 'CONNECTED' },
+    });
+    evolution.sendText.mockResolvedValue({ externalMessageId: 'ext-1', raw: {} });
+
+    await service.deliverText('tenant-1', 'conversation-1', 'Olá', author);
+
+    expect(evolution.sendText).toHaveBeenCalledWith(
+      'inst-1',
+      '5511999999999',
+      'Olá',
+      undefined,
+    );
+  });
+
+  it('keeps the LID when the contact phone was never resolved', async () => {
+    const { service, prisma, evolution } = createHarness();
+    seedConversation(prisma);
+    prisma.conversation.findFirst.mockResolvedValue({
+      id: 'conversation-1',
+      tenantId: 'tenant-1',
+      externalContactId: '75209205874877@lid',
+      contact: null,
+      instance: { instanceName: 'inst-1', status: 'CONNECTED' },
+    });
+    evolution.sendText.mockResolvedValue({ externalMessageId: 'ext-1', raw: {} });
+
+    await service.deliverText('tenant-1', 'conversation-1', 'Olá', author);
+
+    expect(evolution.sendText).toHaveBeenCalledWith(
+      'inst-1',
+      '75209205874877@lid',
+      'Olá',
+      undefined,
+    );
+  });
+
+  it('blocks the send and does not persist when the instance is not connected', async () => {
+    const { service, prisma, evolution, messages } = createHarness();
+    seedConversation(prisma);
+    prisma.conversation.findFirst.mockResolvedValue({
+      id: 'conversation-1',
+      tenantId: 'tenant-1',
+      externalContactId: '5511999999999@s.whatsapp.net',
+      contact: { phone: null },
+      instance: { instanceName: 'inst-1', status: 'DISCONNECTED' },
+    });
+
+    await expect(
+      service.deliverText('tenant-1', 'conversation-1', 'Olá', author),
+    ).rejects.toBeInstanceOf(WhatsAppInstanceNotConnectedError);
+
+    expect(messages.persistOutbound).not.toHaveBeenCalled();
+    expect(evolution.sendText).not.toHaveBeenCalled();
   });
 });

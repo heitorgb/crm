@@ -377,8 +377,12 @@ responde `409 CONVERSATION_NOT_HUMAN_OWNED`. O bot só responde enquanto a conve
   itálico ("Você recebeu uma mensagem de visualização única…"), link "Saiba mais" e horário,
   respeitando avatar/nome e o agrupamento existente. Sem esse tratamento a mensagem cairia como
   `UNKNOWN`.
-- **JIDs `@lid`**: conversas endereçadas por LID (`<lid>@lid`) são aceitas e o envio usa o JID
-  completo (`deliveryDestination`), sem reduzi-lo a dígitos.
+- **JIDs `@lid`**: conversas endereçadas por LID (`<lid>@lid`) são aceitas. No envio, quando o
+  telefone do contato foi resolvido a partir de `remoteJidAlt`/`participantAlt`, o CRM usa o **número
+  (PN)** como destino em vez do LID: enviar para `@lid` depende do mapeamento LID→PN do provedor, que
+  é instável em contas WhatsApp Business (o envio é aceito com `key.id` mas falha depois com
+  `messages.update` `ERROR`). Quando não há telefone resolvido, mantém-se o LID completo como
+  fallback (`deliveryDestination`).
 - O webhook é resiliente: qualquer erro inesperado ao processar um evento é registrado em log e a
   Evolution recebe `200` (`ignored: processing_error`), evitando *retry storm* que trava o
   processamento da instância.
@@ -415,6 +419,11 @@ Referência do evento: [implementação da Evolution](https://github.com/Evoluti
   mensagem que já foi aceita pelo provedor (tem id externo) ou que chegou a `SENT`/`DELIVERED`/`READ`
   nunca volta para a fila de envio — evita duplicatas. Não há reenvio automático em massa de
   pendentes após reconexão.
+- **Guarda de conexão**: o envio humano (texto, mídia e edição) só ocorre quando a instância está
+  `CONNECTED`. Caso contrário a API responde `409 WHATSAPP_INSTANCE_NOT_CONNECTED`, nada é persistido
+  nem enviado. Isso impede enviar por uma instância órfã/desconectada mantida no CRM (aceite seguido
+  de erro) e orienta o operador a reconectar. O processamento da fila `whatsapp.message.send` também
+  é ignorado (com log `whatsapp.send.skipped`) enquanto a instância não estiver conectada.
 - Realtime: gateway Socket.IO no namespace `/realtime`, autenticado por JWT + membership no
   handshake. Rooms: `tenant:{tenantId}`, `tenant:{tenantId}:user:{userId}`,
   `tenant:{tenantId}:conversation:{conversationId}`. Eventos são emitidos por room — nunca

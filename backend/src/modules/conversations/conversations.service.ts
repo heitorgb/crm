@@ -551,7 +551,7 @@ export class ConversationsService {
 
     const conversation = await this.prisma.conversation.findFirst({
       where: { id, tenantId, deletedAt: null },
-      include: { instance: true },
+      include: { instance: true, contact: { select: { phone: true } } },
     });
     if (!conversation) {
       throw new ConversationNotFoundError();

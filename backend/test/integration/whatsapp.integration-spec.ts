@@ -2402,6 +2402,62 @@ describe('WhatsApp attendance (integration)', () => {
       expect(evolution.sent[0].number).toBe('75209205874877@lid');
     });
 
+    it('falls back to the phone when the provider reports ERROR for the LID', async () => {
+      const instanceName = `pn-lid-fallback-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      await postWebhook(
+        evolutionPayload(
+          instanceName,
+          randomUUID(),
+          'oi',
+          '5511888888888@s.whatsapp.net',
+          '75209205874877@lid',
+        ),
+      );
+
+      const conversation = await prisma.conversation.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId },
+      });
+      expect(conversation.externalLid).toBe('75209205874877@lid');
+
+      await app.inject({
+        method: 'POST',
+        url: `/api/conversations/${conversation.id}/messages`,
+        headers: authHeaders(ownerA),
+        payload: { content: 'Olá' },
+      });
+
+      // The default prefers the LID.
+      expect(evolution.sent.at(-1)?.number).toBe('75209205874877@lid');
+      const outbound = await prisma.message.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId, direction: 'OUTBOUND' },
+        orderBy: { createdAt: 'desc' },
+      });
+      const externalMessageId = outbound.externalMessageId as string;
+      expect(externalMessageId).toBeTruthy();
+
+      await postWebhook({
+        event: 'messages.update',
+        instance: instanceName,
+        data: {
+          keyId: externalMessageId,
+          remoteJid: conversation.externalContactId,
+          fromMe: true,
+          status: 'ERROR',
+        },
+      });
+
+      // The conversation learns the phone works and the same message is resent to it.
+      const reloaded = await prisma.conversation.findFirstOrThrow({
+        where: { id: conversation.id },
+      });
+      expect(reloaded.preferredAddress).toBe('PN');
+      expect(evolution.sent.at(-1)?.number).toBe('5511888888888');
+      const resent = await prisma.message.findUniqueOrThrow({ where: { id: outbound.id } });
+      expect(resent.status).toBe('SENT');
+      expect(resent.externalMessageId).not.toBe(externalMessageId);
+    });
+
     it('blocks the send and persists nothing when the instance is not connected', async () => {
       const instanceName = `not-connected-${randomUUID()}`;
       await createInstance(ownerA, instanceName, 'DISCONNECTED');

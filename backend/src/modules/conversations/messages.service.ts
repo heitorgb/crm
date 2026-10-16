@@ -313,14 +313,24 @@ export class MessagesService {
     messageId: string,
     status: MessageStatus,
     externalMessageId?: string,
+    metadataPatch?: Record<string, unknown>,
   ): Promise<void> {
-    await this.prisma.message.update({
-      where: { id: messageId },
-      data: {
-        status,
-        ...(externalMessageId ? { externalMessageId } : {}),
-      },
-    });
+    const data: Prisma.MessageUpdateInput = {
+      status,
+      ...(externalMessageId ? { externalMessageId } : {}),
+    };
+    if (metadataPatch) {
+      const existing = await this.prisma.message.findUnique({
+        where: { id: messageId },
+        select: { metadata: true },
+      });
+      data.metadata = {
+        ...(isRecord(existing?.metadata) ? existing.metadata : {}),
+        ...metadataPatch,
+      } as Prisma.InputJsonValue;
+    }
+
+    await this.prisma.message.update({ where: { id: messageId }, data });
   }
 
   async markOutboundFailed(messageId: string, errorCode: string): Promise<void> {
@@ -339,6 +349,21 @@ export class MessagesService {
           errorCode,
           failedAt: new Date().toISOString(),
         } as Prisma.InputJsonValue,
+      },
+    });
+  }
+
+  async markFallbackAttempted(messageId: string): Promise<void> {
+    const existing = await this.prisma.message.findUnique({
+      where: { id: messageId },
+      select: { metadata: true },
+    });
+    const metadata = isRecord(existing?.metadata) ? existing.metadata : {};
+
+    await this.prisma.message.update({
+      where: { id: messageId },
+      data: {
+        metadata: { ...metadata, fallbackAttempted: true } as Prisma.InputJsonValue,
       },
     });
   }

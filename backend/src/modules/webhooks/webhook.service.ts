@@ -8,6 +8,11 @@ import {
   MessageType,
   Prisma,
 } from '@prisma/client';
+import {
+  alternateDestination,
+  pickDestination,
+  type DestinationInput,
+} from '../../common/whatsapp/destination.js';
 import { isGroupJid, lidFromJid, phoneFromJid } from '../../common/whatsapp/jid.js';
 import type { Env } from '../../config/env.validation.js';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service.js';
@@ -503,7 +508,79 @@ export class WebhookService {
       this.realtime.emitToTenant(instance.tenantId, 'conversation.updated', {
         conversationId: updated.conversationId,
       });
+
+      if (updated.status === MessageStatus.FAILED) {
+        await this.scheduleAddressFallback(instance, updated.messageId);
+      }
     }
+  }
+
+  /**
+   * A provider ERROR means the address used did not deliver. Which address a
+   * WhatsApp account accepts for outbound (PN vs LID) depends on the account, so
+   * the failed message is resent once to the alternate address and the
+   * conversation remembers the working one for future sends. A message already
+   * flagged as fallback-attempted is never retried again (no loops).
+   */
+  private async scheduleAddressFallback(
+    instance: ResolvedInstance,
+    messageId: string,
+  ): Promise<void> {
+    const message = await this.prisma.message.findFirst({
+      where: { id: messageId, tenantId: instance.tenantId },
+      select: {
+        id: true,
+        metadata: true,
+        conversation: {
+          select: {
+            id: true,
+            externalContactId: true,
+            externalLid: true,
+            preferredAddress: true,
+            contact: { select: { phone: true } },
+          },
+        },
+      },
+    });
+    if (!message) {
+      return;
+    }
+
+    const metadata = isRecord(message.metadata) ? message.metadata : {};
+    if (metadata.fallbackAttempted === true) {
+      return;
+    }
+
+    const conversation = message.conversation;
+    const input: DestinationInput = {
+      externalContactId: conversation.externalContactId,
+      externalLid: conversation.externalLid,
+      contactPhone: conversation.contact?.phone ?? null,
+    };
+    const current = pickDestination(input, conversation.preferredAddress);
+    if (!current || current.type === 'GROUP') {
+      return;
+    }
+    const alternate = alternateDestination(input, current.type);
+    if (!alternate) {
+      return;
+    }
+
+    await this.prisma.conversation.update({
+      where: { id: conversation.id },
+      data: { preferredAddress: alternate.type },
+    });
+    await this.messages.markFallbackAttempted(messageId);
+
+    this.logger.log(
+      `Falling back outbound ${messageId} from ${current.type} to ${alternate.type} (instance ${instance.instanceName})`,
+    );
+
+    await this.queue.enqueue(JOB_NAMES.WHATSAPP_SEND, {
+      tenantId: instance.tenantId,
+      messageId,
+      fallback: true,
+    });
   }
 
   private async recordEvent(input: {

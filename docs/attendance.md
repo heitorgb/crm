@@ -378,15 +378,19 @@ responde `409 CONVERSATION_NOT_HUMAN_OWNED`. O bot só responde enquanto a conve
   respeitando avatar/nome e o agrupamento existente. Sem esse tratamento a mensagem cairia como
   `UNKNOWN`.
 - **JIDs `@lid` e contas migradas para LID**: parte das contas foi migrada pelo WhatsApp para
-  endereçamento por **LID**. Nesses casos, enviar para o número (PN) é **aceito** pela Evolution
-  (retorna `key.id`, `status: PENDING`) mas **falha depois** com `messages.update ERROR` — a
-  resolução PN→LID não acontece no caminho de envio (issue EvolutionAPI #2629) —, enquanto o envio
-  para o **LID** é **entregue**. Por isso o webhook captura o LID de
-  `remoteJid`/`remoteJidAlt`/`participantAlt` (quando termina em `@lid`) e o persiste em
-  `Conversation.externalLid`; no envio, `deliveryDestination` usa o **LID** como destino e cai para
-  o **PN** (dígitos) apenas quando nenhum LID foi capturado. Conversas endereçadas por LID
-  (`<lid>@lid`) continuam enviando para o próprio LID. O LID é capturado no mesmo evento em que o
-  contato/telefone é resolvido, então um novo inbound popula conversas já existentes.
+  endereçamento por **LID**. Qual endereço uma conta aceita para **envio** (PN ou LID) **varia por
+  conta** e não pode ser inferido do `addressingMode` do inbound: há contas em que o envio ao PN é
+  aceito e falha depois (`messages.update ERROR`, issue EvolutionAPI #2629) e contas em que o envio
+  ao LID é que falha. Por isso o CRM mantém **os dois endereços** da conversa — o endereço do
+  inbound em `externalContactId` e o LID capturado de
+  `remoteJid`/`remoteJidAlt`/`participantAlt` em `Conversation.externalLid` — e o destino é
+  **adaptativo** (`pickDestination`): por padrão envia ao LID (fallback aos dígitos do PN); se o
+  provedor devolver `messages.update ERROR`, o webhook **reenvia a mesma mensagem uma vez para o
+  endereço alternativo** (`alternateDestination`) e grava o endereço que funcionou em
+  `Conversation.preferredAddress`, usado nos envios seguintes. A mensagem guarda
+  `metadata.destinationType` e `metadata.fallbackAttempted`, que garante no máximo **um** fallback
+  por mensagem (sem loops). O LID é capturado no mesmo evento em que o contato/telefone é resolvido,
+  então um novo inbound popula conversas já existentes.
 - O webhook é resiliente: qualquer erro inesperado ao processar um evento é registrado em log e a
   Evolution recebe `200` (`ignored: processing_error`), evitando *retry storm* que trava o
   processamento da instância.
@@ -516,7 +520,7 @@ Referência do evento: [implementação da Evolution](https://github.com/Evoluti
   documento, figurinha, localização, contato e reação não podem ser editados.
 - `EvolutionClient.updateMessage` chama `POST /chat/updateMessage/{instance}` com
   `{ number, key: { id, remoteJid, fromMe: true }, text }`. O `number` é o destino
-  (`deliveryDestination`) e o `key.remoteJid` é o `externalContactId` completo (funciona para
+  (`pickDestination`) e o `key.remoteJid` é o `externalContactId` completo (funciona para
   `@s.whatsapp.net`, `@g.us` e `@lid`).
 - O banco **só é atualizado após a confirmação** da Evolution. O registro mantém `id`, conversa,
   direção e `occurredAt`; muda apenas `content` (e `metadata.edited`/`metadata.editedAt`). Falha

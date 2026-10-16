@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ConversationsModule } from '../conversations/conversations.module.js';
 import { WhatsAppModule } from '../whatsapp/whatsapp.module.js';
 import { ModulesModule } from '../modules/modules.module.js';
 import { BillingChargesService } from './billing-charges.service.js';
@@ -9,7 +10,7 @@ import { BillingSchedulerService } from './billing-scheduler.service.js';
 import { BillingSettingsService } from './billing-settings.service.js';
 
 @Module({
-  imports: [WhatsAppModule, ModulesModule],
+  imports: [WhatsAppModule, ConversationsModule, ModulesModule],
   controllers: [BillingController],
   providers: [
     BillingSettingsService,

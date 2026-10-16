@@ -167,7 +167,7 @@ function BillingSettingsForm({ settings, instances, onDone }: BillingSettingsFor
         <FormField
           id="billing-template"
           label="Mensagem"
-          description="Variáveis: {cliente}, {descricao}, {valor}, {vencimento}"
+          description="Variáveis: {cliente}, {descricao}, {valor}, {vencimento}, {nome_empresa}. {valor} sai como R$ 0,00 e {vencimento} como DD/MM/AAAA."
         >
           <Textarea
             id="billing-template"

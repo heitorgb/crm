@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Inject, Injectable, Logger, type OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { MessageStatus, MessageType, Prisma } from '@prisma/client';
+import { ConversationStatus, MessageStatus, MessageType, Prisma } from '@prisma/client';
 import type { TenantContext } from '../../common/tenant-context/tenant-context.types.js';
 import { TenantContextService } from '../../common/tenant-context/tenant-context.service.js';
 import type { Env } from '../../config/env.validation.js';
@@ -24,7 +24,7 @@ import {
   type EvolutionSendResult,
 } from '../whatsapp/evolution/evolution.client.js';
 import { MessageNotEditableError } from './conversations.errors.js';
-import { MessagesService, type QuotedMessageInfo } from './messages.service.js';
+import { MessagesService, type MessageView, type QuotedMessageInfo } from './messages.service.js';
 
 const SYSTEM_USER_ID = '00000000-0000-4000-8000-000000000001';
 const SYSTEM_MEMBERSHIP_ID = '00000000-0000-4000-8000-000000000002';
@@ -42,6 +42,16 @@ export interface OutboundAuthor {
   senderId: string | null;
   senderName: string | null;
   showAgentName: boolean;
+}
+
+export interface RecordOutboundMessageInput {
+  tenantId: string;
+  whatsappInstanceId: string;
+  externalContactId: string;
+  contactId: string | null;
+  text: string;
+  externalMessageId: string | null;
+  metadata?: Record<string, unknown>;
 }
 
 @Injectable()
@@ -160,6 +170,75 @@ export class ConversationProcessingService implements OnModuleInit {
       caption ? buildOutboundText(caption, author) : caption,
       buildEvolutionQuoted(conversation.externalContactId, quoted),
     );
+  }
+
+  /**
+   * Records an outbound message that was already accepted by the provider
+   * outside the human chat flow (e.g. a billing reminder). It resolves (or
+   * creates) the conversation for the instance/contact, persists the message
+   * with the provider id, touches the conversation and publishes the realtime
+   * events, so the send also shows up in Atendimento → Conversas.
+   *
+   * Idempotent with the webhook: messages are keyed by `(tenantId,
+   * externalMessageId)`, so a later `messages.upsert` for the same provider id
+   * is reconciled into the existing row instead of creating a duplicate. When
+   * the provider id is unavailable the message is still recorded, but the
+   * webhook can no longer be correlated (Evolution limitation).
+   */
+  async recordOutboundMessage(input: RecordOutboundMessageInput): Promise<void> {
+    const conversation = await this.findOrCreateConversation(
+      input.tenantId,
+      input.whatsappInstanceId,
+      input.externalContactId,
+      input.contactId,
+    );
+
+    if (input.externalMessageId) {
+      const existing = await this.prisma.message.findFirst({
+        where: { tenantId: input.tenantId, externalMessageId: input.externalMessageId },
+        select: { id: true },
+      });
+      if (existing) {
+        return;
+      }
+    }
+
+    let message: MessageView;
+    try {
+      message = await this.messages.persistOutbound({
+        tenantId: input.tenantId,
+        conversationId: conversation.id,
+        content: input.text,
+        externalMessageId: input.externalMessageId,
+        status: MessageStatus.SENT,
+        metadata: input.metadata,
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        return;
+      }
+      throw error;
+    }
+
+    const occurredAt = new Date();
+    await this.prisma.conversation.update({
+      where: { id: conversation.id },
+      data: { lastMessageAt: occurredAt },
+    });
+
+    this.realtime.emitToConversation(input.tenantId, conversation.id, 'message.created', {
+      conversationId: conversation.id,
+      messageId: message.id,
+      direction: 'OUTBOUND',
+    });
+    this.realtime.emitToTenant(input.tenantId, 'message.created', {
+      conversationId: conversation.id,
+      messageId: message.id,
+      direction: 'OUTBOUND',
+    });
+    this.realtime.emitToTenant(input.tenantId, 'conversation.updated', {
+      conversationId: conversation.id,
+    });
   }
 
   /** Edits a message already delivered to WhatsApp, in place. */
@@ -556,6 +635,65 @@ export class ConversationProcessingService implements OnModuleInit {
       where: { id: conversationId },
       data: { lastMessageAt: new Date() },
     });
+  }
+
+  /**
+   * Finds the conversation for an instance/contact or creates it. Reuses the
+   * same `(whatsappInstanceId, externalContactId)` key as the webhook, so a
+   * reply from the contact lands in the same conversation.
+   */
+  private async findOrCreateConversation(
+    tenantId: string,
+    whatsappInstanceId: string,
+    externalContactId: string,
+    contactId: string | null,
+  ): Promise<{ id: string }> {
+    const existing = await this.prisma.conversation.findFirst({
+      where: { tenantId, whatsappInstanceId, externalContactId },
+      select: { id: true, contactId: true, status: true, deletedAt: true },
+    });
+
+    if (existing) {
+      const data: Prisma.ConversationUncheckedUpdateInput = {};
+      if (existing.status === ConversationStatus.CLOSED) {
+        data.status = ConversationStatus.OPEN;
+        data.closedAt = null;
+      }
+      if (existing.deletedAt) {
+        data.deletedAt = null;
+      }
+      if (!existing.contactId && contactId) {
+        data.contactId = contactId;
+      }
+      if (Object.keys(data).length > 0) {
+        await this.prisma.conversation.update({ where: { id: existing.id }, data });
+      }
+      return { id: existing.id };
+    }
+
+    try {
+      return await this.prisma.conversation.create({
+        data: {
+          tenantId,
+          whatsappInstanceId,
+          externalContactId,
+          contactId,
+          status: ConversationStatus.OPEN,
+        },
+        select: { id: true },
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        const raced = await this.prisma.conversation.findFirst({
+          where: { tenantId, whatsappInstanceId, externalContactId },
+          select: { id: true },
+        });
+        if (raced) {
+          return raced;
+        }
+      }
+      throw error;
+    }
   }
 
   private runAsTenant<T>(tenantId: string, fn: () => Promise<T>): Promise<T> {

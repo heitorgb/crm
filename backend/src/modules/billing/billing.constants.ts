@@ -1,7 +1,22 @@
 export const BILLING_DEFAULT_REMINDER_OFFSETS = [-3, 0, 3] as const;
 
-export const BILLING_DEFAULT_MESSAGE_TEMPLATE =
-  'Olá {cliente}! Passando para lembrar da cobrança "{descricao}" no valor de {valor}, com vencimento em {vencimento}.';
+export const BILLING_DEFAULT_MESSAGE_TEMPLATE = [
+  'Olá, *{cliente}*! 👋',
+  '',
+  'Passando para lembrar de uma cobrança que está próxima do vencimento.',
+  '',
+  '📋 *Descrição:* {descricao}',
+  '💰 *Valor:* {valor}',
+  '📅 *Vencimento:* {vencimento}',
+  '',
+  'Pedimos que se organize para realizar o pagamento até a data informada.',
+  '',
+  'Se já realizou o pagamento, por favor, desconsidere esta mensagem.',
+  '',
+  'Em caso de dúvidas, estamos à disposição!',
+  '',
+  '*{nome_empresa}*',
+].join('\n');
 
 export const BILLING_DEFAULT_SEND_WINDOW_START_HOUR = 9;
 export const BILLING_DEFAULT_SEND_WINDOW_END_HOUR = 18;

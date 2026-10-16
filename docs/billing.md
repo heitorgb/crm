@@ -57,7 +57,7 @@ contato. O `nextRunDate` avança mês a mês (com *clamp* do dia para o último 
 | ---------------------- | ----------------- | ----------------------------------------------------------- |
 | `remindersEnabled`     | `true`            |                                                             |
 | `reminderOffsets`      | `[-3, 0, 3]`      | dias relativos ao vencimento (negativo = antes; 0 = no dia) |
-| `messageTemplate`      | ver abaixo        | aceita `{cliente} {descricao} {valor} {vencimento}`         |
+| `messageTemplate`      | ver abaixo        | aceita `{cliente} {descricao} {valor} {vencimento} {nome_empresa}` |
 | `whatsappInstanceId`   | `null`            | `null` = primeira instância conectada do tenant             |
 | `sendWindowStartHour`  | `9`               | janela de envio (hora local)                                |
 | `sendWindowEndHour`    | `18`              | janela de envio (hora local)                                |
@@ -70,8 +70,41 @@ A API também expõe, somente leitura, `timeZone` (`BILLING_TIMEZONE`) e `scanIn
 se início `=` fim, a janela fica aberta **o dia inteiro**. A hora avaliada é a do fuso
 `BILLING_TIMEZONE`.
 
-Template padrão:
-`Olá {cliente}! Passando para lembrar da cobrança "{descricao}" no valor de {valor}, com vencimento em {vencimento}.`
+Template padrão (mensagem rica, com formatação do WhatsApp — negrito, emojis e quebras de
+linha):
+
+```text
+Olá, *{cliente}*! 👋
+
+Passando para lembrar de uma cobrança que está próxima do vencimento.
+
+📋 *Descrição:* {descricao}
+💰 *Valor:* {valor}
+📅 *Vencimento:* {vencimento}
+
+Pedimos que se organize para realizar o pagamento até a data informada.
+
+Se já realizou o pagamento, por favor, desconsidere esta mensagem.
+
+Em caso de dúvidas, estamos à disposição!
+
+*{nome_empresa}*
+```
+
+Variáveis disponíveis (todas derivadas de dados reais da cobrança/organização — nada é
+inventado, sem links, Pix ou dados bancários):
+
+| Variável        | Origem                                                       |
+| --------------- | ------------------------------------------------------------ |
+| `{cliente}`     | nome do contato/cobrado (fallback: nome do cliente)          |
+| `{descricao}`   | descrição da cobrança                                        |
+| `{valor}`       | valor formatado em BRL (ex.: `R$ 239,99`)                    |
+| `{vencimento}`  | data no formato brasileiro `DD/MM/AAAA` (ex.: `18/10/2026`)  |
+| `{nome_empresa}`| nome da organização (`Tenant.name`)                          |
+
+A formatação de valor e data é aplicada a **todas** as variáveis, então o modelo salvo não
+precisa (nem deve) reimplementá-la. O modelo continua editável em Configurações → Cobranças
+(o diálogo lista as variáveis).
 
 ### `BillingReminder` (histórico + idempotência)
 
@@ -179,9 +212,44 @@ Pagamento (`POST /billing/charges/:id/pay`) e cancelamento interrompem os lembre
 Reutiliza o `EvolutionClient` já existente (`POST /message/sendText/{instance}`). Nenhuma chamada
 real é feita nos testes — o `EvolutionClient` é substituído por um fake.
 
-Os lembretes **não** criam linhas em `Message` manualmente: quando a Evolution envia a mensagem,
-ela emite o webhook `MESSAGES_UPSERT` (`fromMe`), que o fluxo atual já reconcilia como mensagem
-`OUTBOUND`. O histórico confiável do lembrete vive em `BillingReminder`.
+Após a confirmação do envio, o lembrete passa a fazer parte do **histórico normal da conversa** em
+Atendimento → Conversas (ver [Integração com Atendimento](#integração-com-atendimento--conversas)).
+O histórico confiável e auditável do lembrete continua em `BillingReminder` (origem, tentativas,
+destino, id externo, erros); a mensagem em `Message` é o mesmo registro que o webhook reconcilia.
+
+## Integração com Atendimento → Conversas
+
+Cada lembrete enviado com sucesso (manual ou automático) é registrado como uma mensagem `OUTBOUND`
+na conversa correspondente, para aparecer no painel de Atendimento e na lista de conversas sem
+recarregar a página.
+
+- Reutiliza o mesmo caminho de persistência das mensagens normais
+  (`ConversationProcessingService.recordOutboundMessage` → `MessagesService.persistOutbound`), nunca
+  uma estrutura paralela.
+- A conversa é resolvida/criada pela mesma chave do webhook (`whatsappInstanceId` +
+  `externalContactId = <telefone>@s.whatsapp.net`), vinculando o contato cobrado quando existir. Se
+  a conversa tiver sido apagada/arquivada/encerrada, ela é reaproveitada (reaberta).
+- A mensagem guarda o conteúdo real enviado (com quebras de linha), tipo `TEXT`, status `SENT`, o
+  `externalMessageId` devolvido pela Evolution e `metadata = { source: "billing_reminder", chargeId,
+  reminderId }`. O horário é o instante da confirmação do envio.
+- Publica `message.created` (sala da conversa e do tenant) e `conversation.updated` (tenant), então
+  o painel aberto e a lista de conversas se atualizam em tempo real pelos mecanismos existentes.
+
+### Idempotência e deduplicação
+
+- O registro usa o `externalMessageId` retornado pela Evolution e o índice único
+  `(tenantId, externalMessageId)` dos `Message`. Quando o webhook `MESSAGES_UPSERT` (`fromMe`) do
+  mesmo envio chega depois, `persistWebhookMessage` encontra a mensagem já gravada e a **reconcilia
+  no lugar** (enriquece `metadata`), sem criar duplicata nem emitir novo `message.created`.
+- Antes de gravar, `recordOutboundMessage` verifica se o id externo já existe (webhook que chegou
+  primeiro) e, ainda assim, o `create` tolera `P2002` — as duas ordens (CRM → webhook ou webhook →
+  CRM) convergem para uma única linha.
+- A falha ao persistir a mensagem **não** altera o `BillingReminder` (que permanece `SENT`) nem
+  reenvia a cobrança: o erro é registrado em log e o envio externo já concluído é preservado.
+- **Limitação**: quando a Evolution não devolve o id da mensagem, a mensagem local é gravada sem
+  `externalMessageId` e o webhook do mesmo envio não pode ser correlacionado (podendo gerar uma
+  segunda linha). É o mesmo comportamento já adotado pelas demais mensagens do CRM, dependente do
+  id do provedor.
 
 ## Fuso horário
 
@@ -248,20 +316,29 @@ cobranças ficam bloqueadas. Desativar a Régua de Cobrança **não** desativa o
 ## Migração
 
 Migrations versionadas em `backend/prisma/migrations`: `20261016132814_billing_module`,
-`20261016141533_billing_contact_party` (torna `customer_id` opcional e indexa `contact_id`) e
+`20261016141533_billing_contact_party` (torna `customer_id` opcional e indexa `contact_id`),
 `20261016150000_billing_manual_reminders` (adiciona `origin`, `created_by_user_id`, `dedupe_key`,
-`idempotency_key` e backfill da idempotência automática). Aplicar com `npm run prisma:deploy`
+`idempotency_key` e backfill da idempotência automática) e
+`20261017100000_billing_reminder_message_template` (novo modelo padrão rico com `{nome_empresa}`;
+migra tenants que ainda usavam o padrão anterior, preservando modelos personalizados). Aplicar com
+`npm run prisma:deploy`
 (ambientes não interativos) ou `npm run prisma:migrate` (dev).
 
 ## Testes
 
-- Unit: `test/unit/billing/billing-utils.spec.ts` (datas, moeda, template, offsets, janela de envio
-  `isWithinWindow` — normal, meia-noite, início=fim — e fuso horário via `localHour`/`localDateString`).
+- Unit: `test/unit/billing/billing-utils.spec.ts` (datas — incluindo `formatDateBR` no padrão
+  `DD/MM/AAAA` —, moeda, template — variáveis `{nome_empresa}` e quebras de linha do modelo padrão —
+  offsets, janela de envio `isWithinWindow` — normal, meia-noite, início=fim — e fuso horário via
+  `localHour`/`localDateString`).
 - Integração: `test/integration/billing.integration-spec.ts` cobre CRUD, validação, baixa manual,
   vencimento, permissões, isolamento entre tenants, recorrência sem duplicação, idempotência dos
   lembretes, falha da Evolution com retentativas, ausência de telefone/instância, interrupção após
   pagamento, **envio manual** e **agendamento/janela** (catch-up de lembrete perdido, não envio fora
   da janela com reavaliação posterior, supressão com automação desabilitada, offsets negativo/zero/
-  positivo e exposição de `scanIntervalMinutes`/`timeZone`). Usa `FakeEvolution`, sem chamadas reais.
+  positivo e exposição de `scanIntervalMinutes`/`timeZone`). Cobre também a **integração com a
+  conversa**: mensagem `OUTBOUND` gravada no envio automático e manual, formatação de valor/data/
+  empresa, criação de conversa inexistente, dedupe do webhook repetido, `SENT` preservado em falha de
+  persistência, eventos realtime, leitura pelo endpoint normal de mensagens e isolamento entre
+  tenants. Usa `FakeEvolution`, sem chamadas reais.
 - Frontend: `billing-utils.test.ts` (inclui `reminderScheduleExplanation`/`describeSendWindow`),
   `billing-page.test.tsx` e `send-reminder-dialog.test.tsx`.

@@ -436,7 +436,7 @@ model BillingSettings {
   tenantId            String   @unique @map("tenant_id") @db.Uuid
   remindersEnabled    Boolean  @default(true) @map("reminders_enabled")
   reminderOffsets     Json     @default("[-3, 0, 3]") @map("reminder_offsets")
-  messageTemplate     String   @default("Olá {cliente}! Lembrete da cobrança \"{descricao}\" no valor de {valor}, com vencimento em {vencimento}.") @map("message_template")
+  messageTemplate     String   @default("Olá, *{cliente}*! 👋\n\nPassando para lembrar de uma cobrança que está próxima do vencimento.\n\n📋 *Descrição:* {descricao}\n💰 *Valor:* {valor}\n📅 *Vencimento:* {vencimento}\n\nPedimos que se organize para realizar o pagamento até a data informada.\n\nSe já realizou o pagamento, por favor, desconsidere esta mensagem.\n\nEm caso de dúvidas, estamos à disposição!\n\n*{nome_empresa}*") @map("message_template")
   whatsappInstanceId  String?  @map("whatsapp_instance_id") @db.Uuid
   sendWindowStartHour Int      @default(9) @map("send_window_start_hour")
   sendWindowEndHour   Int      @default(18) @map("send_window_end_hour")

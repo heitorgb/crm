@@ -7,12 +7,15 @@ import {
   localDateString,
   localHour,
   parseDateOnly,
+  formatDateBR,
   formatDateOnly,
 } from '../../../src/modules/billing/billing-time.js';
+import { BILLING_DEFAULT_MESSAGE_TEMPLATE } from '../../../src/modules/billing/billing.constants.js';
 import {
   formatCurrencyBRL,
   normalizeReminderOffsets,
   renderReminderTemplate,
+  type ReminderTemplateVars,
 } from '../../../src/modules/billing/billing-message.js';
 
 describe('billing-time', () => {
@@ -37,6 +40,11 @@ describe('billing-time', () => {
 
   it('round-trips parse/format', () => {
     expect(formatDateOnly(parseDateOnly('2026-10-16'))).toBe('2026-10-16');
+  });
+
+  it('formats dates in the Brazilian DD/MM/YYYY format', () => {
+    expect(formatDateBR(parseDateOnly('2026-10-16'))).toBe('16/10/2026');
+    expect(formatDateBR(parseDateOnly('2027-01-05'))).toBe('05/01/2027');
   });
 
   it('resolves the local hour and date in a time zone', () => {
@@ -76,22 +84,36 @@ describe('billing-message', () => {
     expect(formatCurrencyBRL(123456789)).toBe('R$ 1.234.567,89');
   });
 
+  const vars: ReminderTemplateVars = {
+    cliente: 'Ana',
+    descricao: 'Mensalidade',
+    valor: 'R$ 100,00',
+    vencimento: '16/10/2026',
+    nome_empresa: 'OrderUp',
+  };
+
   it('renders the reminder template variables', () => {
     const result = renderReminderTemplate(
-      'Oi {cliente}, {descricao} vale {valor} vence em {vencimento}.',
-      {
-        cliente: 'Ana',
-        descricao: 'Mensalidade',
-        valor: 'R$ 100,00',
-        vencimento: '2026-10-16',
-      },
+      'Oi {cliente}, {descricao} vale {valor} vence em {vencimento}. {nome_empresa}',
+      vars,
     );
-    expect(result).toBe('Oi Ana, Mensalidade vale R$ 100,00 vence em 2026-10-16.');
+    expect(result).toBe('Oi Ana, Mensalidade vale R$ 100,00 vence em 16/10/2026. OrderUp');
+  });
+
+  it('renders the default template with every variable, preserving line breaks', () => {
+    const result = renderReminderTemplate(BILLING_DEFAULT_MESSAGE_TEMPLATE, vars);
+    expect(result).toContain('Olá, *Ana*! 👋');
+    expect(result).toContain('📋 *Descrição:* Mensalidade');
+    expect(result).toContain('💰 *Valor:* R$ 100,00');
+    expect(result).toContain('📅 *Vencimento:* 16/10/2026');
+    expect(result).toContain('*OrderUp*');
+    expect(result).not.toContain('{');
+    expect(result.split('\n').length).toBeGreaterThan(5);
   });
 
   it('keeps unknown placeholders untouched', () => {
     expect(renderReminderTemplate('{cliente} {desconhecido}', {
-      cliente: 'Ana',
+      ...vars,
       descricao: '',
       valor: '',
       vencimento: '',

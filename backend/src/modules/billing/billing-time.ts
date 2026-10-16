@@ -16,6 +16,12 @@ export function formatDateOnly(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
 
+/** Formats a date as `DD/MM/YYYY`, the Brazilian format expected on WhatsApp. */
+export function formatDateBR(date: Date): string {
+  const [year, month, day] = formatDateOnly(date).split('-');
+  return `${day}/${month}/${year}`;
+}
+
 /** Calendar date (YYYY-MM-DD) of an instant as seen in the given IANA time zone. */
 export function localDateString(date: Date, timeZone: string): string {
   const parts = new Intl.DateTimeFormat('en-CA', {

@@ -97,6 +97,7 @@ const integrationEnvSchema = z.object({
   MEDIA_IMAGE_MAX_DIMENSION: z.coerce.number().int().positive().default(1600),
   MEDIA_IMAGE_QUALITY: z.coerce.number().int().min(1).max(100).default(80),
   MEDIA_THUMBNAIL_DIMENSION: z.coerce.number().int().positive().default(256),
+  BILLING_TIMEZONE: z.string().min(1).default('America/Sao_Paulo'),
   LEGAL_TERMS_VERSION: optionalEnv(z.string().min(1)),
   LEGAL_DPA_VERSION: optionalEnv(z.string().min(1)),
   ORDERUP_DPO_NAME: optionalEnv(z.string().min(1)),

@@ -38,6 +38,7 @@ backend/src/
 │   └── redis/
 ├── modules/                # módulos de negócio (por domínio)
 │   ├── auth/               # login, tokens, guards (autenticação/autorização)
+│   ├── billing/            # cobranças, recorrências e lembretes (WhatsApp)
 │   ├── health/
 │   └── memberships/        # membership multi-tenant / resolução de contexto
 ├── app.module.ts

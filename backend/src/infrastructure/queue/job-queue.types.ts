@@ -17,4 +17,6 @@ export const JOB_NAMES = {
   WHATSAPP_SEND: 'whatsapp.message.send',
   MEDIA_PROCESS: 'media.process',
   CONTACTS_SYNC: 'whatsapp.contacts.sync',
+  BILLING_SCAN: 'billing.scan',
+  BILLING_REMINDER_SEND: 'billing.reminder.send',
 } as const;

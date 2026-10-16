@@ -49,6 +49,14 @@ Idempotência: `Message` único por `(tenantId, externalMessageId)`, `WebhookEve
 Credenciais de instância são criptografadas. Detalhes, retenção e endpoints em
 [`attendance.md`](./attendance.md).
 
+### Cobranças (controle manual)
+
+`BillingCharge`, `BillingRecurrence`, `BillingSettings` e `BillingReminder` — todas com `tenantId`.
+Valores em centavos (`amountCents`), vencimento `date`, status armazenado (`PENDING`/`PAID`/
+`CANCELED`) com "vencida" derivada. Idempotência: `BillingCharge` único por `(recurrenceId, dueDate)`
+e `BillingReminder` único por `(chargeId, offsetDays)`. Migration `20261016132814_billing_module`.
+Detalhes em [`billing.md`](./billing.md).
+
 ### LGPD e compliance (Prompt 09)
 
 `DataSubjectRequest` (trilha de direitos do titular e revisões do art. 20) e campos de conformidade

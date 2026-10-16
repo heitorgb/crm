@@ -28,6 +28,7 @@ import { TagsModule } from './modules/tags/tags.module.js';
 import { WhatsAppModule } from './modules/whatsapp/whatsapp.module.js';
 import { ConversationsModule } from './modules/conversations/conversations.module.js';
 import { WebhooksModule } from './modules/webhooks/webhooks.module.js';
+import { BillingModule } from './modules/billing/billing.module.js';
 
 @Module({
   imports: [
@@ -65,6 +66,7 @@ import { WebhooksModule } from './modules/webhooks/webhooks.module.js';
     WhatsAppModule,
     ConversationsModule,
     WebhooksModule,
+    BillingModule,
   ],
   providers: [{ provide: APP_FILTER, useClass: AllExceptionsFilter }],
 })

@@ -92,7 +92,7 @@ export function RecurrencesDialog({ open, onOpenChange, canManage }: Recurrences
                 <TableBody>
                   {recurrences.data.data.map((recurrence) => (
                     <TableRow key={recurrence.id}>
-                      <TableCell>{recurrence.customerName ?? '—'}</TableCell>
+                      <TableCell>{recurrence.contactName ?? recurrence.customerName ?? '—'}</TableCell>
                       <TableCell className="max-w-[10rem] truncate">{recurrence.description}</TableCell>
                       <TableCell>{formatCurrency(recurrence.amountCents)}</TableCell>
                       <TableCell>

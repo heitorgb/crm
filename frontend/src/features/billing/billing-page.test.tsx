@@ -51,6 +51,10 @@ vi.mock('@/features/customers/queries', () => ({
   useCustomer: () => ({ data: undefined }),
 }));
 
+vi.mock('@/features/contacts/queries', () => ({
+  useContacts: () => ({ data: { data: [] }, isPending: false, isError: false }),
+}));
+
 vi.mock('@/features/whatsapp/queries', () => ({
   useWhatsAppInstances: () => ({ data: { data: [] } }),
 }));

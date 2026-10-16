@@ -53,9 +53,11 @@ Credenciais de instância são criptografadas. Detalhes, retenção e endpoints 
 
 `BillingCharge`, `BillingRecurrence`, `BillingSettings` e `BillingReminder` — todas com `tenantId`.
 Valores em centavos (`amountCents`), vencimento `date`, status armazenado (`PENDING`/`PAID`/
-`CANCELED`) com "vencida" derivada. Idempotência: `BillingCharge` único por `(recurrenceId, dueDate)`
-e `BillingReminder` único por `(chargeId, offsetDays)`. Migration `20261016132814_billing_module`.
-Detalhes em [`billing.md`](./billing.md).
+`CANCELED`) com "vencida" derivada. A cobrança referencia ao menos um `Contact` (cliente no uso real
+do CRM) e/ou um `Customer` (`customer_id` opcional). Idempotência: `BillingCharge` único por
+`(recurrenceId, dueDate)` e `BillingReminder` único por `(chargeId, offsetDays)`. Migrations
+`20261016132814_billing_module` e `20261016141533_billing_contact_party`. Detalhes em
+[`billing.md`](./billing.md).
 
 ### LGPD e compliance (Prompt 09)
 

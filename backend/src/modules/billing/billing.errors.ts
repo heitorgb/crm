@@ -40,6 +40,12 @@ export class BillingContactNotFoundError extends AppException {
   }
 }
 
+export class BillingPartyRequiredError extends AppException {
+  constructor() {
+    super('BILLING_PARTY_REQUIRED', 'Selecione um cliente ou contato para a cobrança', 400);
+  }
+}
+
 export class BillingRecurrenceNotFoundError extends AppException {
   constructor() {
     super('BILLING_RECURRENCE_NOT_FOUND', 'Recorrência não encontrada', 404);

@@ -42,8 +42,9 @@ export class BillingRecurrenceConfigDto {
 }
 
 export class CreateBillingChargeDto {
+  @IsOptional()
   @IsUUID()
-  customerId!: string;
+  customerId?: string;
 
   @IsOptional()
   @IsUUID()
@@ -98,6 +99,10 @@ export class ListBillingChargesQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsUUID()
   customerId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  contactId?: string;
 
   @IsOptional()
   @IsUUID()

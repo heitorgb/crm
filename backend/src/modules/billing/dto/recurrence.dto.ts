@@ -18,8 +18,9 @@ import { BILLING_RECURRENCE_FREQUENCIES } from './charge.dto.js';
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 
 export class CreateBillingRecurrenceDto {
+  @IsOptional()
   @IsUUID()
-  customerId!: string;
+  customerId?: string;
 
   @IsOptional()
   @IsUUID()
@@ -77,6 +78,10 @@ export class ListBillingRecurrencesQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsUUID()
   customerId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  contactId?: string;
 
   @IsOptional()
   @Transform(({ value }) => {

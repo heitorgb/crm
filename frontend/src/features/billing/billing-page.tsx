@@ -162,7 +162,9 @@ export function BillingPage() {
                 className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2"
               >
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-medium">{charge.customerName ?? '—'}</p>
+                  <p className="truncate text-sm font-medium">
+                    {charge.contactName ?? charge.customerName ?? '—'}
+                  </p>
                   <p className="truncate text-xs text-muted-foreground">{charge.description}</p>
                 </div>
                 <div className="text-right">
@@ -262,7 +264,7 @@ export function BillingPage() {
                       <TableCell>
                         <div className="min-w-0">
                           <p className="truncate font-medium text-foreground">
-                            {charge.customerName ?? '—'}
+                            {charge.contactName ?? charge.customerName ?? '—'}
                           </p>
                           <p className="truncate text-xs text-muted-foreground">
                             {charge.description}
@@ -360,7 +362,7 @@ export function BillingPage() {
         chargeId={historyCharge?.id}
         description={
           historyCharge
-            ? `${historyCharge.customerName ?? ''} · ${historyCharge.description}`
+            ? `${historyCharge.contactName ?? historyCharge.customerName ?? ''} · ${historyCharge.description}`
             : undefined
         }
       />
@@ -378,7 +380,7 @@ export function BillingPage() {
         description={
           pendingPay
             ? `Confirmar a baixa de ${formatCurrency(pendingPay.amountCents)} de ${
-                pendingPay.customerName ?? 'cliente'
+                pendingPay.contactName ?? pendingPay.customerName ?? 'cliente'
               }? Os lembretes futuros serão interrompidos.`
             : undefined
         }

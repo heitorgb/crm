@@ -10,10 +10,9 @@ import {
   BillingChargeNotFoundError,
   BillingChargeNotEditableError,
   BillingChargeNotPayableError,
-  BillingContactNotFoundError,
-  BillingCustomerNotFoundError,
   BillingInvalidDateError,
 } from './billing.errors.js';
+import { assertBillingContact, resolveBillingParty } from './billing-party.js';
 import {
   addDays,
   formatDateOnly,
@@ -42,7 +41,7 @@ const UPCOMING_LIMIT = 5;
 
 export interface BillingChargeView {
   id: string;
-  customerId: string;
+  customerId: string | null;
   customerName: string | null;
   contactId: string | null;
   contactName: string | null;
@@ -127,13 +126,18 @@ export class BillingChargesService {
   async create(dto: CreateBillingChargeDto): Promise<BillingChargeView> {
     const { tenantId } = this.tenantContext.requireContext();
     const dueDate = requireDateOnly(dto.dueDate, 'dueDate');
-    await this.assertCustomer(tenantId, dto.customerId);
-    await this.assertContact(tenantId, dto.customerId, dto.contactId);
+
+    const party = await resolveBillingParty(
+      this.prisma,
+      tenantId,
+      dto.customerId,
+      dto.contactId,
+    );
 
     if (dto.recurrence) {
       const recurrenceInput: CreateBillingRecurrenceDto = {
-        customerId: dto.customerId,
-        contactId: dto.contactId,
+        customerId: party.customerId ?? undefined,
+        contactId: party.contactId ?? undefined,
         description: dto.description,
         amountCents: dto.amountCents,
         startDate: dueDate,
@@ -156,8 +160,8 @@ export class BillingChargesService {
     const charge = await this.prisma.billingCharge.create({
       data: {
         tenantId,
-        customerId: dto.customerId,
-        contactId: dto.contactId ?? null,
+        customerId: party.customerId,
+        contactId: party.contactId,
         description: dto.description.trim(),
         amountCents: dto.amountCents,
         dueDate: parseDateOnly(dueDate),
@@ -175,12 +179,22 @@ export class BillingChargesService {
       throw new BillingChargeNotEditableError();
     }
 
+    const data: Prisma.BillingChargeUncheckedUpdateInput = {};
     if (dto.contactId !== undefined && dto.contactId !== null) {
-      await this.assertContact(tenantId, current.customerId, dto.contactId);
+      const contactCustomerId = await assertBillingContact(
+        this.prisma,
+        tenantId,
+        dto.contactId,
+        current.customerId,
+      );
+      data.contactId = dto.contactId;
+      if (contactCustomerId) {
+        data.customerId = contactCustomerId;
+      }
+    } else if (dto.contactId === null) {
+      data.contactId = null;
     }
 
-    const data: Prisma.BillingChargeUncheckedUpdateInput = {};
-    if (dto.contactId !== undefined) data.contactId = dto.contactId;
     if (dto.description !== undefined) data.description = dto.description.trim();
     if (dto.amountCents !== undefined) data.amountCents = dto.amountCents;
     if (dto.dueDate !== undefined) data.dueDate = parseDateOnly(requireDateOnly(dto.dueDate, 'dueDate'));
@@ -316,6 +330,7 @@ export class BillingChargesService {
     }
 
     if (query.customerId) where.customerId = query.customerId;
+    if (query.contactId) where.contactId = query.contactId;
     if (query.recurrenceId) where.recurrenceId = query.recurrenceId;
 
     const dueRange: Prisma.DateTimeFilter = {};
@@ -361,33 +376,6 @@ export class BillingChargesService {
       throw new BillingChargeNotFoundError();
     }
     return charge;
-  }
-
-  private async assertCustomer(tenantId: string, customerId: string): Promise<void> {
-    const customer = await this.prisma.customer.findFirst({
-      where: { id: customerId, tenantId },
-      select: { id: true },
-    });
-    if (!customer) {
-      throw new BillingCustomerNotFoundError();
-    }
-  }
-
-  private async assertContact(
-    tenantId: string,
-    customerId: string,
-    contactId?: string | null,
-  ): Promise<void> {
-    if (!contactId) {
-      return;
-    }
-    const contact = await this.prisma.contact.findFirst({
-      where: { id: contactId, tenantId },
-      select: { customerId: true },
-    });
-    if (!contact || (contact.customerId && contact.customerId !== customerId)) {
-      throw new BillingContactNotFoundError();
-    }
   }
 }
 

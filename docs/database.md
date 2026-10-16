@@ -60,6 +60,14 @@ do CRM) e/ou um `Customer` (`customer_id` opcional). Idempotência: `BillingChar
 `20261016132814_billing_module`, `20261016141533_billing_contact_party` e
 `20261016150000_billing_manual_reminders`. Detalhes em [`billing.md`](./billing.md).
 
+### Módulos por organização
+
+`Module` (catálogo: `key` estável, nome, descrição, categoria, ícone, `sortOrder`, `controllable`) e
+`TenantModule` (`tenantId` + `moduleId` único, `enabled`). Ausência de linha equivale a habilitado,
+preservando o comportamento das organizações existentes. `AdminAuditLog` registra as alterações
+administrativas (`actorUserId`, `tenantId`, `action`, `entity`, `entityId`, `metadata`). Migration
+`20261017090000_modules`, com seed idempotente do catálogo. Ver [`modules.md`](./modules.md).
+
 ### LGPD e compliance (Prompt 09)
 
 `DataSubjectRequest` (trilha de direitos do titular e revisões do art. 20) e campos de conformidade

@@ -63,6 +63,11 @@ export class UpdateMemberDto {
   active?: boolean;
 }
 
+export class UpdateTenantModuleDto {
+  @IsBoolean()
+  enabled!: boolean;
+}
+
 export class ListTenantsQueryDto extends PaginationQueryDto {}
 
 export class ListUsersQueryDto extends PaginationQueryDto {}

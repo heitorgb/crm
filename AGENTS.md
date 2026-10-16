@@ -18,6 +18,8 @@ Status atual (ver `docs/architecture.md` para detalhes):
 
 - **Implementado:** fundação do backend (NestJS + Fastify, config validada, Prisma, Redis, logging,
   tratamento de erros, TenantContext, health check, testes e CI).
+- **Implementado:** módulos por organização (catálogo + disponibilidade por tenant, gestão restrita
+  ao administrador da plataforma). Ver `docs/modules.md`.
 - **Planejado:** autenticação/autorização, módulos de CRM, multi-tenancy com RLS, filas, realtime, IA.
 - **Futuro:** frontend (React + Vite), integrações (WhatsApp/Evolution API), dashboards, relatórios.
 

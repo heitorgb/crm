@@ -3,7 +3,11 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import { PageLoader } from '@/components/common/page-loader';
 import { AppLayout } from '@/components/layout/app-layout';
 import { LoginPage } from '@/features/auth/login-page';
+import { ModuleRoute } from '@/features/modules/module-route';
+import { ModuleUnavailablePage } from '@/features/modules/module-unavailable-page';
+import { MODULE_KEYS } from '@/types/modules';
 import { ProtectedRoute } from './protected-route';
+import { PlatformAdminRoute } from './platform-admin-route';
 
 const AttendancePage = lazy(() =>
   import('@/features/attendance/attendance-page').then((module) => ({
@@ -58,19 +62,63 @@ export function AppRoutes() {
             </ProtectedRoute>
           }
         >
-          <Route path="/atendimento/conversas" element={<AttendancePage />} />
+          <Route
+            path="/atendimento/conversas"
+            element={
+              <ModuleRoute moduleKey={MODULE_KEYS.ATTENDANCE}>
+                <AttendancePage />
+              </ModuleRoute>
+            }
+          />
           <Route
             path="/atendimento/whatsapp"
             element={<Navigate to="/configuracoes?tab=whatsapp" replace />}
           />
 
-          <Route path="/admin/tenants" element={<AdminTenantsPage />} />
-          <Route path="/admin/tenants/:id" element={<AdminTenantDetailPage />} />
+          <Route
+            path="/admin/tenants"
+            element={
+              <PlatformAdminRoute>
+                <AdminTenantsPage />
+              </PlatformAdminRoute>
+            }
+          />
+          <Route
+            path="/admin/tenants/:id"
+            element={
+              <PlatformAdminRoute>
+                <AdminTenantDetailPage />
+              </PlatformAdminRoute>
+            }
+          />
 
-          <Route path="/contatos" element={<ContactListPage />} />
-          <Route path="/contatos/:id" element={<ContactDetailPage />} />
+          <Route
+            path="/contatos"
+            element={
+              <ModuleRoute moduleKey={MODULE_KEYS.CONTACTS}>
+                <ContactListPage />
+              </ModuleRoute>
+            }
+          />
+          <Route
+            path="/contatos/:id"
+            element={
+              <ModuleRoute moduleKey={MODULE_KEYS.CONTACTS}>
+                <ContactDetailPage />
+              </ModuleRoute>
+            }
+          />
 
-          <Route path="/cobrancas" element={<BillingPage />} />
+          <Route
+            path="/cobrancas"
+            element={
+              <ModuleRoute moduleKey={MODULE_KEYS.BILLING_CHARGES}>
+                <BillingPage />
+              </ModuleRoute>
+            }
+          />
+
+          <Route path="/indisponivel" element={<ModuleUnavailablePage />} />
 
           <Route path="/perfil" element={<ProfilePage />} />
           <Route path="/configuracoes" element={<SettingsPage />} />

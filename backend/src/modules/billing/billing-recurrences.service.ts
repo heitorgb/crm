@@ -4,6 +4,8 @@ import { buildPage, skipOf, type PageResult } from '../../common/http/pagination
 import { TenantContextService } from '../../common/tenant-context/tenant-context.service.js';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service.js';
 import { BillingInvalidDateError, BillingRecurrenceNotFoundError } from './billing.errors.js';
+import { MODULE_KEYS } from '../modules/modules.constants.js';
+import { ModulesService } from '../modules/modules.service.js';
 import { assertBillingContact, resolveBillingParty } from './billing-party.js';
 import {
   addMonthsClamped,
@@ -47,6 +49,7 @@ export class BillingRecurrencesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly tenantContext: TenantContextService,
+    private readonly modules: ModulesService,
   ) {}
 
   async list(query: ListBillingRecurrencesQueryDto): Promise<PageResult<BillingRecurrenceView>> {
@@ -191,7 +194,17 @@ export class BillingRecurrencesService {
     });
 
     let created = 0;
+    const chargesEnabled = new Map<string, boolean>();
     for (const recurrence of due) {
+      let enabled = chargesEnabled.get(recurrence.tenantId);
+      if (enabled === undefined) {
+        enabled = await this.modules.isEnabled(recurrence.tenantId, MODULE_KEYS.BILLING_CHARGES);
+        chargesEnabled.set(recurrence.tenantId, enabled);
+      }
+      if (!enabled) {
+        continue;
+      }
+
       const endDate = recurrence.endDate ? formatDateOnly(recurrence.endDate) : null;
       let cursor = formatDateOnly(recurrence.nextRunDate);
       let iterations = 0;

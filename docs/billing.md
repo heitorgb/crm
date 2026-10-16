@@ -231,6 +231,20 @@ Filtros de `/billing/charges`: `status` (`PENDING`/`OVERDUE`/`PAID`/`CANCELED`),
   backend (frequência em minutos, janela de envio e fuso), sem valores fixos no código.
 - Estados de carregamento, vazio, erro e confirmações de ação.
 
+## Módulos e proteção por organização
+
+O billing é dividido em dois módulos independentes controláveis por organização (ver
+[`modules.md`](./modules.md)):
+
+- **`billing.charges`** — cobranças e recorrências (inclui a geração automática de cobranças).
+- **`billing.collection`** — Régua de Cobrança: configurações, lembretes automáticos e envio manual.
+
+Quando `billing.collection` está desabilitada, `GET/PATCH /billing/settings`, os endpoints de
+lembretes e o envio manual respondem `403 MODULE_DISABLED`, e o job de lembretes não cria nem
+dispara nada para aquele tenant (os `PENDING` permanecem e voltam a fluir na reativação). Quando
+`billing.charges` está desabilitada, as operações de cobrança/recorrência e a geração automática de
+cobranças ficam bloqueadas. Desativar a Régua de Cobrança **não** desativa o restante do Financeiro.
+
 ## Migração
 
 Migrations versionadas em `backend/prisma/migrations`: `20261016132814_billing_module`,

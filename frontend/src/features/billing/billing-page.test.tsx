@@ -62,6 +62,13 @@ vi.mock('@/features/whatsapp/queries', () => ({
   useWhatsAppInstances: () => ({ data: { data: [] } }),
 }));
 
+vi.mock('@/features/modules/queries', () => ({
+  useEnabledModules: () => ({
+    data: ['attendance', 'contacts', 'billing.charges', 'billing.collection'],
+    isPending: false,
+  }),
+}));
+
 import { BillingPage } from './billing-page';
 
 const charge: BillingCharge = {

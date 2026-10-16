@@ -11,6 +11,8 @@ import {
   Query,
 } from '@nestjs/common';
 import { Roles } from '../auth/decorators/auth.decorators.js';
+import { RequireModule } from '../modules/require-module.decorator.js';
+import { MODULE_KEYS } from '../modules/modules.constants.js';
 import { ContactsService } from './contacts.service.js';
 import {
   CreateContactDto,
@@ -20,6 +22,7 @@ import {
 } from './dto/contact.dto.js';
 
 @Controller('contacts')
+@RequireModule(MODULE_KEYS.CONTACTS)
 export class ContactsController {
   constructor(private readonly contacts: ContactsService) {}
 

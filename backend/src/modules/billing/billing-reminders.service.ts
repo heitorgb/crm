@@ -23,6 +23,9 @@ import {
   EvolutionRequestError,
   EvolutionUnavailableError,
 } from '../whatsapp/evolution/evolution.client.js';
+import { MODULE_KEYS } from '../modules/modules.constants.js';
+import { ModuleDisabledError } from '../modules/modules.errors.js';
+import { ModulesService } from '../modules/modules.service.js';
 import { BillingRecurrencesService } from './billing-recurrences.service.js';
 import { BillingSettingsService, type BillingSettingsView } from './billing-settings.service.js';
 import {
@@ -88,6 +91,7 @@ export class BillingRemindersService {
     private readonly evolution: EvolutionClient,
     private readonly settings: BillingSettingsService,
     private readonly recurrences: BillingRecurrencesService,
+    private readonly modules: ModulesService,
     @Inject(JOB_QUEUE) private readonly queue: JobQueue,
   ) {}
 
@@ -146,6 +150,10 @@ export class BillingRemindersService {
 
     let created = 0;
     for (const { tenantId } of tenantRows) {
+      if (!(await this.modules.isEnabled(tenantId, MODULE_KEYS.BILLING_COLLECTION))) {
+        continue;
+      }
+
       const settings = await this.settings.getForTenant(tenantId);
       if (!settings.remindersEnabled || settings.reminderOffsets.length === 0) {
         continue;
@@ -216,7 +224,20 @@ export class BillingRemindersService {
     });
 
     const settingsByTenant = new Map<string, BillingSettingsView>();
+    const collectionEnabledByTenant = new Map<string, boolean>();
     for (const reminder of due) {
+      let collectionEnabled = collectionEnabledByTenant.get(reminder.tenantId);
+      if (collectionEnabled === undefined) {
+        collectionEnabled = await this.modules.isEnabled(
+          reminder.tenantId,
+          MODULE_KEYS.BILLING_COLLECTION,
+        );
+        collectionEnabledByTenant.set(reminder.tenantId, collectionEnabled);
+      }
+      if (!collectionEnabled) {
+        continue;
+      }
+
       let settings = settingsByTenant.get(reminder.tenantId);
       if (!settings) {
         settings = await this.settings.getForTenant(reminder.tenantId);
@@ -238,6 +259,10 @@ export class BillingRemindersService {
     const tenantId = asString(payload.tenantId);
     const reminderId = asString(payload.reminderId);
     if (!tenantId || !reminderId) {
+      return;
+    }
+
+    if (!(await this.modules.isEnabled(tenantId, MODULE_KEYS.BILLING_COLLECTION))) {
       return;
     }
 
@@ -291,6 +316,10 @@ export class BillingRemindersService {
    */
   async sendManual(chargeId: string, idempotencyKey: string): Promise<BillingReminderView> {
     const { tenantId, userId } = this.tenantContext.requireContext();
+
+    if (!(await this.modules.isEnabled(tenantId, MODULE_KEYS.BILLING_COLLECTION))) {
+      throw new ModuleDisabledError(MODULE_KEYS.BILLING_COLLECTION);
+    }
 
     const existing = await this.prisma.billingReminder.findFirst({
       where: { tenantId, chargeId, idempotencyKey },

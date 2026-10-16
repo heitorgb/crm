@@ -1,11 +1,12 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module.js';
+import { ModulesModule } from '../modules/modules.module.js';
 import { AdminController } from './admin.controller.js';
 import { AdminService } from './admin.service.js';
 import { PlatformAdminGuard } from './platform-admin.guard.js';
 
 @Module({
-  imports: [AuthModule],
+  imports: [AuthModule, ModulesModule],
   controllers: [AdminController],
   providers: [AdminService, PlatformAdminGuard],
 })

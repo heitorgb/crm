@@ -324,15 +324,30 @@ export class MessagesService {
   }
 
   async markOutboundFailed(messageId: string, errorCode: string): Promise<void> {
+    const existing = await this.prisma.message.findUnique({
+      where: { id: messageId },
+      select: { metadata: true },
+    });
+    const metadata = isRecord(existing?.metadata) ? existing.metadata : {};
+
     await this.prisma.message.update({
       where: { id: messageId },
-      data: { status: MessageStatus.FAILED, metadata: { errorCode } as Prisma.InputJsonValue },
+      data: {
+        status: MessageStatus.FAILED,
+        metadata: {
+          ...metadata,
+          errorCode,
+          failedAt: new Date().toISOString(),
+        } as Prisma.InputJsonValue,
+      },
     });
   }
 
   /**
    * System variant used by the webhook to apply delivery/read receipts. Only
-   * advances the status (never downgrades) and never touches inbound messages.
+   * advances the status (never downgrades) and never touches inbound messages,
+   * except for a provider ERROR, which is terminal: it may turn PENDING/SENT
+   * into FAILED, but never regresses DELIVERED/READ or an already FAILED row.
    */
   async updateOutboundStatusByExternalId(input: {
     tenantId: string;
@@ -490,8 +505,15 @@ const OUTBOUND_STATUS_RANK: Record<MessageStatus, number> = {
 };
 
 function shouldAdvanceStatus(current: MessageStatus, next: MessageStatus): boolean {
+  if (current === next) {
+    return false;
+  }
   if (next === MessageStatus.FAILED) {
-    return current === MessageStatus.PENDING;
+    // A provider ERROR is a terminal send outcome. A message that was only
+    // accepted (PENDING) or acked (SENT) can still fail, but once DELIVERED or
+    // READ the recipient already received it, so a late/out-of-order error must
+    // never undo that. A message already FAILED stays FAILED (idempotent).
+    return current === MessageStatus.PENDING || current === MessageStatus.SENT;
   }
   if (current === MessageStatus.FAILED) {
     return false;

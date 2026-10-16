@@ -441,11 +441,16 @@ export class ConversationProcessingService implements OnModuleInit {
         include: { conversation: { include: { instance: true } }, attachments: true },
       });
 
-      if (!message || message.direction !== 'OUTBOUND' || message.status === MessageStatus.SENT) {
+      // Only a message that was never accepted by the provider may be resent:
+      // once it has an external id (accepted) or reached SENT/DELIVERED/READ it
+      // must not go back to the send queue. This is what prevents a delivered
+      // message from being duplicated by a stray retry.
+      if (!message || !isRetryableOutbound(message)) {
         return;
       }
 
       const conversation = message.conversation;
+      const instanceName = conversation.instance.instanceName;
       const destination = deliveryDestination(conversation.externalContactId);
       const showAgentName = isRecord(message.metadata) && message.metadata.showAgentName === true;
       const outgoingText =
@@ -457,21 +462,27 @@ export class ConversationProcessingService implements OnModuleInit {
         conversation.externalContactId,
         readQuotedFromMetadata(message.metadata),
       );
+      const attachment = message.attachments[0];
+      const endpoint = attachment
+        ? message.type === MessageType.AUDIO
+          ? 'POST /message/sendWhatsAppAudio'
+          : 'POST /message/sendMedia'
+        : 'POST /message/sendText';
+      const startedAt = Date.now();
 
       try {
         if (!this.evolution.configured || !destination) {
-          throw new Error('Evolution API not configured or destination missing');
+          throw new EvolutionUnavailableError('Evolution API is not configured for this instance');
         }
 
-        const attachment = message.attachments[0];
         let sent: EvolutionSendResult;
         if (attachment && message.type === MessageType.AUDIO) {
-          sent = await this.evolution.sendWhatsAppAudio(conversation.instance.instanceName, {
+          sent = await this.evolution.sendWhatsAppAudio(instanceName, {
             number: destination,
             audio: (await this.storage.get(attachment.storageKey)).toString('base64'),
           });
         } else if (attachment) {
-          sent = await this.evolution.sendMedia(conversation.instance.instanceName, {
+          sent = await this.evolution.sendMedia(instanceName, {
             number: destination,
             mediatype: mediaTypeForMessage(message.type),
             media: (await this.storage.get(attachment.storageKey)).toString('base64'),
@@ -482,7 +493,7 @@ export class ConversationProcessingService implements OnModuleInit {
           });
         } else {
           sent = await this.evolution.sendText(
-            conversation.instance.instanceName,
+            instanceName,
             destination,
             outgoingText,
             evolutionQuoted ?? undefined,
@@ -490,14 +501,43 @@ export class ConversationProcessingService implements OnModuleInit {
         }
 
         await this.messages.markOutboundStatus(messageId, MessageStatus.SENT, sent.externalMessageId);
-      } catch (error) {
-        await this.messages.markOutboundFailed(messageId, 'EVOLUTION_SEND_FAILED');
-        this.logger.warn(
-          `Failed to resend message ${messageId}: ${
-            error instanceof Error ? error.message : 'unknown'
-          }`,
+        this.logger.debug(
+          `whatsapp.send.succeeded ${JSON.stringify(
+            this.sendLogContext({
+              phase: 'retry',
+              messageId,
+              tenantId,
+              instanceName,
+              endpoint,
+              durationMs: Date.now() - startedAt,
+              externalMessageId: sent.externalMessageId ?? null,
+            }),
+          )}`,
         );
-        throw error;
+      } catch (error) {
+        const failure = classifySendFailure(error);
+        await this.messages.markOutboundFailed(messageId, failure.code);
+        this.logger.warn(
+          `whatsapp.send.failed ${JSON.stringify(
+            this.sendLogContext({
+              phase: 'retry',
+              messageId,
+              tenantId,
+              instanceName,
+              endpoint,
+              durationMs: Date.now() - startedAt,
+              externalMessageId: null,
+              error,
+            }),
+          )}`,
+        );
+        // A retryable provider error (definitive HTTP 429/5xx) lets BullMQ use
+        // its bounded attempts. A network failure has an uncertain outcome, so
+        // the message stays FAILED and is not blindly resent; the operator can
+        // retry explicitly.
+        if (failure.retryable) {
+          throw error;
+        }
       }
     });
   }
@@ -513,20 +553,27 @@ export class ConversationProcessingService implements OnModuleInit {
     quoted: EvolutionQuotedMessage | null,
   ): Promise<void> {
     const destination = deliveryDestination(conversation.externalContactId);
+    const instanceName = conversation.instance.instanceName;
+    const endpoint = file
+      ? type === MessageType.AUDIO
+        ? 'POST /message/sendWhatsAppAudio'
+        : 'POST /message/sendMedia'
+      : 'POST /message/sendText';
+    const startedAt = Date.now();
 
     try {
       if (!this.evolution.configured || !destination) {
-        throw new Error('Evolution API not configured or destination missing');
+        throw new EvolutionUnavailableError('Evolution API is not configured for this instance');
       }
 
       const sent =
         file && type === MessageType.AUDIO
-          ? await this.evolution.sendWhatsAppAudio(conversation.instance.instanceName, {
+          ? await this.evolution.sendWhatsAppAudio(instanceName, {
               number: destination,
               audio: mediaOrText,
             })
           : file
-            ? await this.evolution.sendMedia(conversation.instance.instanceName, {
+            ? await this.evolution.sendMedia(instanceName, {
                 number: destination,
                 mediatype: mediaTypeForMessage(type),
                 media: mediaOrText,
@@ -536,16 +583,61 @@ export class ConversationProcessingService implements OnModuleInit {
                 ...(quoted ? { quoted } : {}),
               })
             : await this.evolution.sendText(
-                conversation.instance.instanceName,
+                instanceName,
                 destination,
                 mediaOrText,
                 quoted ?? undefined,
               );
 
       await this.messages.markOutboundStatus(messageId, MessageStatus.SENT, sent.externalMessageId);
-    } catch {
-      await this.messages.markOutboundFailed(messageId, 'EVOLUTION_SEND_FAILED');
-      await this.queue.enqueue(JOB_NAMES.WHATSAPP_SEND, { tenantId, messageId });
+      this.logger.debug(
+        `whatsapp.send.succeeded ${JSON.stringify(
+          this.sendLogContext({
+            phase: 'initial',
+            messageId,
+            tenantId,
+            instanceName,
+            endpoint,
+            durationMs: Date.now() - startedAt,
+            externalMessageId: sent.externalMessageId ?? null,
+          }),
+        )}`,
+      );
+    } catch (error) {
+      const failure = classifySendFailure(error);
+      await this.messages.markOutboundFailed(messageId, failure.code);
+      this.logger.warn(
+        `whatsapp.send.failed ${JSON.stringify(
+          this.sendLogContext({
+            phase: 'initial',
+            messageId,
+            tenantId,
+            instanceName,
+            endpoint,
+            durationMs: Date.now() - startedAt,
+            externalMessageId: null,
+            error,
+          }),
+        )}`,
+      );
+
+      // Only a definitive provider rejection (HTTP 429/5xx, request completed
+      // but not accepted) is retried automatically. A network failure leaves the
+      // acceptance uncertain, so it is not blindly replayed.
+      if (failure.retryable) {
+        try {
+          await this.queue.enqueue(JOB_NAMES.WHATSAPP_SEND, { tenantId, messageId });
+        } catch (enqueueError) {
+          this.logger.warn(
+            `whatsapp.send.enqueue_failed ${JSON.stringify({
+              messageId,
+              tenantId,
+              instance: instanceName,
+              error: enqueueError instanceof Error ? enqueueError.message : 'unknown',
+            })}`,
+          );
+        }
+      }
     }
 
     await this.touchConversation(conversation.id);
@@ -559,6 +651,28 @@ export class ConversationProcessingService implements OnModuleInit {
       messageId,
       direction: 'OUTBOUND',
     });
+  }
+
+  private sendLogContext(params: {
+    phase: 'initial' | 'retry';
+    messageId: string;
+    tenantId: string;
+    instanceName: string;
+    endpoint: string;
+    durationMs: number;
+    externalMessageId: string | null;
+    error?: unknown;
+  }): Record<string, unknown> {
+    return {
+      phase: params.phase,
+      messageId: params.messageId,
+      tenantId: params.tenantId,
+      instance: params.instanceName,
+      endpoint: params.endpoint,
+      durationMs: params.durationMs,
+      externalMessageId: params.externalMessageId,
+      ...(params.error !== undefined ? { error: sanitizeError(params.error) } : {}),
+    };
   }
 
   private async storeImage(
@@ -861,4 +975,53 @@ function buildOutboundText(
     return text;
   }
   return `*${author.senderName}:*\n${text}`;
+}
+
+function isRetryableOutbound(message: {
+  direction: unknown;
+  status: MessageStatus;
+  externalMessageId: string | null;
+}): boolean {
+  return (
+    message.direction === 'OUTBOUND' &&
+    (message.status === MessageStatus.PENDING || message.status === MessageStatus.FAILED) &&
+    message.externalMessageId === null
+  );
+}
+
+interface SendFailure {
+  code: string;
+  retryable: boolean;
+}
+
+function classifySendFailure(error: unknown): SendFailure {
+  if (error instanceof EvolutionUnavailableError) {
+    return { code: 'EVOLUTION_UNAVAILABLE', retryable: false };
+  }
+  if (error instanceof EvolutionRequestError) {
+    const status = error.httpStatus;
+    if (status === undefined) {
+      // The request never completed (timeout/DNS/socket): acceptance is unknown.
+      return { code: 'EVOLUTION_NETWORK_UNCERTAIN', retryable: false };
+    }
+    return {
+      code: `EVOLUTION_HTTP_${status}`,
+      retryable: status === 429 || status >= 500,
+    };
+  }
+  return { code: 'EVOLUTION_SEND_FAILED', retryable: false };
+}
+
+function sanitizeError(error: unknown): { name: string; message: string; httpStatus?: number } {
+  if (error instanceof EvolutionRequestError) {
+    return {
+      name: error.name,
+      message: error.message,
+      ...(error.httpStatus !== undefined ? { httpStatus: error.httpStatus } : {}),
+    };
+  }
+  if (error instanceof Error) {
+    return { name: error.name, message: error.message };
+  }
+  return { name: 'UnknownError', message: 'unknown' };
 }

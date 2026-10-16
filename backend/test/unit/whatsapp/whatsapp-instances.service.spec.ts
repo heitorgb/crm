@@ -14,7 +14,13 @@ interface EvolutionMock {
 
 interface Harness {
   service: WhatsAppInstancesService;
-  prisma: { whatsAppInstance: { findMany: ReturnType<typeof vi.fn> } };
+  prisma: {
+    whatsAppInstance: {
+      findMany: ReturnType<typeof vi.fn>;
+      findUnique: ReturnType<typeof vi.fn>;
+      update: ReturnType<typeof vi.fn>;
+    };
+  };
   evolution: EvolutionMock;
 }
 
@@ -22,7 +28,13 @@ function createHarness(
   env: Record<string, string | undefined>,
   evolutionConfigured = true,
 ): Harness {
-  const prisma = { whatsAppInstance: { findMany: vi.fn().mockResolvedValue([]) } };
+  const prisma = {
+    whatsAppInstance: {
+      findMany: vi.fn().mockResolvedValue([]),
+      findUnique: vi.fn().mockResolvedValue(null),
+      update: vi.fn().mockResolvedValue({}),
+    },
+  };
   const evolution: EvolutionMock = {
     configured: evolutionConfigured,
     setWebhook: vi.fn().mockResolvedValue({}),
@@ -69,7 +81,14 @@ describe('WhatsAppInstancesService webhook reconciliation', () => {
     expect(evolution.setWebhook).toHaveBeenCalledWith(
       'inst-1',
       'https://crm.example/api/webhooks/evolution?token=secret',
-      ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'MESSAGES_EDITED', 'GROUPS_UPSERT', 'PRESENCE_UPDATE'],
+      [
+        'MESSAGES_UPSERT',
+        'MESSAGES_UPDATE',
+        'MESSAGES_EDITED',
+        'GROUPS_UPSERT',
+        'PRESENCE_UPDATE',
+        'CONNECTION_UPDATE',
+      ],
     );
   });
 
@@ -111,5 +130,57 @@ describe('WhatsAppInstancesService webhook reconciliation', () => {
     await expect(reconcile(service)).resolves.toBeUndefined();
 
     expect(evolution.setWebhook).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('WhatsAppInstancesService.applyProviderConnectionState', () => {
+  it('persists the provider state and reports the change', async () => {
+    const { service, prisma } = createHarness({});
+    prisma.whatsAppInstance.findUnique.mockResolvedValue({
+      id: 'i1',
+      tenantId: 't1',
+      status: 'CONNECTED',
+    });
+
+    const result = await service.applyProviderConnectionState('inst-1', 'close');
+
+    expect(prisma.whatsAppInstance.findUnique).toHaveBeenCalledWith({
+      where: { instanceName: 'inst-1' },
+      select: { id: true, tenantId: true, status: true },
+    });
+    expect(prisma.whatsAppInstance.update).toHaveBeenCalledWith({
+      where: { id: 'i1' },
+      data: { status: 'DISCONNECTED' },
+    });
+    expect(result).toEqual({
+      instanceId: 'i1',
+      tenantId: 't1',
+      status: 'DISCONNECTED',
+      changed: true,
+    });
+  });
+
+  it('does not write (nor signal a change) when the state is unchanged', async () => {
+    const { service, prisma } = createHarness({});
+    prisma.whatsAppInstance.findUnique.mockResolvedValue({
+      id: 'i1',
+      tenantId: 't1',
+      status: 'CONNECTED',
+    });
+
+    const result = await service.applyProviderConnectionState('inst-1', 'open');
+
+    expect(prisma.whatsAppInstance.update).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ status: 'CONNECTED', changed: false });
+  });
+
+  it('ignores a missing state or unknown instance', async () => {
+    const { service, prisma } = createHarness({});
+
+    expect(await service.applyProviderConnectionState('inst-1', null)).toBeNull();
+    expect(prisma.whatsAppInstance.findUnique).not.toHaveBeenCalled();
+
+    prisma.whatsAppInstance.findUnique.mockResolvedValue(null);
+    expect(await service.applyProviderConnectionState('missing', 'close')).toBeNull();
   });
 });

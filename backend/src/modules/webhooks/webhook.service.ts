@@ -139,6 +139,15 @@ export class WebhookService {
       return { accepted: true };
     }
 
+    // Evolution v2 reports the session lifecycle as `connection.update`. It is
+    // authoritative evidence of a degraded session (conflict, device_removed,
+    // connection closed) that `connectionState: open` alone can hide, so it is
+    // persisted and broadcast to the tenant.
+    if (eventType === 'connection.update' || eventType === 'CONNECTION_UPDATE') {
+      await this.handleConnectionUpdate(instance, payload);
+      return { accepted: true };
+    }
+
     if (eventType === 'messages.update') {
       await this.handleMessageUpdate(instance, payload);
       return { accepted: true };
@@ -352,6 +361,36 @@ export class WebhookService {
         state,
       });
     }
+  }
+
+  private async handleConnectionUpdate(
+    instance: ResolvedInstance,
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    const data = isRecord(payload.data) ? payload.data : null;
+    const state = readString(data?.state) ?? readString(data?.connection);
+    const statusReason = readString(data?.statusReason) ?? readString(data?.reason);
+
+    const result = await this.instances.applyProviderConnectionState(instance.instanceName, state);
+    if (!result) {
+      return;
+    }
+
+    this.logger.log(
+      `Connection update for ${instance.instanceName}: ${state ?? 'unknown'} -> ${result.status}${
+        statusReason ? ` (${statusReason})` : ''
+      }`,
+    );
+
+    if (!result.changed) {
+      return;
+    }
+
+    this.realtime.emitToTenant(instance.tenantId, 'whatsapp.instance.updated', {
+      instanceId: result.instanceId,
+      status: result.status,
+      reason: statusReason,
+    });
   }
 
   private async handleMessageEdited(

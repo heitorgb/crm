@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { Link2, Pencil, Plug, Plus, RefreshCw, Smartphone, Trash2, Unplug } from 'lucide-react';
 import { ConfirmDialog } from '@/components/common/confirm-dialog';
 import { EmptyState } from '@/components/common/empty-state';
@@ -15,7 +16,9 @@ import {
   useDeleteWhatsAppInstance,
   useDisconnectWhatsAppInstance,
   useWhatsAppInstances,
+  whatsappKeys,
 } from '@/features/whatsapp/queries';
+import { useRealtime } from '@/providers/use-realtime';
 import { WhatsAppInstanceForm } from '@/features/whatsapp/whatsapp-instance-form';
 import { ApiError } from '@/lib/api-client';
 import type {
@@ -40,10 +43,25 @@ const statusLabel: Record<WhatsAppInstanceStatus, string> = {
 
 export function WhatsAppTab() {
   const query = useWhatsAppInstances({ perPage: 100 });
+  const queryClient = useQueryClient();
+  const { socket } = useRealtime();
   const connect = useConnectWhatsAppInstance();
   const disconnect = useDisconnectWhatsAppInstance();
   const configureWebhook = useConfigureWhatsAppWebhook();
   const deleteInstance = useDeleteWhatsAppInstance();
+
+  useEffect(() => {
+    if (!socket) {
+      return;
+    }
+    const invalidate = (): void => {
+      void queryClient.invalidateQueries({ queryKey: whatsappKeys.all });
+    };
+    socket.on('whatsapp.instance.updated', invalidate);
+    return () => {
+      socket.off('whatsapp.instance.updated', invalidate);
+    };
+  }, [socket, queryClient]);
 
   const [formOpen, setFormOpen] = useState(false);
   const [formNonce, setFormNonce] = useState(0);

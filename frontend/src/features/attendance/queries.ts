@@ -185,6 +185,18 @@ export function useSendConversationMessage() {
   });
 }
 
+export function useEditConversationMessage() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, messageId, content }: { id: string; messageId: string; content: string }) =>
+      attendanceService.editMessage(id, messageId, content),
+    onSuccess: (_result, variables) => {
+      void queryClient.invalidateQueries({ queryKey: attendanceKeys.messages(variables.id) });
+      void queryClient.invalidateQueries({ queryKey: attendanceKeys.all });
+    },
+  });
+}
+
 export function useSendConversationMedia() {
   const queryClient = useQueryClient();
   return useMutation({

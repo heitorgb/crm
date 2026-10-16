@@ -74,6 +74,12 @@ export interface ApplyMessageEditInput {
   type: MessageType;
 }
 
+export interface ApplyMessageEditByIdInput {
+  tenantId: string;
+  messageId: string;
+  content: string | null;
+}
+
 export interface AppliedMessageEdit {
   messageId: string;
   conversationId: string;
@@ -391,6 +397,39 @@ export class MessagesService {
         content: input.content,
         metadata: updatedMetadata as Prisma.InputJsonValue,
         ...(message.type === MessageType.UNKNOWN ? { type: input.type } : {}),
+      },
+    });
+
+    return { messageId: message.id, conversationId: message.conversationId };
+  }
+
+  /**
+   * Applies a human-initiated edit to a message already confirmed as editable.
+   * The row keeps its id, conversation, direction and occurredAt; only the
+   * content changes and the edit marker is merged into metadata. Tenant-scoped,
+   * so it can never touch a message from another tenant.
+   */
+  async applyEditById(input: ApplyMessageEditByIdInput): Promise<AppliedMessageEdit | null> {
+    const message = await this.prisma.message.findFirst({
+      where: { id: input.messageId, tenantId: input.tenantId },
+      select: { id: true, conversationId: true, metadata: true },
+    });
+    if (!message) {
+      return null;
+    }
+
+    const metadata = isRecord(message.metadata) ? message.metadata : {};
+    const updatedMetadata: Record<string, unknown> = {
+      ...metadata,
+      edited: true,
+      editedAt: new Date().toISOString(),
+    };
+
+    await this.prisma.message.update({
+      where: { id: message.id },
+      data: {
+        content: input.content,
+        metadata: updatedMetadata as Prisma.InputJsonValue,
       },
     });
 

@@ -51,6 +51,12 @@ export interface EvolutionMediaMessageKey {
   fromMe?: boolean;
 }
 
+export interface EvolutionUpdateMessageInput {
+  number: string;
+  key: { id: string; remoteJid: string; fromMe: boolean };
+  text: string;
+}
+
 export interface EvolutionMediaContent {
   base64: string;
   mimeType: string | null;
@@ -144,6 +150,27 @@ export class EvolutionClient {
     );
 
     return { externalMessageId: extractMessageId(raw), raw };
+  }
+
+  /**
+   * Edits an already sent message through Evolution's `chat/updateMessage`
+   * endpoint (Evolution v2.x). The provider resolves the original message by the
+   * supplied key, so the whole key and the destination number are mandatory. The
+   * provider only supports text bodies and image/video captions.
+   */
+  async updateMessage(
+    instanceName: string,
+    input: EvolutionUpdateMessageInput,
+  ): Promise<unknown> {
+    return this.request('POST', `/chat/updateMessage/${encodeURIComponent(instanceName)}`, {
+      number: input.number,
+      key: {
+        id: input.key.id,
+        remoteJid: input.key.remoteJid,
+        fromMe: input.key.fromMe,
+      },
+      text: input.text,
+    });
   }
 
   async sendMedia(

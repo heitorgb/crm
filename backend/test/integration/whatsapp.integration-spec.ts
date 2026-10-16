@@ -26,16 +26,25 @@ interface SentMedia {
   mimetype?: string;
 }
 
+interface UpdatedMessage {
+  instance: string;
+  number: string;
+  key: { id: string; remoteJid: string; fromMe: boolean };
+  text: string;
+}
+
 class FakeEvolution {
   configured = true;
   readonly sent: { instance: string; number: string; text: string }[] = [];
   readonly sentMedia: SentMedia[] = [];
   readonly sentAudio: { instance: string; number: string; audio: string }[] = [];
+  readonly updated: UpdatedMessage[] = [];
   readonly created: string[] = [];
   readonly webhooks: { instance: string; url: string; events: string[] }[] = [];
   readonly groupLookups: string[] = [];
   readonly avatarLookups: string[] = [];
   createInstanceError?: { status: number };
+  updateMessageError?: { status: number };
   mediaBase64?: string;
   mediaError?: { status: number };
   mediaMimeType?: string;
@@ -87,6 +96,14 @@ class FakeEvolution {
     this.counter += 1;
     this.sentAudio.push({ ...input, instance });
     return { externalMessageId: `audio-${this.counter}`, raw: {} };
+  }
+
+  async updateMessage(instance: string, input: Omit<UpdatedMessage, 'instance'>) {
+    if (this.updateMessageError) {
+      throw new EvolutionRequestError('update failed', this.updateMessageError.status);
+    }
+    this.updated.push({ ...input, instance });
+    return { key: input.key, status: 'EDITED' };
   }
 
   async getBase64FromMediaMessage() {
@@ -156,6 +173,7 @@ describe('WhatsApp attendance (integration)', () => {
     evolution.sent.length = 0;
     evolution.sentMedia.length = 0;
     evolution.sentAudio.length = 0;
+    evolution.updated.length = 0;
     evolution.created.length = 0;
     evolution.webhooks.length = 0;
     evolution.groupLookups.length = 0;
@@ -163,6 +181,7 @@ describe('WhatsApp attendance (integration)', () => {
     evolution.contactLookups.length = 0;
     evolution.addressBook = [];
     evolution.createInstanceError = undefined;
+    evolution.updateMessageError = undefined;
     evolution.mediaBase64 = undefined;
     evolution.mediaError = undefined;
     evolution.mediaMimeType = undefined;
@@ -1657,6 +1676,248 @@ describe('WhatsApp attendance (integration)', () => {
       expect(response.statusCode).toBe(200);
       const unchanged = await prisma.message.findUniqueOrThrow({ where: { id: original.id } });
       expect(unchanged.content).toBe('Mensagem original');
+    });
+  });
+
+  describe('message editing from the CRM', () => {
+    async function seedOutbound(): Promise<{
+      instanceName: string;
+      conversationId: string;
+      messageId: string;
+      externalMessageId: string;
+    }> {
+      const instanceName = `crm-edit-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      await postWebhook(evolutionPayload(instanceName, randomUUID(), 'Olá'));
+      const conversation = await prisma.conversation.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId },
+      });
+      await app.inject({
+        method: 'POST',
+        url: `/api/conversations/${conversation.id}/messages`,
+        headers: authHeaders(ownerA),
+        payload: { content: 'Resposta do CRM' },
+      });
+      const outbound = await prisma.message.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId, direction: 'OUTBOUND' },
+      });
+      return {
+        instanceName,
+        conversationId: conversation.id,
+        messageId: outbound.id,
+        externalMessageId: outbound.externalMessageId as string,
+      };
+    }
+
+    function editRequest(
+      conversationId: string,
+      messageId: string,
+      content: string,
+      tenant = ownerA,
+    ) {
+      return app.inject({
+        method: 'PATCH',
+        url: `/api/conversations/${conversationId}/messages/${messageId}`,
+        headers: authHeaders(tenant),
+        payload: { content },
+      });
+    }
+
+    it('edits an outbound text message in place and notifies the chat', async () => {
+      const { instanceName, conversationId, messageId, externalMessageId } = await seedOutbound();
+      const original = await prisma.message.findUniqueOrThrow({ where: { id: messageId } });
+      const emit = vi.spyOn(app.get(RealtimeService), 'emitToConversation');
+
+      const response = await editRequest(conversationId, messageId, 'Resposta corrigida');
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({ id: messageId, content: 'Resposta corrigida' });
+
+      const updated = await prisma.message.findUniqueOrThrow({ where: { id: messageId } });
+      expect(updated.content).toBe('Resposta corrigida');
+      expect(updated.metadata).toMatchObject({ edited: true });
+      expect(updated.occurredAt).toEqual(original.occurredAt);
+      expect(await prisma.message.count({ where: { tenantId: ownerA.tenantId } })).toBe(2);
+
+      expect(evolution.updated).toHaveLength(1);
+      expect(evolution.updated[0]).toMatchObject({
+        instance: instanceName,
+        number: '5511999999999',
+        text: 'Resposta corrigida',
+        key: { id: externalMessageId, remoteJid: '5511999999999@s.whatsapp.net', fromMe: true },
+      });
+
+      expect(emit).toHaveBeenCalledWith(
+        ownerA.tenantId,
+        conversationId,
+        'message.updated',
+        expect.objectContaining({ messageId }),
+      );
+      emit.mockRestore();
+    });
+
+    it('edits the caption of an outbound image message', async () => {
+      const { conversationId, messageId } = await seedOutbound();
+      await prisma.message.update({
+        where: { id: messageId },
+        data: { type: 'IMAGE', content: 'legenda antiga' },
+      });
+
+      const response = await editRequest(conversationId, messageId, 'legenda nova');
+
+      expect(response.statusCode).toBe(200);
+      const updated = await prisma.message.findUniqueOrThrow({ where: { id: messageId } });
+      expect(updated.type).toBe('IMAGE');
+      expect(updated.content).toBe('legenda nova');
+      expect(evolution.updated[0]?.text).toBe('legenda nova');
+    });
+
+    it('reuses the full group JID as number and key when editing a group message', async () => {
+      const instanceName = `crm-edit-group-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      const groupJid = '120363555555555555@g.us';
+      await postWebhook({
+        event: 'messages.upsert',
+        instance: instanceName,
+        data: {
+          key: { remoteJid: groupJid, fromMe: false, id: randomUUID(), participant: '5511888888888@s.whatsapp.net' },
+          pushName: 'Maria',
+          message: { conversation: 'Olá grupo' },
+        },
+      });
+      const conversation = await prisma.conversation.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId },
+      });
+      await app.inject({
+        method: 'POST',
+        url: `/api/conversations/${conversation.id}/messages`,
+        headers: authHeaders(ownerA),
+        payload: { content: 'Resposta no grupo' },
+      });
+      const outbound = await prisma.message.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId, direction: 'OUTBOUND' },
+      });
+
+      const response = await editRequest(conversation.id, outbound.id, 'Corrigida no grupo');
+
+      expect(response.statusCode).toBe(200);
+      expect(evolution.updated[0]).toMatchObject({
+        number: groupJid,
+        key: { id: outbound.externalMessageId, remoteJid: groupJid, fromMe: true },
+      });
+    });
+
+    it('never edits a received message', async () => {
+      const instanceName = `crm-edit-in-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      await postWebhook(evolutionPayload(instanceName, randomUUID(), 'Mensagem recebida'));
+      const conversation = await prisma.conversation.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId },
+      });
+      const inbound = await prisma.message.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId, direction: 'INBOUND' },
+      });
+
+      const response = await editRequest(conversation.id, inbound.id, 'Tentativa');
+
+      expect(response.statusCode).toBe(422);
+      expect(response.json().code).toBe('MESSAGE_NOT_EDITABLE');
+      expect(evolution.updated).toHaveLength(0);
+      const unchanged = await prisma.message.findUniqueOrThrow({ where: { id: inbound.id } });
+      expect(unchanged.content).toBe('Mensagem recebida');
+    });
+
+    it('never edits an unsupported message type', async () => {
+      const { conversationId } = await seedOutbound();
+      const document = await prisma.message.create({
+        data: {
+          tenantId: ownerA.tenantId,
+          conversationId,
+          direction: 'OUTBOUND',
+          type: 'DOCUMENT',
+          content: 'arquivo.pdf',
+          externalMessageId: randomUUID(),
+          status: 'SENT',
+        },
+      });
+
+      const response = await editRequest(conversationId, document.id, 'novo nome');
+
+      expect(response.statusCode).toBe(422);
+      expect(response.json().code).toBe('MESSAGE_NOT_EDITABLE');
+      expect(evolution.updated).toHaveLength(0);
+    });
+
+    it('never edits an outbound message without a provider id', async () => {
+      const { conversationId } = await seedOutbound();
+      const pending = await prisma.message.create({
+        data: {
+          tenantId: ownerA.tenantId,
+          conversationId,
+          direction: 'OUTBOUND',
+          type: 'TEXT',
+          content: 'Ainda não confirmada',
+          status: 'PENDING',
+        },
+      });
+
+      const response = await editRequest(conversationId, pending.id, 'nova');
+
+      expect(response.statusCode).toBe(422);
+      expect(response.json().code).toBe('MESSAGE_NOT_EDITABLE');
+      expect(evolution.updated).toHaveLength(0);
+    });
+
+    it('never edits a message from another tenant', async () => {
+      const { conversationId, messageId } = await seedOutbound();
+
+      const response = await editRequest(conversationId, messageId, 'Ataque', ownerB);
+
+      expect(response.statusCode).toBe(404);
+      expect(evolution.updated).toHaveLength(0);
+    });
+
+    it('does not change the message when the provider rejects the edit', async () => {
+      const { conversationId, messageId } = await seedOutbound();
+      evolution.updateMessageError = { status: 400 };
+      const emit = vi.spyOn(app.get(RealtimeService), 'emitToConversation');
+
+      const response = await editRequest(conversationId, messageId, 'Não vai aplicar');
+
+      expect(response.statusCode).toBe(422);
+      expect(response.json().code).toBe('MESSAGE_NOT_EDITABLE');
+      const unchanged = await prisma.message.findUniqueOrThrow({ where: { id: messageId } });
+      expect(unchanged.content).toBe('Resposta do CRM');
+      expect((unchanged.metadata as Record<string, unknown>).edited).toBeUndefined();
+      expect(emit).not.toHaveBeenCalled();
+      emit.mockRestore();
+    });
+
+    it('keeps editing idempotent without creating new messages or moving the row', async () => {
+      const { conversationId, messageId } = await seedOutbound();
+      const original = await prisma.message.findUniqueOrThrow({ where: { id: messageId } });
+      const total = await prisma.message.count({ where: { tenantId: ownerA.tenantId } });
+
+      await editRequest(conversationId, messageId, 'Primeira edição');
+      const second = await editRequest(conversationId, messageId, 'Segunda edição');
+
+      expect(second.statusCode).toBe(200);
+      const updated = await prisma.message.findUniqueOrThrow({ where: { id: messageId } });
+      expect(updated.content).toBe('Segunda edição');
+      expect(updated.occurredAt).toEqual(original.occurredAt);
+      expect(await prisma.message.count({ where: { tenantId: ownerA.tenantId } })).toBe(total);
+    });
+
+    it('rejects an empty content and an unknown message', async () => {
+      const { conversationId, messageId } = await seedOutbound();
+
+      const empty = await editRequest(conversationId, messageId, '   ');
+      expect(empty.statusCode).toBe(422);
+
+      const missing = await editRequest(conversationId, randomUUID(), 'x');
+      expect(missing.statusCode).toBe(404);
+      expect(missing.json().code).toBe('MESSAGE_NOT_FOUND');
+      expect(evolution.updated).toHaveLength(0);
     });
   });
 

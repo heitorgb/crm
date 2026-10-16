@@ -17,10 +17,13 @@ import { RealtimeService } from '../../infrastructure/realtime/realtime.service.
 import { STORAGE, type StorageService } from '../../infrastructure/storage/storage.types.js';
 import {
   EvolutionClient,
+  EvolutionRequestError,
+  EvolutionUnavailableError,
   type EvolutionMediaType,
   type EvolutionQuotedMessage,
   type EvolutionSendResult,
 } from '../whatsapp/evolution/evolution.client.js';
+import { MessageNotEditableError } from './conversations.errors.js';
 import { MessagesService, type QuotedMessageInfo } from './messages.service.js';
 
 const SYSTEM_USER_ID = '00000000-0000-4000-8000-000000000001';
@@ -157,6 +160,57 @@ export class ConversationProcessingService implements OnModuleInit {
       caption ? buildOutboundText(caption, author) : caption,
       buildEvolutionQuoted(conversation.externalContactId, quoted),
     );
+  }
+
+  /** Edits a message already delivered to WhatsApp, in place. */
+  async editText(
+    tenantId: string,
+    conversation: ConversationWithInstance,
+    target: { id: string; externalMessageId: string },
+    content: string,
+  ): Promise<void> {
+    const remoteJid = conversation.externalContactId;
+    const destination = deliveryDestination(remoteJid);
+    if (!this.evolution.configured || !remoteJid || !destination) {
+      throw new EvolutionUnavailableError('Evolution API is not configured for this instance');
+    }
+
+    try {
+      await this.evolution.updateMessage(conversation.instance.instanceName, {
+        number: destination,
+        key: { id: target.externalMessageId, remoteJid, fromMe: true },
+        text: content,
+      });
+    } catch (error) {
+      if (error instanceof EvolutionRequestError && error.httpStatus) {
+        if (error.httpStatus === 404) {
+          throw new MessageNotEditableError(
+            'O WhatsApp não encontrou a mensagem original para editar.',
+          );
+        }
+        if (error.httpStatus === 400 || error.httpStatus === 422) {
+          throw new MessageNotEditableError('O WhatsApp recusou a edição desta mensagem.');
+        }
+      }
+      throw error;
+    }
+
+    const updated = await this.messages.applyEditById({
+      tenantId,
+      messageId: target.id,
+      content,
+    });
+    if (!updated) {
+      return;
+    }
+
+    this.realtime.emitToConversation(tenantId, conversation.id, 'message.updated', {
+      conversationId: conversation.id,
+      messageId: updated.messageId,
+    });
+    this.realtime.emitToTenant(tenantId, 'conversation.updated', {
+      conversationId: conversation.id,
+    });
   }
 
   async processMedia(payload: JobPayload): Promise<void> {

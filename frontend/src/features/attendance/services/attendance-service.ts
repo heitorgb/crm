@@ -95,6 +95,12 @@ export const attendanceService = {
       },
     }),
 
+  editMessage: (id: string, messageId: string, content: string) =>
+    apiRequest<ConversationMessage>(`/conversations/${id}/messages/${messageId}`, {
+      method: 'PATCH',
+      body: { content },
+    }),
+
   sendMedia: (
     id: string,
     file: File,

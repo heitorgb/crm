@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { ConversationStatus, MessageDirection, Prisma } from '@prisma/client';
+import { ConversationStatus, MessageDirection, MessageType, Prisma } from '@prisma/client';
 import { AppException } from '../../common/errors/app.exception.js';
 import { buildPage, skipOf, type PageResult } from '../../common/http/pagination.js';
 import { TenantContextService } from '../../common/tenant-context/tenant-context.service.js';
@@ -13,10 +13,12 @@ import {
   type DeliverMediaInput,
   type OutboundAuthor,
 } from './conversation-processing.service.js';
-import type { QuotedMessageInfo } from './messages.service.js';
+import { MessagesService, type MessageView, type QuotedMessageInfo } from './messages.service.js';
 import {
   ContactPhoneRequiredError,
   ConversationNotFoundError,
+  MessageNotEditableError,
+  MessageNotFoundError,
   WhatsAppInstanceNotFoundError,
 } from './conversations.errors.js';
 import { ContactNotFoundError } from '../contacts/contacts.errors.js';
@@ -35,6 +37,12 @@ export interface ConversationLastMessageView {
 }
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const EDITABLE_MESSAGE_TYPES = new Set<MessageType>([
+  MessageType.TEXT,
+  MessageType.IMAGE,
+  MessageType.VIDEO,
+]);
 
 export interface ConversationView {
   id: string;
@@ -79,6 +87,7 @@ export class ConversationsService {
     private readonly prisma: PrismaService,
     private readonly tenantContext: TenantContextService,
     private readonly processing: ConversationProcessingService,
+    private readonly messages: MessagesService,
     private readonly directory: WhatsAppDirectoryService,
     private readonly realtime: RealtimeService,
     private readonly config: ConfigService<Env, true>,
@@ -525,6 +534,54 @@ export class ConversationsService {
     const author = await this.resolveAuthor(includeAgentName);
     const quoted = await this.resolveQuoted(tenantId, id, quotedMessageId);
     await this.processing.deliverMedia(tenantId, id, input, author, quoted);
+  }
+
+  /**
+   * Edits a message the CRM (or the linked phone) already sent. Only own,
+   * outbound messages with a provider id and a supported type can be edited; the
+   * provider call must succeed before the stored content is changed, so a failed
+   * edit never leaves the CRM showing a change that WhatsApp rejected.
+   */
+  async editHumanMessage(id: string, messageId: string, content: string): Promise<MessageView> {
+    const { tenantId } = this.tenantContext.requireContext();
+    const trimmed = content.trim();
+    if (trimmed.length === 0) {
+      throw new MessageNotEditableError('O conteúdo da mensagem não pode ficar vazio.');
+    }
+
+    const conversation = await this.prisma.conversation.findFirst({
+      where: { id, tenantId, deletedAt: null },
+      include: { instance: true },
+    });
+    if (!conversation) {
+      throw new ConversationNotFoundError();
+    }
+
+    const message = await this.prisma.message.findFirst({
+      where: { id: messageId, tenantId, conversationId: id },
+      select: { id: true, direction: true, type: true, externalMessageId: true },
+    });
+    if (!message) {
+      throw new MessageNotFoundError();
+    }
+    if (message.direction !== MessageDirection.OUTBOUND) {
+      throw new MessageNotEditableError('Somente mensagens enviadas podem ser editadas.');
+    }
+    if (!message.externalMessageId) {
+      throw new MessageNotEditableError('A mensagem ainda não foi confirmada pelo WhatsApp.');
+    }
+    if (!EDITABLE_MESSAGE_TYPES.has(message.type)) {
+      throw new MessageNotEditableError('Este tipo de mensagem não pode ser editado.');
+    }
+
+    await this.processing.editText(
+      tenantId,
+      conversation,
+      { id: message.id, externalMessageId: message.externalMessageId },
+      trimmed,
+    );
+
+    return this.messages.findOne(message.id);
   }
 
   private async resolveAuthor(showAgentName: boolean): Promise<OutboundAuthor> {

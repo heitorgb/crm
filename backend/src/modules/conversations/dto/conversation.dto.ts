@@ -102,3 +102,10 @@ export class StartConversationDto {
   @IsUUID()
   whatsappInstanceId!: string;
 }
+
+export class EditConversationMessageDto {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(4000)
+  content!: string;
+}

@@ -37,6 +37,7 @@ import {
 } from './attendance-utils';
 import { MessageBubble } from './message-bubble';
 import { MessageComposer } from './message-composer';
+import { MessageEditor } from './message-editor';
 import { SenderAvatar } from './sender-avatar';
 
 const SCROLL_BOTTOM_THRESHOLD = 96;
@@ -87,6 +88,7 @@ export function ChatPanel({
   const loadingOlderRef = useRef(false);
   const isGroup = conversation.isGroup;
   const [replyTo, setReplyTo] = useState<ConversationMessage | null>(null);
+  const [editing, setEditing] = useState<ConversationMessage | null>(null);
   const [showJumpToBottom, setShowJumpToBottom] = useState(false);
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -211,6 +213,16 @@ export function ChatPanel({
     atBottomRef.current = false;
     container.scrollTo({ top, behavior: 'smooth' });
     highlightMessage(target.id);
+  };
+
+  const handleStartReply = (message: ConversationMessage): void => {
+    setEditing(null);
+    setReplyTo(message);
+  };
+
+  const handleStartEdit = (message: ConversationMessage): void => {
+    setReplyTo(null);
+    setEditing(message);
   };
 
   return (
@@ -344,8 +356,9 @@ export function ChatPanel({
                     whatsappInstanceId={conversation.whatsappInstanceId}
                     groupedWithPrevious={areGrouped(previous, message, isGroup)}
                     groupedWithNext={areGrouped(message, next, isGroup)}
-                    highlighted={highlightedId === message.id}
-                    onReply={setReplyTo}
+                    highlighted={highlightedId === message.id || editing?.id === message.id}
+                    onReply={handleStartReply}
+                    onEdit={handleStartEdit}
                     onNavigateToQuote={handleNavigateToQuote}
                   />
                 </Fragment>
@@ -369,12 +382,22 @@ export function ChatPanel({
         ) : null}
       </div>
 
-      <MessageComposer
-        key={conversation.id}
-        conversationId={conversation.id}
-        replyTo={replyTo}
-        onCancelReply={() => setReplyTo(null)}
-      />
+      {editing ? (
+        <MessageEditor
+          key={editing.id}
+          conversationId={conversation.id}
+          message={editing}
+          onCancel={() => setEditing(null)}
+          onSaved={() => setEditing(null)}
+        />
+      ) : (
+        <MessageComposer
+          key={conversation.id}
+          conversationId={conversation.id}
+          replyTo={replyTo}
+          onCancelReply={() => setReplyTo(null)}
+        />
+      )}
 
       {notice ? (
         <div className="pointer-events-none absolute inset-x-0 bottom-24 z-30 flex justify-center px-4">

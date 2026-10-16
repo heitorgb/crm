@@ -12,6 +12,12 @@ export class MessageNotFoundError extends AppException {
   }
 }
 
+export class MessageNotEditableError extends AppException {
+  constructor(message = 'This message cannot be edited') {
+    super('MESSAGE_NOT_EDITABLE', message, 422);
+  }
+}
+
 export class ConversationNotHumanOwnedError extends AppException {
   constructor() {
     super(

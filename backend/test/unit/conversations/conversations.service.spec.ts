@@ -71,6 +71,7 @@ function createService(): {
     prisma as unknown as PrismaService,
     tenantContext,
     {} as never,
+    { findOne: vi.fn() } as never,
     {} as never,
     realtime as never,
     {} as never,

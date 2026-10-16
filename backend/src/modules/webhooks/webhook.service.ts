@@ -8,7 +8,7 @@ import {
   MessageType,
   Prisma,
 } from '@prisma/client';
-import { isGroupJid, phoneFromJid } from '../../common/whatsapp/jid.js';
+import { isGroupJid, lidFromJid, phoneFromJid } from '../../common/whatsapp/jid.js';
 import type { Env } from '../../config/env.validation.js';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service.js';
 import { JOB_NAMES, JOB_QUEUE, type JobQueue } from '../../infrastructure/queue/job-queue.types.js';
@@ -211,6 +211,14 @@ export class WebhookService {
     const remoteJidAlt = readString(key?.remoteJidAlt);
     const pushName = readString(data?.pushName);
 
+    // WhatsApp migrated some accounts to LID addressing: the dialable PN may be
+    // delivered silently but fail, while the LID is what actually reaches the
+    // contact. The alternative fields carry it, so it is captured here and used
+    // as the send destination later.
+    const externalLid = isGroup
+      ? null
+      : (lidFromJid(remoteJid) ?? lidFromJid(participantAlt) ?? lidFromJid(remoteJidAlt));
+
     const contact = isGroup
       ? null
       : await this.resolveContact(
@@ -232,6 +240,7 @@ export class WebhookService {
       remoteJid,
       contact?.id ?? null,
       isGroup,
+      externalLid,
       !fromMe,
     );
 
@@ -528,11 +537,12 @@ export class WebhookService {
     externalContactId: string,
     contactId: string | null,
     isGroup: boolean,
+    externalLid: string | null,
     reopenClosed = true,
   ) {
     const existing = await this.prisma.conversation.findFirst({
       where: { tenantId, whatsappInstanceId, externalContactId },
-      select: { id: true, status: true, contactId: true, groupName: true, isGroup: true },
+      select: { id: true, status: true, contactId: true, groupName: true, isGroup: true, externalLid: true },
     });
 
     if (existing) {
@@ -543,6 +553,9 @@ export class WebhookService {
       }
       if (!isGroup && !existing.contactId && contactId) {
         data.contactId = contactId;
+      }
+      if (!isGroup && externalLid && existing.externalLid !== externalLid) {
+        data.externalLid = externalLid;
       }
       if (isGroup && !existing.isGroup) {
         data.isGroup = true;
@@ -564,6 +577,7 @@ export class WebhookService {
         tenantId,
         whatsappInstanceId,
         externalContactId,
+        externalLid: isGroup ? null : externalLid,
         contactId,
         isGroup,
         status: ConversationStatus.OPEN,

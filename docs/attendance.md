@@ -377,12 +377,16 @@ responde `409 CONVERSATION_NOT_HUMAN_OWNED`. O bot só responde enquanto a conve
   itálico ("Você recebeu uma mensagem de visualização única…"), link "Saiba mais" e horário,
   respeitando avatar/nome e o agrupamento existente. Sem esse tratamento a mensagem cairia como
   `UNKNOWN`.
-- **JIDs `@lid`**: conversas endereçadas por LID (`<lid>@lid`) são aceitas. No envio, quando o
-  telefone do contato foi resolvido a partir de `remoteJidAlt`/`participantAlt`, o CRM usa o **número
-  (PN)** como destino em vez do LID: enviar para `@lid` depende do mapeamento LID→PN do provedor, que
-  é instável em contas WhatsApp Business (o envio é aceito com `key.id` mas falha depois com
-  `messages.update` `ERROR`). Quando não há telefone resolvido, mantém-se o LID completo como
-  fallback (`deliveryDestination`).
+- **JIDs `@lid` e contas migradas para LID**: parte das contas foi migrada pelo WhatsApp para
+  endereçamento por **LID**. Nesses casos, enviar para o número (PN) é **aceito** pela Evolution
+  (retorna `key.id`, `status: PENDING`) mas **falha depois** com `messages.update ERROR` — a
+  resolução PN→LID não acontece no caminho de envio (issue EvolutionAPI #2629) —, enquanto o envio
+  para o **LID** é **entregue**. Por isso o webhook captura o LID de
+  `remoteJid`/`remoteJidAlt`/`participantAlt` (quando termina em `@lid`) e o persiste em
+  `Conversation.externalLid`; no envio, `deliveryDestination` usa o **LID** como destino e cai para
+  o **PN** (dígitos) apenas quando nenhum LID foi capturado. Conversas endereçadas por LID
+  (`<lid>@lid`) continuam enviando para o próprio LID. O LID é capturado no mesmo evento em que o
+  contato/telefone é resolvido, então um novo inbound popula conversas já existentes.
 - O webhook é resiliente: qualquer erro inesperado ao processar um evento é registrado em log e a
   Evolution recebe `200` (`ignored: processing_error`), evitando *retry storm* que trava o
   processamento da instância.

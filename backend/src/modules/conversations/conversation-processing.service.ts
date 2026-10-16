@@ -36,7 +36,7 @@ const SYSTEM_USER_ID = '00000000-0000-4000-8000-000000000001';
 const SYSTEM_MEMBERSHIP_ID = '00000000-0000-4000-8000-000000000002';
 
 type ConversationWithInstance = Prisma.ConversationGetPayload<{
-  include: { instance: true; contact: { select: { phone: true } } };
+  include: { instance: true };
 }>;
 
 export interface DeliverMediaInput {
@@ -93,7 +93,7 @@ export class ConversationProcessingService implements OnModuleInit {
   ): Promise<void> {
     const conversation = await this.prisma.conversation.findFirst({
       where: { id: conversationId, tenantId },
-      include: { instance: true, contact: { select: { phone: true } } },
+      include: { instance: true },
     });
     if (!conversation) {
       return;
@@ -136,7 +136,7 @@ export class ConversationProcessingService implements OnModuleInit {
   ): Promise<void> {
     const conversation = await this.prisma.conversation.findFirst({
       where: { id: conversationId, tenantId },
-      include: { instance: true, contact: { select: { phone: true } } },
+      include: { instance: true },
     });
     if (!conversation) {
       return;
@@ -265,7 +265,7 @@ export class ConversationProcessingService implements OnModuleInit {
     content: string,
   ): Promise<void> {
     const remoteJid = conversation.externalContactId;
-    const destination = deliveryDestination(remoteJid, conversation.contact?.phone ?? null);
+    const destination = deliveryDestination(remoteJid, conversation.externalLid);
     if (conversation.instance.status !== WhatsAppInstanceStatus.CONNECTED) {
       throw new WhatsAppInstanceNotConnectedError();
     }
@@ -458,7 +458,7 @@ export class ConversationProcessingService implements OnModuleInit {
       const message = await this.prisma.message.findFirst({
         where: { id: messageId, tenantId },
         include: {
-          conversation: { include: { instance: true, contact: { select: { phone: true } } } },
+          conversation: { include: { instance: true } },
           attachments: true,
         },
       });
@@ -488,7 +488,7 @@ export class ConversationProcessingService implements OnModuleInit {
       const instanceName = conversation.instance.instanceName;
       const destination = deliveryDestination(
         conversation.externalContactId,
-        conversation.contact?.phone ?? null,
+        conversation.externalLid,
       );
       const showAgentName = isRecord(message.metadata) && message.metadata.showAgentName === true;
       const outgoingText =
@@ -592,7 +592,7 @@ export class ConversationProcessingService implements OnModuleInit {
   ): Promise<void> {
     const destination = deliveryDestination(
       conversation.externalContactId,
-      conversation.contact?.phone ?? null,
+      conversation.externalLid,
     );
     const instanceName = conversation.instance.instanceName;
     const endpoint = file
@@ -883,19 +883,22 @@ function normalizePhone(value: string): string {
 
 function deliveryDestination(
   externalContactId: string | null,
-  contactPhone: string | null = null,
+  externalLid: string | null = null,
 ): string {
   const value = externalContactId ?? '';
   if (value.endsWith('@g.us')) {
     return value;
   }
+  // On accounts migrated to LID addressing, sending to the dialable phone (PN)
+  // is accepted by the provider but then fails (`messages.update ERROR`) — the
+  // PN→LID resolution is missing on the send path. The LID captured from the
+  // inbound (`remoteJidAlt`/`participantAlt`) is what actually delivers, so it
+  // is preferred whenever it is known. A `@lid` conversation keeps its own JID.
+  if (externalLid) {
+    return externalLid;
+  }
   if (value.endsWith('@lid')) {
-    // A LID is not a dialable address and relies on the provider's LID→PN
-    // mapping, which is unreliable on WhatsApp Business accounts: the send is
-    // accepted but fails later. When the contact's phone was resolved from
-    // `remoteJidAlt`/`participantAlt`, prefer it; otherwise keep the LID.
-    const phone = contactPhone ? normalizePhone(contactPhone) : '';
-    return phone.length > 0 ? phone : value;
+    return value;
   }
   return normalizePhone(value);
 }

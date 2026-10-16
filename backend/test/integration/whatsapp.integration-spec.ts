@@ -2343,7 +2343,7 @@ describe('WhatsApp attendance (integration)', () => {
       emit.mockRestore();
     });
 
-    it('keeps the LID as the destination when there is no resolvable phone', async () => {
+    it('sends to the LID when the conversation is addressed by a LID', async () => {
       const instanceName = `lid-${randomUUID()}`;
       await createInstance(ownerA, instanceName);
       await postWebhook(evolutionPayload(instanceName, randomUUID(), 'oi', '75209205874877@lid'));
@@ -2352,6 +2352,7 @@ describe('WhatsApp attendance (integration)', () => {
         where: { tenantId: ownerA.tenantId },
       });
       expect(conversation.externalContactId).toBe('75209205874877@lid');
+      expect(conversation.externalLid).toBe('75209205874877@lid');
       expect(conversation.contactId).toBeNull();
 
       await app.inject({
@@ -2365,23 +2366,24 @@ describe('WhatsApp attendance (integration)', () => {
       expect(evolution.sent[0].number).toBe('75209205874877@lid');
     });
 
-    it('sends to the resolved phone when a LID conversation carries a PN alternative', async () => {
-      const instanceName = `lid-pn-${randomUUID()}`;
+    it('captures the LID from remoteJidAlt and prefers it over the phone when sending', async () => {
+      const instanceName = `pn-lid-${randomUUID()}`;
       await createInstance(ownerA, instanceName);
       await postWebhook(
         evolutionPayload(
           instanceName,
           randomUUID(),
           'oi',
-          '75209205874877@lid',
           '5511888888888@s.whatsapp.net',
+          '75209205874877@lid',
         ),
       );
 
       const conversation = await prisma.conversation.findFirstOrThrow({
         where: { tenantId: ownerA.tenantId },
       });
-      expect(conversation.externalContactId).toBe('75209205874877@lid');
+      expect(conversation.externalContactId).toBe('5511888888888@s.whatsapp.net');
+      expect(conversation.externalLid).toBe('75209205874877@lid');
       expect(conversation.contactId).not.toBeNull();
 
       const contact = await prisma.contact.findFirstOrThrow({
@@ -2397,7 +2399,7 @@ describe('WhatsApp attendance (integration)', () => {
       });
 
       expect(evolution.sent).toHaveLength(1);
-      expect(evolution.sent[0].number).toBe('5511888888888');
+      expect(evolution.sent[0].number).toBe('75209205874877@lid');
     });
 
     it('blocks the send and persists nothing when the instance is not connected', async () => {

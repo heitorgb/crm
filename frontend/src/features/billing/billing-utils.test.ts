@@ -6,10 +6,32 @@ import {
   offsetLabel,
   parseCurrencyToCents,
   parseOffsets,
+  reminderOutcomeMessage,
   reminderStatusLabel,
   resolveBillingError,
   serializeOffsets,
 } from './billing-utils';
+import type { BillingReminder } from '@/types/billing';
+
+function reminder(overrides: Partial<BillingReminder>): BillingReminder {
+  return {
+    id: 'r1',
+    chargeId: 'c1',
+    offsetDays: 0,
+    origin: 'MANUAL',
+    createdByUserId: 'u1',
+    scheduledFor: '2026-10-16',
+    status: 'SENT',
+    attempts: 1,
+    destination: '5511999999999',
+    whatsappInstanceId: 'i1',
+    externalMessageId: 'ext-1',
+    errorMessage: null,
+    processedAt: '2026-10-16T12:00:00.000Z',
+    createdAt: '2026-10-16T12:00:00.000Z',
+    ...overrides,
+  };
+}
 
 describe('billing-utils', () => {
   it('formats cents as BRL', () => {
@@ -64,5 +86,30 @@ describe('billing-utils', () => {
     expect(resolveBillingError(conflict, 'fallback')).toBe('Cobrança não encontrada');
 
     expect(resolveBillingError('unexpected', 'fallback')).toBe('fallback');
+  });
+
+  it('describes manual reminder outcomes without claiming delivery', () => {
+    const sent = reminderOutcomeMessage(reminder({ status: 'SENT' }));
+    expect(sent.tone).toBe('success');
+    expect(sent.title).toBe('Envio solicitado');
+    expect(sent.description).toContain('aceitou o envio');
+    expect(sent.description).not.toContain('entregue');
+
+    expect(reminderOutcomeMessage(reminder({ status: 'SKIPPED', errorMessage: 'missing_phone' }))).toMatchObject({
+      tone: 'warning',
+      description: 'O cliente não possui um telefone válido.',
+    });
+
+    expect(reminderOutcomeMessage(reminder({ status: 'FAILED', errorMessage: 'no_instance' }))).toMatchObject({
+      tone: 'danger',
+      description: 'Nenhuma instância de WhatsApp conectada e disponível.',
+    });
+
+    expect(
+      reminderOutcomeMessage(reminder({ status: 'FAILED', errorMessage: 'evolution_http_500' })),
+    ).toMatchObject({
+      tone: 'danger',
+      description: 'O WhatsApp recusou o envio do lembrete.',
+    });
   });
 });

@@ -793,4 +793,211 @@ describe('Billing (integration)', () => {
       );
     });
   });
+
+  describe('manual reminders', () => {
+    async function setupCharge(
+      tenant: SeededTenant,
+      options: { phone?: string | null } = {},
+    ): Promise<string> {
+      const customerId = await createCustomer(tenant, 'Cobrado Manual');
+      if (options.phone !== null) {
+        await createContact(tenant, customerId, options.phone ?? '5511999999999');
+      }
+      const created = await createCharge(tenant, {
+        customerId,
+        description: 'Mensalidade',
+        amountCents: 9900,
+        dueDate: today(),
+      });
+      return created.json().id as string;
+    }
+
+    function sendManual(tenant: SeededTenant, chargeId: string, idempotencyKey: string) {
+      return app.inject({
+        method: 'POST',
+        url: `/api/billing/charges/${chargeId}/reminders`,
+        headers: authHeaders(tenant),
+        payload: { idempotencyKey },
+      });
+    }
+
+    it('sends a reminder immediately for a pending charge', async () => {
+      await createConnectedInstance(ownerA);
+      const chargeId = await setupCharge(ownerA);
+
+      const response = await sendManual(ownerA, chargeId, randomUUID());
+
+      expect(response.statusCode).toBe(201);
+      expect(response.json()).toMatchObject({
+        chargeId,
+        origin: 'MANUAL',
+        createdByUserId: ownerA.userId,
+        status: 'SENT',
+        destination: '5511999999999',
+      });
+      expect(response.json().externalMessageId).not.toBeNull();
+      expect(evolution.sent).toHaveLength(1);
+    });
+
+    it('works even when the automatic automation is disabled', async () => {
+      await createConnectedInstance(ownerA);
+      await updateSettings(ownerA, { remindersEnabled: false, reminderOffsets: [] });
+      const chargeId = await setupCharge(ownerA);
+
+      await reminders.runScan();
+      const autoCount = await prisma.billingReminder.count({
+        where: { chargeId, origin: 'AUTOMATIC' },
+      });
+
+      const response = await sendManual(ownerA, chargeId, randomUUID());
+
+      expect(autoCount).toBe(0);
+      expect(response.statusCode).toBe(201);
+      expect(response.json().status).toBe('SENT');
+      expect(evolution.sent).toHaveLength(1);
+    });
+
+    it('blocks paid and canceled charges', async () => {
+      await createConnectedInstance(ownerA);
+      const paidChargeId = await setupCharge(ownerA);
+      await app.inject({
+        method: 'POST',
+        url: `/api/billing/charges/${paidChargeId}/pay`,
+        headers: authHeaders(ownerA),
+      });
+
+      const paid = await sendManual(ownerA, paidChargeId, randomUUID());
+      expect(paid.statusCode).toBe(409);
+      expect(paid.json().code).toBe('BILLING_CHARGE_NOT_SENDABLE');
+
+      const canceledChargeId = await setupCharge(ownerA);
+      await app.inject({
+        method: 'POST',
+        url: `/api/billing/charges/${canceledChargeId}/cancel`,
+        headers: authHeaders(ownerA),
+      });
+
+      const canceled = await sendManual(ownerA, canceledChargeId, randomUUID());
+      expect(canceled.statusCode).toBe(409);
+      expect(evolution.sent).toHaveLength(0);
+    });
+
+    it('records a skipped reminder when there is no usable phone', async () => {
+      await createConnectedInstance(ownerA);
+      const chargeId = await setupCharge(ownerA, { phone: null });
+
+      const response = await sendManual(ownerA, chargeId, randomUUID());
+
+      expect(response.statusCode).toBe(201);
+      expect(response.json()).toMatchObject({ status: 'SKIPPED', errorMessage: 'missing_phone' });
+      expect(evolution.sent).toHaveLength(0);
+    });
+
+    it('records a failure when no instance is available', async () => {
+      const chargeId = await setupCharge(ownerA);
+
+      const response = await sendManual(ownerA, chargeId, randomUUID());
+
+      expect(response.statusCode).toBe(201);
+      expect(response.json()).toMatchObject({ status: 'FAILED', errorMessage: 'no_instance' });
+      expect(evolution.sent).toHaveLength(0);
+    });
+
+    it('records a failure when Evolution rejects the send', async () => {
+      await createConnectedInstance(ownerA);
+      const chargeId = await setupCharge(ownerA);
+      evolution.failWith = new EvolutionRequestError('boom', 500);
+
+      const response = await sendManual(ownerA, chargeId, randomUUID());
+
+      expect(response.statusCode).toBe(201);
+      expect(response.json()).toMatchObject({ status: 'FAILED', errorMessage: 'evolution_http_500' });
+      expect(response.json().externalMessageId).toBeNull();
+      expect(evolution.sent).toHaveLength(0);
+    });
+
+    it('is idempotent for a repeated request with the same key', async () => {
+      await createConnectedInstance(ownerA);
+      const chargeId = await setupCharge(ownerA);
+      const key = randomUUID();
+
+      const first = await sendManual(ownerA, chargeId, key);
+      const second = await sendManual(ownerA, chargeId, key);
+
+      expect(first.statusCode).toBe(201);
+      expect(second.statusCode).toBe(201);
+      expect(second.json().id).toBe(first.json().id);
+      expect(evolution.sent).toHaveLength(1);
+      expect(
+        await prisma.billingReminder.count({ where: { chargeId, origin: 'MANUAL' } }),
+      ).toBe(1);
+    });
+
+    it('allows new explicit sends with distinct keys', async () => {
+      await createConnectedInstance(ownerA);
+      const chargeId = await setupCharge(ownerA);
+
+      await sendManual(ownerA, chargeId, randomUUID());
+      await sendManual(ownerA, chargeId, randomUUID());
+
+      expect(evolution.sent).toHaveLength(2);
+      expect(
+        await prisma.billingReminder.count({ where: { chargeId, origin: 'MANUAL' } }),
+      ).toBe(2);
+    });
+
+    it('never sends for a charge of another tenant', async () => {
+      await createConnectedInstance(ownerB);
+      const foreignChargeId = await setupCharge(ownerB);
+      await createConnectedInstance(ownerA);
+
+      const response = await sendManual(ownerA, foreignChargeId, randomUUID());
+
+      expect(response.statusCode).toBe(404);
+      expect(evolution.sent).toHaveLength(0);
+      expect(
+        await prisma.billingReminder.count({ where: { chargeId: foreignChargeId } }),
+      ).toBe(0);
+    });
+
+    it('keeps manual and automatic history separate without duplicating automation', async () => {
+      await createConnectedInstance(ownerA);
+      await updateSettings(ownerA, {
+        remindersEnabled: true,
+        reminderOffsets: [0],
+        sendWindowStartHour: 0,
+        sendWindowEndHour: 23,
+      });
+      const chargeId = await setupCharge(ownerA);
+
+      await reminders.runScan();
+      await sendManual(ownerA, chargeId, randomUUID());
+      await reminders.runScan();
+
+      const history = await app.inject({
+        method: 'GET',
+        url: `/api/billing/charges/${chargeId}/reminders`,
+        headers: authHeaders(ownerA),
+      });
+      const origins = history.json().data.map((item: { origin: string }) => item.origin);
+      expect(origins.filter((origin: string) => origin === 'AUTOMATIC')).toHaveLength(1);
+      expect(origins.filter((origin: string) => origin === 'MANUAL')).toHaveLength(1);
+      expect(evolution.sent).toHaveLength(2);
+    });
+
+    it('requires authentication and role', async () => {
+      await createConnectedInstance(ownerA);
+      const chargeId = await setupCharge(ownerA);
+
+      const anonymous = await app.inject({
+        method: 'POST',
+        url: `/api/billing/charges/${chargeId}/reminders`,
+        payload: { idempotencyKey: randomUUID() },
+      });
+      expect(anonymous.statusCode).toBe(401);
+
+      const forbidden = await sendManual(userA, chargeId, randomUUID());
+      expect(forbidden.statusCode).toBe(403);
+    });
+  });
 });

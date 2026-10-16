@@ -75,6 +75,11 @@ enum BillingReminderStatus {
   SKIPPED
 }
 
+enum BillingReminderOrigin {
+  AUTOMATIC
+  MANUAL
+}
+
 model Tenant {
   id        String   @id @default(uuid()) @db.Uuid
   name      String
@@ -448,6 +453,10 @@ model BillingReminder {
   tenantId           String                @map("tenant_id") @db.Uuid
   chargeId           String                @map("charge_id") @db.Uuid
   offsetDays         Int                   @map("offset_days")
+  origin             BillingReminderOrigin @default(AUTOMATIC)
+  createdByUserId    String?               @map("created_by_user_id") @db.Uuid
+  dedupeKey          String?               @map("dedupe_key")
+  idempotencyKey     String?               @map("idempotency_key")
   scheduledFor       DateTime              @map("scheduled_for") @db.Date
   status             BillingReminderStatus @default(PENDING)
   attempts           Int                   @default(0)
@@ -463,7 +472,8 @@ model BillingReminder {
   tenant Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   charge BillingCharge @relation(fields: [chargeId], references: [id], onDelete: Cascade)
 
-  @@unique([chargeId, offsetDays])
+  @@unique([chargeId, dedupeKey])
+  @@unique([chargeId, idempotencyKey])
   @@index([tenantId, status])
   @@index([tenantId, createdAt])
   @@map("billing_reminders")

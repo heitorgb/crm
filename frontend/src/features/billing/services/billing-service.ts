@@ -76,6 +76,12 @@ export const billingService = {
   cancelCharge: (id: string) =>
     apiRequest<BillingCharge>(`/billing/charges/${id}/cancel`, { method: 'POST', body: {} }),
 
+  sendManualReminder: (chargeId: string, idempotencyKey: string) =>
+    apiRequest<BillingReminder>(`/billing/charges/${chargeId}/reminders`, {
+      method: 'POST',
+      body: { idempotencyKey },
+    }),
+
   listReminders: (params: ListRemindersParams) =>
     apiRequest<PageResult<BillingReminder>>(
       `/billing/reminders${toQueryString({

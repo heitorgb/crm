@@ -9,6 +9,7 @@ import {
   Receipt,
   Repeat,
   RefreshCw,
+  Send,
   Wallet,
 } from 'lucide-react';
 import { ConfirmDialog } from '@/components/common/confirm-dialog';
@@ -37,6 +38,7 @@ import { BillingSettingsDialog } from './billing-settings-dialog';
 import { ChargeForm } from './charge-form';
 import { ReminderHistoryDialog } from './reminder-history-dialog';
 import { RecurrencesDialog } from './recurrences-dialog';
+import { SendReminderDialog } from './send-reminder-dialog';
 import { useBillingPermissions } from './use-billing-permissions';
 import {
   useBillingCharges,
@@ -59,6 +61,8 @@ export function BillingPage() {
   const [pendingPay, setPendingPay] = useState<BillingCharge | null>(null);
   const [pendingCancel, setPendingCancel] = useState<BillingCharge | null>(null);
   const [historyCharge, setHistoryCharge] = useState<BillingCharge | null>(null);
+  const [sendCharge, setSendCharge] = useState<BillingCharge | null>(null);
+  const [sendNonce, setSendNonce] = useState(0);
   const [recurrencesOpen, setRecurrencesOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -295,6 +299,21 @@ export function BillingPage() {
                               <BadgeCheck />
                             </Button>
                           ) : null}
+                          {canManage && isOpen ? (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="size-8"
+                              title="Enviar lembrete"
+                              aria-label="Enviar lembrete"
+                              onClick={() => {
+                                setSendCharge(charge);
+                                setSendNonce((value) => value + 1);
+                              }}
+                            >
+                              <Send />
+                            </Button>
+                          ) : null}
                           <Button
                             variant="ghost"
                             size="icon"
@@ -365,6 +384,15 @@ export function BillingPage() {
             ? `${historyCharge.contactName ?? historyCharge.customerName ?? ''} · ${historyCharge.description}`
             : undefined
         }
+      />
+
+      <SendReminderDialog
+        key={sendNonce}
+        open={Boolean(sendCharge)}
+        onOpenChange={(open) => {
+          if (!open) setSendCharge(null);
+        }}
+        charge={sendCharge}
       />
 
       <RecurrencesDialog open={recurrencesOpen} onOpenChange={setRecurrencesOpen} canManage={canManage} />

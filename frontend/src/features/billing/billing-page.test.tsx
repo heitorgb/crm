@@ -25,6 +25,7 @@ vi.mock('./queries', () => ({
   }),
   usePayCharge: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useCancelCharge: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useSendManualReminder: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useChargeReminders: () => ({ data: { data: [] }, isPending: false, isError: false }),
   useBillingRecurrences: () => ({ data: { data: [] }, isPending: false, isError: false }),
   useDeactivateRecurrence: () => ({ mutateAsync: vi.fn(), isPending: false }),

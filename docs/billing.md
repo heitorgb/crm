@@ -70,7 +70,11 @@ Template padrão:
 | Campo               | Observações                                                       |
 | ------------------- | ----------------------------------------------------------------- |
 | `chargeId`          | cobrança relacionada (cascade)                                    |
-| `offsetDays`        | etapa do lembrete                                                 |
+| `offsetDays`        | etapa do lembrete (`0` para manuais)                              |
+| `origin`            | `AUTOMATIC` \| `MANUAL`                                           |
+| `createdByUserId`   | usuário que disparou o envio manual (sem FK — auditoria)          |
+| `dedupeKey`         | chave de idempotência automática (`auto:<offset>`), nula em manuais |
+| `idempotencyKey`    | chave da operação manual (nula em automáticos)                    |
 | `scheduledFor`      | data em que o lembrete venceu                                     |
 | `status`            | `PENDING` \| `PROCESSING` \| `SENT` \| `FAILED` \| `SKIPPED`      |
 | `attempts`          | tentativas realizadas                                             |
@@ -81,8 +85,31 @@ Template padrão:
 | `errorMessage`      | motivo da falha (código seguro, sem segredos)                     |
 | `processedAt`       | data/hora de conclusão                                            |
 
-Constraint único `(chargeId, offsetDays)`: **é a chave de idempotência** — um mesmo par
-cobrança+etapa existe uma única vez, e a criação usa `skipDuplicates`.
+Constraints únicos: `(chargeId, dedupeKey)` — idempotência do automático (um lembrete por
+cobrança+etapa, criação com `skipDuplicates`); `(chargeId, idempotencyKey)` — idempotência do envio
+manual. Chaves nulas (Postgres) não colidem, então várias linhas manuais e automáticas convivem.
+
+## Envio manual
+
+A ação **Enviar lembrete** (ícone + `aria-label`, na linha da cobrança) permite disparar um lembrete
+explicitamente, **independente dos dias/horários da automação** e mesmo com a automação global
+desabilitada (`remindersEnabled=false`). Regras:
+
+- `POST /billing/charges/:id/reminders` com `{ idempotencyKey }` (OWNER/ADMIN).
+- Bloqueia cobranças `PAID`/`CANCELED` (`409 BILLING_CHARGE_NOT_SENDABLE`).
+- Usa o mesmo modelo de mensagem e variáveis do envio automático.
+- Usa a instância configurada; sem configuração, cai no comportamento automático (primeira
+  `CONNECTED`).
+- Sem telefone → registra `SKIPPED (missing_phone)`; sem instância → `FAILED (no_instance)`; erro da
+  Evolution → `FAILED (evolution_http_*)`. A tentativa manual é única (sem retentativas em background),
+  para dar retorno imediato ao usuário.
+- O `idempotencyKey` (gerado pelo frontend por confirmação) impede duplicação por duplo clique ou
+  reenvio da mesma requisição; novas confirmações geram nova chave e são permitidas.
+- `SENT` significa **solicitação aceita** pela Evolution, não entrega confirmada.
+
+O histórico (`GET /billing/charges/:id/reminders`) diferencia `MANUAL` de `AUTOMATIC` e registra
+destinatário, instância, tentativas, resultado e erro. O envio manual **não** altera vencimento,
+valor ou status financeiro.
 
 ## Recorrência
 
@@ -152,6 +179,7 @@ frontend apenas espelha essa regra nos pontos de entrada de gestão (não a subs
 | GET    | `/billing/charges`                    | autenticado   |
 | GET    | `/billing/charges/:id`                | autenticado   |
 | GET    | `/billing/charges/:id/reminders`      | autenticado   |
+| POST   | `/billing/charges/:id/reminders`      | OWNER/ADMIN   |
 | POST   | `/billing/charges`                    | OWNER/ADMIN   |
 | PATCH  | `/billing/charges/:id`                | OWNER/ADMIN   |
 | POST   | `/billing/charges/:id/pay`            | OWNER/ADMIN   |
@@ -172,23 +200,29 @@ Filtros de `/billing/charges`: `status` (`PENDING`/`OVERDUE`/`PAID`/`CANCELED`),
 - Rota `/cobrancas` (menu **Financeiro → Cobranças**).
 - Dashboard com cartões (pendente, vencido, pago no período, lembretes com falha) e próximos
   vencimentos.
-- Listagem com filtros, baixa manual, cancelamento, edição e histórico de lembretes.
+- Listagem com filtros, baixa manual, cancelamento, edição, envio manual de lembrete e histórico de
+  lembretes.
 - Formulário único de cobrança (avulsa ou recorrente mensal).
-- Diálogo de recorrências e diálogo de configuração de lembretes.
+- Diálogo de recorrências, de configuração de lembretes e de confirmação do envio manual (com
+  estado de carregamento e resultado real da operação).
 - Estados de carregamento, vazio, erro e confirmações de ação.
 
 ## Migração
 
-Migration `20261016132814_billing_module` (versionada em `backend/prisma/migrations`) e, para
-permitir cobrar contatos, `20261016141533_billing_contact_party` (torna `customer_id` opcional e
-adiciona índices por `contact_id`). Aplicar com `npm run prisma:deploy` (ambientes não interativos)
-ou `npm run prisma:migrate` (dev).
+Migrations versionadas em `backend/prisma/migrations`: `20261016132814_billing_module`,
+`20261016141533_billing_contact_party` (torna `customer_id` opcional e indexa `contact_id`) e
+`20261016150000_billing_manual_reminders` (adiciona `origin`, `created_by_user_id`, `dedupe_key`,
+`idempotency_key` e backfill da idempotência automática). Aplicar com `npm run prisma:deploy`
+(ambientes não interativos) ou `npm run prisma:migrate` (dev).
 
 ## Testes
 
 - Unit: `test/unit/billing/billing-utils.spec.ts` (datas, moeda, template, offsets).
 - Integração: `test/integration/billing.integration-spec.ts` cobre CRUD, validação, baixa manual,
   vencimento, permissões, isolamento entre tenants, recorrência sem duplicação, idempotência dos
-  lembretes, falha da Evolution com retentativas, ausência de telefone/instância e interrupção
-  após pagamento. Usa `FakeEvolution`, sem chamadas reais.
-- Frontend: `billing-utils.test.ts` e `billing-page.test.tsx` (renderização e estados principais).
+  lembretes, falha da Evolution com retentativas, ausência de telefone/instância, interrupção após
+  pagamento e **envio manual** (com automação desabilitada, bloqueio de pagas/canceladas, idempotência
+  por requisição repetida, novas ações legítimas e histórico separado do automático). Usa
+  `FakeEvolution`, sem chamadas reais.
+- Frontend: `billing-utils.test.ts`, `billing-page.test.tsx` e `send-reminder-dialog.test.tsx`
+  (renderização, estados e confirmação do envio manual).

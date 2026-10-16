@@ -20,12 +20,13 @@ jobs:
         env:
           APP_DIR: ${{ vars.DEPLOY_PATH }}
           DEPLOY_BRANCH: main
+          UPDATE_EVOLUTION: ${{ vars.UPDATE_EVOLUTION }}
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           port: ${{ secrets.DEPLOY_PORT || '22' }}
-          envs: APP_DIR,DEPLOY_BRANCH
+          envs: APP_DIR,DEPLOY_BRANCH,UPDATE_EVOLUTION
           script_stop: true
           command_timeout: 30m
           script: |

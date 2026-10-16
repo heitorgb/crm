@@ -1,4 +1,4 @@
-import { isGroupJid, phoneFromJid } from '../../../../src/common/whatsapp/jid.js';
+import { isGroupJid, lidFromJid, phoneFromJid } from '../../../../src/common/whatsapp/jid.js';
 
 describe('whatsapp jid helpers', () => {
   describe('phoneFromJid', () => {
@@ -32,6 +32,22 @@ describe('whatsapp jid helpers', () => {
     it('detects group JIDs', () => {
       expect(isGroupJid('120363000000000000@g.us')).toBe(true);
       expect(isGroupJid('559984057083@s.whatsapp.net')).toBe(false);
+    });
+  });
+
+  describe('lidFromJid', () => {
+    it('extracts a LID and drops the device suffix', () => {
+      expect(lidFromJid('75209205874877@lid')).toBe('75209205874877@lid');
+      expect(lidFromJid('229428613357801:92@lid')).toBe('229428613357801@lid');
+    });
+
+    it('returns null for phone, group and malformed identifiers', () => {
+      expect(lidFromJid('559984057083@s.whatsapp.net')).toBeNull();
+      expect(lidFromJid('120363000000000000@g.us')).toBeNull();
+      expect(lidFromJid('@lid')).toBeNull();
+      expect(lidFromJid('')).toBeNull();
+      expect(lidFromJid(null)).toBeNull();
+      expect(lidFromJid(undefined)).toBeNull();
     });
   });
 });

@@ -267,6 +267,7 @@ model Conversation {
   tenantId           String             @map("tenant_id") @db.Uuid
   whatsappInstanceId String             @map("whatsapp_instance_id") @db.Uuid
   externalContactId  String?            @map("external_contact_id")
+  externalLid        String?            @map("external_lid")
   customerId         String?            @map("customer_id") @db.Uuid
   contactId          String?            @map("contact_id") @db.Uuid
   status             ConversationStatus @default(OPEN)

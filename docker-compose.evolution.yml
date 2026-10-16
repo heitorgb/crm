@@ -44,7 +44,7 @@ services:
       retries: 10
 
   evolution:
-    image: ${EVOLUTION_IMAGE:-evoapicloud/evolution-api:v2.3.7}
+    image: ${EVOLUTION_IMAGE:-evoapicloud/evolution-api:2.4.0-rc2}
     container_name: orderup-evolution
     restart: unless-stopped
     ports:
@@ -55,6 +55,7 @@ services:
       DATABASE_ENABLED: 'true'
       DATABASE_PROVIDER: postgresql
       DATABASE_CONNECTION_URI: postgresql://${EVOLUTION_POSTGRES_USER:-evolution}:${EVOLUTION_POSTGRES_PASSWORD:-evolution}@evolution-postgres:5432/${EVOLUTION_POSTGRES_DB:-evolution}
+      DATABASE_URL: postgresql://${EVOLUTION_POSTGRES_USER:-evolution}:${EVOLUTION_POSTGRES_PASSWORD:-evolution}@evolution-postgres:5432/${EVOLUTION_POSTGRES_DB:-evolution}
       DATABASE_SAVE_DATA_INSTANCE: 'true'
       DATABASE_SAVE_DATA_NEW_MESSAGE: 'true'
       DATABASE_SAVE_MESSAGE_UPDATE: 'true'

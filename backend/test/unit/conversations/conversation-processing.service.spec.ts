@@ -83,6 +83,8 @@ function seedMessage(
       id: 'conversation-1',
       externalContactId: '5511999999999@s.whatsapp.net',
       externalLid: null,
+      preferredAddress: null,
+      contact: { phone: null },
       instance: { instanceName: 'inst-1', status: 'CONNECTED' },
     },
   });
@@ -126,7 +128,9 @@ describe('ConversationProcessingService.retrySend', () => {
     await service.retrySend({ tenantId: 'tenant-1', messageId: 'message-1' });
 
     expect(evolution.sendText).toHaveBeenCalledTimes(1);
-    expect(messages.markOutboundStatus).toHaveBeenCalledWith('message-1', 'SENT', 'new-ext');
+    expect(messages.markOutboundStatus).toHaveBeenCalledWith('message-1', 'SENT', 'new-ext', {
+      destinationType: 'PN',
+    });
     expect(messages.persistOutbound).not.toHaveBeenCalled();
   });
 
@@ -153,6 +157,45 @@ describe('ConversationProcessingService.retrySend', () => {
 
     expect(messages.markOutboundFailed).toHaveBeenCalledWith('message-1', 'EVOLUTION_NETWORK_UNCERTAIN');
   });
+
+  it('resends a failed message to the preferred address when asked to fall back', async () => {
+    const { service, prisma, evolution, messages } = createHarness();
+    seedMessage(prisma, { status: 'FAILED', externalMessageId: 'ext-failed' });
+    prisma.message.findFirst.mockResolvedValue({
+      id: 'message-1',
+      tenantId: 'tenant-1',
+      direction: 'OUTBOUND',
+      type: MessageType.TEXT,
+      content: 'Olá',
+      senderId: 'user-1',
+      senderName: 'Atendente',
+      externalMessageId: 'ext-failed',
+      status: 'FAILED',
+      metadata: { fallbackAttempted: true },
+      attachments: [],
+      conversation: {
+        id: 'conversation-1',
+        externalContactId: '5511999999999@s.whatsapp.net',
+        externalLid: '75209205874877@lid',
+        preferredAddress: 'PN',
+        contact: { phone: null },
+        instance: { instanceName: 'inst-1', status: 'CONNECTED' },
+      },
+    });
+    evolution.sendText.mockResolvedValue({ externalMessageId: 'new-ext', raw: {} });
+
+    await service.retrySend({ tenantId: 'tenant-1', messageId: 'message-1', fallback: true });
+
+    expect(evolution.sendText).toHaveBeenCalledWith(
+      'inst-1',
+      '5511999999999',
+      'Olá',
+      undefined,
+    );
+    expect(messages.markOutboundStatus).toHaveBeenCalledWith('message-1', 'SENT', 'new-ext', {
+      destinationType: 'PN',
+    });
+  });
 });
 
 describe('ConversationProcessingService.dispatch', () => {
@@ -162,6 +205,8 @@ describe('ConversationProcessingService.dispatch', () => {
       tenantId: 'tenant-1',
       externalContactId: '5511999999999@s.whatsapp.net',
       externalLid: null,
+      preferredAddress: null,
+      contact: { phone: null },
       instance: { instanceName: 'inst-1', status: 'CONNECTED' },
     });
   }
@@ -211,6 +256,8 @@ describe('ConversationProcessingService.dispatch', () => {
       tenantId: 'tenant-1',
       externalContactId: '5511999999999@s.whatsapp.net',
       externalLid: '75209205874877@lid',
+      preferredAddress: null,
+      contact: { phone: null },
       instance: { instanceName: 'inst-1', status: 'CONNECTED' },
     });
     evolution.sendText.mockResolvedValue({ externalMessageId: 'ext-1', raw: {} });
@@ -225,6 +272,54 @@ describe('ConversationProcessingService.dispatch', () => {
     );
   });
 
+  it('honors the learned PN preference over the LID', async () => {
+    const { service, prisma, evolution } = createHarness();
+    seedConversation(prisma);
+    prisma.conversation.findFirst.mockResolvedValue({
+      id: 'conversation-1',
+      tenantId: 'tenant-1',
+      externalContactId: '5511999999999@s.whatsapp.net',
+      externalLid: '75209205874877@lid',
+      preferredAddress: 'PN',
+      contact: { phone: null },
+      instance: { instanceName: 'inst-1', status: 'CONNECTED' },
+    });
+    evolution.sendText.mockResolvedValue({ externalMessageId: 'ext-1', raw: {} });
+
+    await service.deliverText('tenant-1', 'conversation-1', 'Olá', author);
+
+    expect(evolution.sendText).toHaveBeenCalledWith(
+      'inst-1',
+      '5511999999999',
+      'Olá',
+      undefined,
+    );
+  });
+
+  it('uses the contact phone when the conversation is LID-addressed and PN is preferred', async () => {
+    const { service, prisma, evolution } = createHarness();
+    seedConversation(prisma);
+    prisma.conversation.findFirst.mockResolvedValue({
+      id: 'conversation-1',
+      tenantId: 'tenant-1',
+      externalContactId: '75209205874877@lid',
+      externalLid: null,
+      preferredAddress: 'PN',
+      contact: { phone: '5511888888888' },
+      instance: { instanceName: 'inst-1', status: 'CONNECTED' },
+    });
+    evolution.sendText.mockResolvedValue({ externalMessageId: 'ext-1', raw: {} });
+
+    await service.deliverText('tenant-1', 'conversation-1', 'Olá', author);
+
+    expect(evolution.sendText).toHaveBeenCalledWith(
+      'inst-1',
+      '5511888888888',
+      'Olá',
+      undefined,
+    );
+  });
+
   it('sends to the LID when the conversation itself is addressed by a LID', async () => {
     const { service, prisma, evolution } = createHarness();
     seedConversation(prisma);
@@ -233,6 +328,8 @@ describe('ConversationProcessingService.dispatch', () => {
       tenantId: 'tenant-1',
       externalContactId: '75209205874877@lid',
       externalLid: null,
+      preferredAddress: null,
+      contact: { phone: null },
       instance: { instanceName: 'inst-1', status: 'CONNECTED' },
     });
     evolution.sendText.mockResolvedValue({ externalMessageId: 'ext-1', raw: {} });
@@ -255,6 +352,8 @@ describe('ConversationProcessingService.dispatch', () => {
       tenantId: 'tenant-1',
       externalContactId: '5511999999999@s.whatsapp.net',
       externalLid: null,
+      preferredAddress: null,
+      contact: { phone: null },
       instance: { instanceName: 'inst-1', status: 'CONNECTED' },
     });
     evolution.sendText.mockResolvedValue({ externalMessageId: 'ext-1', raw: {} });
@@ -277,6 +376,8 @@ describe('ConversationProcessingService.dispatch', () => {
       tenantId: 'tenant-1',
       externalContactId: '5511999999999@s.whatsapp.net',
       externalLid: null,
+      preferredAddress: null,
+      contact: { phone: null },
       instance: { instanceName: 'inst-1', status: 'DISCONNECTED' },
     });
 

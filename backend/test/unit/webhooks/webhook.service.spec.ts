@@ -12,20 +12,32 @@ import type { WhatsAppInstancesService } from '../../../src/modules/whatsapp/wha
 
 interface Harness {
   service: WebhookService;
-  prisma: { webhookEvent: { create: ReturnType<typeof vi.fn> } };
+  prisma: {
+    webhookEvent: { create: ReturnType<typeof vi.fn> };
+    message: { findFirst: ReturnType<typeof vi.fn> };
+    conversation: { update: ReturnType<typeof vi.fn> };
+  };
   instances: {
     resolveByInstanceName: ReturnType<typeof vi.fn>;
     applyProviderConnectionState: ReturnType<typeof vi.fn>;
   };
-  messages: { updateOutboundStatusByExternalId: ReturnType<typeof vi.fn> };
+  messages: {
+    updateOutboundStatusByExternalId: ReturnType<typeof vi.fn>;
+    markFallbackAttempted: ReturnType<typeof vi.fn>;
+  };
   realtime: {
     emitToTenant: ReturnType<typeof vi.fn>;
     emitToConversation: ReturnType<typeof vi.fn>;
   };
+  queue: { enqueue: ReturnType<typeof vi.fn> };
 }
 
 function createHarness(): Harness {
-  const prisma = { webhookEvent: { create: vi.fn().mockResolvedValue({}) } };
+  const prisma = {
+    webhookEvent: { create: vi.fn().mockResolvedValue({}) },
+    message: { findFirst: vi.fn().mockResolvedValue(null) },
+    conversation: { update: vi.fn().mockResolvedValue({}) },
+  };
   const instances = {
     resolveByInstanceName: vi.fn().mockResolvedValue({
       id: 'instance-1',
@@ -35,8 +47,12 @@ function createHarness(): Harness {
     }),
     applyProviderConnectionState: vi.fn().mockResolvedValue(null),
   };
-  const messages = { updateOutboundStatusByExternalId: vi.fn().mockResolvedValue(null) };
+  const messages = {
+    updateOutboundStatusByExternalId: vi.fn().mockResolvedValue(null),
+    markFallbackAttempted: vi.fn().mockResolvedValue(undefined),
+  };
   const realtime = { emitToTenant: vi.fn(), emitToConversation: vi.fn() };
+  const queue = { enqueue: vi.fn().mockResolvedValue(undefined) };
 
   const service = new WebhookService(
     prisma as unknown as PrismaService,
@@ -46,10 +62,10 @@ function createHarness(): Harness {
     messages as unknown as MessagesService,
     realtime as unknown as RealtimeService,
     { get: vi.fn(() => false) } as unknown as ConfigService<Env, true>,
-    { enqueue: vi.fn() } as unknown as JobQueue,
+    queue as unknown as JobQueue,
   );
 
-  return { service, prisma, instances, messages, realtime };
+  return { service, prisma, instances, messages, realtime, queue };
 }
 
 describe('WebhookService messages.update', () => {
@@ -96,6 +112,72 @@ describe('WebhookService messages.update', () => {
     );
     expect(realtime.emitToConversation).not.toHaveBeenCalled();
     expect(realtime.emitToTenant).not.toHaveBeenCalled();
+  });
+
+  it('falls back a failed outbound message to the alternate address', async () => {
+    const { service, prisma, messages, queue } = createHarness();
+    messages.updateOutboundStatusByExternalId.mockResolvedValue({
+      messageId: 'message-1',
+      conversationId: 'conversation-1',
+      status: 'FAILED',
+    });
+    prisma.message.findFirst.mockResolvedValue({
+      id: 'message-1',
+      metadata: {},
+      conversation: {
+        id: 'conversation-1',
+        externalContactId: '5511999999999@s.whatsapp.net',
+        externalLid: '75209205874877@lid',
+        preferredAddress: null,
+        contact: { phone: null },
+      },
+    });
+
+    await service.ingestEvolution({
+      event: 'messages.update',
+      instance: 'inst-1',
+      data: [{ keyId: 'ext-1', status: 'ERROR' }],
+    });
+
+    expect(prisma.conversation.update).toHaveBeenCalledWith({
+      where: { id: 'conversation-1' },
+      data: { preferredAddress: 'PN' },
+    });
+    expect(messages.markFallbackAttempted).toHaveBeenCalledWith('message-1');
+    expect(queue.enqueue).toHaveBeenCalledWith('whatsapp.message.send', {
+      tenantId: 'tenant-1',
+      messageId: 'message-1',
+      fallback: true,
+    });
+  });
+
+  it('does not fall back again when the message was already attempted', async () => {
+    const { service, prisma, messages, queue } = createHarness();
+    messages.updateOutboundStatusByExternalId.mockResolvedValue({
+      messageId: 'message-1',
+      conversationId: 'conversation-1',
+      status: 'FAILED',
+    });
+    prisma.message.findFirst.mockResolvedValue({
+      id: 'message-1',
+      metadata: { fallbackAttempted: true },
+      conversation: {
+        id: 'conversation-1',
+        externalContactId: '5511999999999@s.whatsapp.net',
+        externalLid: '75209205874877@lid',
+        preferredAddress: 'PN',
+        contact: { phone: null },
+      },
+    });
+
+    await service.ingestEvolution({
+      event: 'messages.update',
+      instance: 'inst-1',
+      data: [{ keyId: 'ext-1', status: 'ERROR' }],
+    });
+
+    expect(prisma.conversation.update).not.toHaveBeenCalled();
+    expect(queue.enqueue).not.toHaveBeenCalled();
   });
 
   it('is idempotent for a duplicated provider event', async () => {

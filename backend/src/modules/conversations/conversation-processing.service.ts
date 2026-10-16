@@ -8,6 +8,10 @@ import {
   Prisma,
   WhatsAppInstanceStatus,
 } from '@prisma/client';
+import {
+  pickDestination,
+  type DestinationInput,
+} from '../../common/whatsapp/destination.js';
 import type { TenantContext } from '../../common/tenant-context/tenant-context.types.js';
 import { TenantContextService } from '../../common/tenant-context/tenant-context.service.js';
 import type { Env } from '../../config/env.validation.js';
@@ -36,8 +40,16 @@ const SYSTEM_USER_ID = '00000000-0000-4000-8000-000000000001';
 const SYSTEM_MEMBERSHIP_ID = '00000000-0000-4000-8000-000000000002';
 
 type ConversationWithInstance = Prisma.ConversationGetPayload<{
-  include: { instance: true };
+  include: { instance: true; contact: { select: { phone: true } } };
 }>;
+
+function destinationInput(conversation: ConversationWithInstance): DestinationInput {
+  return {
+    externalContactId: conversation.externalContactId,
+    externalLid: conversation.externalLid,
+    contactPhone: conversation.contact?.phone ?? null,
+  };
+}
 
 export interface DeliverMediaInput {
   buffer: Buffer;
@@ -93,7 +105,7 @@ export class ConversationProcessingService implements OnModuleInit {
   ): Promise<void> {
     const conversation = await this.prisma.conversation.findFirst({
       where: { id: conversationId, tenantId },
-      include: { instance: true },
+      include: { instance: true, contact: { select: { phone: true } } },
     });
     if (!conversation) {
       return;
@@ -136,7 +148,7 @@ export class ConversationProcessingService implements OnModuleInit {
   ): Promise<void> {
     const conversation = await this.prisma.conversation.findFirst({
       where: { id: conversationId, tenantId },
-      include: { instance: true },
+      include: { instance: true, contact: { select: { phone: true } } },
     });
     if (!conversation) {
       return;
@@ -265,7 +277,7 @@ export class ConversationProcessingService implements OnModuleInit {
     content: string,
   ): Promise<void> {
     const remoteJid = conversation.externalContactId;
-    const destination = deliveryDestination(remoteJid, conversation.externalLid);
+    const destination = pickDestination(destinationInput(conversation), conversation.preferredAddress);
     if (conversation.instance.status !== WhatsAppInstanceStatus.CONNECTED) {
       throw new WhatsAppInstanceNotConnectedError();
     }
@@ -275,7 +287,7 @@ export class ConversationProcessingService implements OnModuleInit {
 
     try {
       await this.evolution.updateMessage(conversation.instance.instanceName, {
-        number: destination,
+        number: destination.address,
         key: { id: target.externalMessageId, remoteJid, fromMe: true },
         text: content,
       });
@@ -450,6 +462,7 @@ export class ConversationProcessingService implements OnModuleInit {
   async retrySend(payload: JobPayload): Promise<void> {
     const tenantId = asString(payload.tenantId);
     const messageId = asString(payload.messageId);
+    const fallback = payload.fallback === true;
     if (!tenantId || !messageId) {
       return;
     }
@@ -458,16 +471,15 @@ export class ConversationProcessingService implements OnModuleInit {
       const message = await this.prisma.message.findFirst({
         where: { id: messageId, tenantId },
         include: {
-          conversation: { include: { instance: true } },
+          conversation: { include: { instance: true, contact: { select: { phone: true } } } },
           attachments: true,
         },
       });
 
-      // Only a message that was never accepted by the provider may be resent:
-      // once it has an external id (accepted) or reached SENT/DELIVERED/READ it
-      // must not go back to the send queue. This is what prevents a delivered
-      // message from being duplicated by a stray retry.
-      if (!message || !isRetryableOutbound(message)) {
+      // A normal retry only resends a message the provider never accepted. A
+      // fallback resend (triggered by a provider ERROR) resends a message that
+      // was accepted but failed, now to the alternate address, exactly once.
+      if (!message || !isSendable(message, fallback)) {
         return;
       }
 
@@ -475,7 +487,7 @@ export class ConversationProcessingService implements OnModuleInit {
       if (conversation.instance.status !== WhatsAppInstanceStatus.CONNECTED) {
         this.logger.warn(
           `whatsapp.send.skipped ${JSON.stringify({
-            phase: 'retry',
+            phase: fallback ? 'fallback' : 'retry',
             messageId,
             tenantId,
             instance: conversation.instance.instanceName,
@@ -486,9 +498,9 @@ export class ConversationProcessingService implements OnModuleInit {
       }
 
       const instanceName = conversation.instance.instanceName;
-      const destination = deliveryDestination(
-        conversation.externalContactId,
-        conversation.externalLid,
+      const destination = pickDestination(
+        destinationInput(conversation),
+        conversation.preferredAddress,
       );
       const showAgentName = isRecord(message.metadata) && message.metadata.showAgentName === true;
       const outgoingText =
@@ -516,12 +528,12 @@ export class ConversationProcessingService implements OnModuleInit {
         let sent: EvolutionSendResult;
         if (attachment && message.type === MessageType.AUDIO) {
           sent = await this.evolution.sendWhatsAppAudio(instanceName, {
-            number: destination,
+            number: destination.address,
             audio: (await this.storage.get(attachment.storageKey)).toString('base64'),
           });
         } else if (attachment) {
           sent = await this.evolution.sendMedia(instanceName, {
-            number: destination,
+            number: destination.address,
             mediatype: mediaTypeForMessage(message.type),
             media: (await this.storage.get(attachment.storageKey)).toString('base64'),
             fileName: attachment.fileName,
@@ -532,13 +544,15 @@ export class ConversationProcessingService implements OnModuleInit {
         } else {
           sent = await this.evolution.sendText(
             instanceName,
-            destination,
+            destination.address,
             outgoingText,
             evolutionQuoted ?? undefined,
           );
         }
 
-        await this.messages.markOutboundStatus(messageId, MessageStatus.SENT, sent.externalMessageId);
+        await this.messages.markOutboundStatus(messageId, MessageStatus.SENT, sent.externalMessageId, {
+          destinationType: destination.type,
+        });
         this.logger.debug(
           `whatsapp.send.succeeded ${JSON.stringify(
             this.sendLogContext({
@@ -590,9 +604,9 @@ export class ConversationProcessingService implements OnModuleInit {
     caption: string | null,
     quoted: EvolutionQuotedMessage | null,
   ): Promise<void> {
-    const destination = deliveryDestination(
-      conversation.externalContactId,
-      conversation.externalLid,
+    const destination = pickDestination(
+      destinationInput(conversation),
+      conversation.preferredAddress,
     );
     const instanceName = conversation.instance.instanceName;
     const endpoint = file
@@ -610,12 +624,12 @@ export class ConversationProcessingService implements OnModuleInit {
       const sent =
         file && type === MessageType.AUDIO
           ? await this.evolution.sendWhatsAppAudio(instanceName, {
-              number: destination,
+              number: destination.address,
               audio: mediaOrText,
             })
           : file
             ? await this.evolution.sendMedia(instanceName, {
-                number: destination,
+                number: destination.address,
                 mediatype: mediaTypeForMessage(type),
                 media: mediaOrText,
                 fileName: file.fileName,
@@ -625,12 +639,14 @@ export class ConversationProcessingService implements OnModuleInit {
               })
             : await this.evolution.sendText(
                 instanceName,
-                destination,
+                destination.address,
                 mediaOrText,
                 quoted ?? undefined,
               );
 
-      await this.messages.markOutboundStatus(messageId, MessageStatus.SENT, sent.externalMessageId);
+      await this.messages.markOutboundStatus(messageId, MessageStatus.SENT, sent.externalMessageId, {
+        destinationType: destination.type,
+      });
       this.logger.debug(
         `whatsapp.send.succeeded ${JSON.stringify(
           this.sendLogContext({
@@ -877,32 +893,6 @@ function asString(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
-function normalizePhone(value: string): string {
-  return value.replace(/\D/g, '');
-}
-
-function deliveryDestination(
-  externalContactId: string | null,
-  externalLid: string | null = null,
-): string {
-  const value = externalContactId ?? '';
-  if (value.endsWith('@g.us')) {
-    return value;
-  }
-  // On accounts migrated to LID addressing, sending to the dialable phone (PN)
-  // is accepted by the provider but then fails (`messages.update ERROR`) — the
-  // PN→LID resolution is missing on the send path. The LID captured from the
-  // inbound (`remoteJidAlt`/`participantAlt`) is what actually delivers, so it
-  // is preferred whenever it is known. A `@lid` conversation keeps its own JID.
-  if (externalLid) {
-    return externalLid;
-  }
-  if (value.endsWith('@lid')) {
-    return value;
-  }
-  return normalizePhone(value);
-}
-
 function decodeBase64(value: string): Buffer | null {
   const commaIndex = value.indexOf('base64,');
   const payload = commaIndex >= 0 ? value.slice(commaIndex + 'base64,'.length) : value;
@@ -1042,6 +1032,21 @@ function isRetryableOutbound(message: {
     (message.status === MessageStatus.PENDING || message.status === MessageStatus.FAILED) &&
     message.externalMessageId === null
   );
+}
+
+/** A fallback resend targets a message the provider accepted but failed. */
+function isFallbackEligible(message: {
+  direction: unknown;
+  status: MessageStatus;
+}): boolean {
+  return message.direction === 'OUTBOUND' && message.status === MessageStatus.FAILED;
+}
+
+function isSendable(
+  message: { direction: unknown; status: MessageStatus; externalMessageId: string | null },
+  fallback: boolean,
+): boolean {
+  return fallback ? isFallbackEligible(message) : isRetryableOutbound(message);
 }
 
 interface SendFailure {

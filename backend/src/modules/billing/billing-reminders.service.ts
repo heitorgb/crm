@@ -203,7 +203,7 @@ export class BillingRemindersService {
         charge: {
           include: {
             customer: { select: { name: true } },
-            contact: { select: { phone: true } },
+            contact: { select: { name: true, phone: true } },
           },
         },
       },
@@ -249,7 +249,7 @@ export class BillingRemindersService {
     const attempt = reminder.attempts + 1;
 
     const text = renderReminderTemplate(settings.messageTemplate, {
-      cliente: charge.customer.name,
+      cliente: charge.contact?.name ?? charge.customer?.name ?? 'cliente',
       descricao: charge.description,
       valor: formatCurrencyBRL(charge.amountCents),
       vencimento: formatDateOnly(charge.dueDate),
@@ -326,11 +326,15 @@ export class BillingRemindersService {
 
   private async resolveDestination(
     tenantId: string,
-    charge: { customerId: string; contact: { phone: string | null } | null },
+    charge: { customerId: string | null; contact: { phone: string | null } | null },
   ): Promise<string | null> {
     const direct = normalizePhone(charge.contact?.phone);
     if (direct) {
       return direct;
+    }
+
+    if (!charge.customerId) {
+      return null;
     }
 
     const contact = await this.prisma.contact.findFirst({

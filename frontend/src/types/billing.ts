@@ -8,7 +8,7 @@ export type BillingRecurrenceFrequency = 'MONTHLY';
 
 export interface BillingCharge {
   id: string;
-  customerId: string;
+  customerId: string | null;
   customerName: string | null;
   contactId: string | null;
   contactName: string | null;
@@ -42,9 +42,10 @@ export interface BillingReminder {
 
 export interface BillingRecurrence {
   id: string;
-  customerId: string;
+  customerId: string | null;
   customerName: string | null;
   contactId: string | null;
+  contactName: string | null;
   description: string;
   amountCents: number;
   frequency: BillingRecurrenceFrequency;
@@ -78,7 +79,7 @@ export interface BillingOverview {
 }
 
 export interface BillingChargeInput {
-  customerId: string;
+  customerId?: string | null;
   contactId?: string | null;
   description: string;
   amountCents: number;
@@ -87,7 +88,7 @@ export interface BillingChargeInput {
 }
 
 export interface BillingRecurrenceInput {
-  customerId: string;
+  customerId?: string | null;
   contactId?: string | null;
   description: string;
   amountCents: number;

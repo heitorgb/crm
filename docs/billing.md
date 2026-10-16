@@ -22,8 +22,8 @@ vindo do cliente é aceito.
 | Campo          | Tipo                    | Observações                                             |
 | -------------- | ----------------------- | ------------------------------------------------------- |
 | `tenantId`     | `uuid`                  | escopo multi-tenant                                     |
-| `customerId`   | `uuid` FK               | cliente existente (nunca cria duplicado)                |
-| `contactId`    | `uuid?` FK              | contato usado no lembrete (opcional)                    |
+| `customerId`   | `uuid?` FK              | cliente (`Customer`) quando existir; nunca cria duplicado |
+| `contactId`    | `uuid?` FK              | contato cobrado (usado também como destinatário)         |
 | `recurrenceId` | `uuid?` FK              | preenchido quando gerada por recorrência                |
 | `description`  | `text`                  |                                                         |
 | `amountCents`  | `int`                   | valor em centavos — evita ponto flutuante               |
@@ -32,6 +32,12 @@ vindo do cliente é aceito.
 | `paidAt`       | `timestamp?`            | data/hora da baixa manual                               |
 | `paidByUserId` | `uuid?`                 | usuário responsável pela baixa (sem FK — auditoria)     |
 | `canceledAt`   | `timestamp?`            |                                                         |
+
+A cobrança referencia **ao menos uma parte**: um `Contact` (o cliente no uso real do CRM, já que
+contatos são importados da agenda do WhatsApp) e/ou um `Customer`. Se o contato estiver ligado a um
+`Customer`, esse vínculo é reaproveitado automaticamente; nenhum `Customer` é criado
+automaticamente. Essa foi a correção do bug em que o seletor de clientes ficava vazio: o formulário
+agora lista os `Contact` existentes em vez de exigir um `Customer` inexistente.
 
 **Vencida** não é armazenada: é derivada (`PENDING` + `dueDate < hoje`). A exposição da API retorna
 `status` efetivo (`PENDING`/`OVERDUE`/`PAID`/`CANCELED`), calculado no fuso `BILLING_TIMEZONE`.
@@ -136,7 +142,9 @@ inesperados e mantém o comportamento previsível.
 
 ## Endpoints
 
-Todos exigem autenticação. Escritas financeiras exigem `OWNER`/`ADMIN`.
+Todos exigem autenticação. Escritas financeiras exigem `OWNER`/`ADMIN` (mesma regra dos demais
+módulos: clientes, contatos e WhatsApp). A regra é aplicada no backend pelo `RolesGuard`; o
+frontend apenas espelha essa regra nos pontos de entrada de gestão (não a substitui).
 
 | Método | Rota                                  | Permissão     |
 | ------ | ------------------------------------- | ------------- |
@@ -171,8 +179,10 @@ Filtros de `/billing/charges`: `status` (`PENDING`/`OVERDUE`/`PAID`/`CANCELED`),
 
 ## Migração
 
-Migration `20261016132814_billing_module` (versionada em `backend/prisma/migrations`). Aplicar com
-`npm run prisma:deploy` (ambientes não interativos) ou `npm run prisma:migrate` (dev).
+Migration `20261016132814_billing_module` (versionada em `backend/prisma/migrations`) e, para
+permitir cobrar contatos, `20261016141533_billing_contact_party` (torna `customer_id` opcional e
+adiciona índices por `contact_id`). Aplicar com `npm run prisma:deploy` (ambientes não interativos)
+ou `npm run prisma:migrate` (dev).
 
 ## Testes
 

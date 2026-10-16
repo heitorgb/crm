@@ -3,12 +3,8 @@ import { BillingChargeStatus, BillingRecurrenceFrequency, Prisma } from '@prisma
 import { buildPage, skipOf, type PageResult } from '../../common/http/pagination.js';
 import { TenantContextService } from '../../common/tenant-context/tenant-context.service.js';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service.js';
-import {
-  BillingCustomerNotFoundError,
-  BillingContactNotFoundError,
-  BillingInvalidDateError,
-  BillingRecurrenceNotFoundError,
-} from './billing.errors.js';
+import { BillingInvalidDateError, BillingRecurrenceNotFoundError } from './billing.errors.js';
+import { assertBillingContact, resolveBillingParty } from './billing-party.js';
 import {
   addMonthsClamped,
   formatDateOnly,
@@ -24,9 +20,10 @@ import type {
 
 export interface BillingRecurrenceView {
   id: string;
-  customerId: string;
+  customerId: string | null;
   customerName: string | null;
   contactId: string | null;
+  contactName: string | null;
   description: string;
   amountCents: number;
   frequency: BillingRecurrenceFrequency;
@@ -40,6 +37,7 @@ export interface BillingRecurrenceView {
 
 const RECURRENCE_INCLUDE = {
   customer: { select: { name: true } },
+  contact: { select: { name: true } },
 } satisfies Prisma.BillingRecurrenceInclude;
 
 type PrismaRecurrence = Prisma.BillingRecurrenceGetPayload<{ include: typeof RECURRENCE_INCLUDE }>;
@@ -57,6 +55,7 @@ export class BillingRecurrencesService {
 
     if (query.active !== undefined) where.active = query.active;
     if (query.customerId) where.customerId = query.customerId;
+    if (query.contactId) where.contactId = query.contactId;
     if (query.search) {
       where.description = { contains: query.search, mode: 'insensitive' };
     }
@@ -91,8 +90,7 @@ export class BillingRecurrencesService {
     dto: CreateBillingRecurrenceDto,
     client: Prisma.TransactionClient = this.prisma,
   ): Promise<{ recurrence: BillingRecurrenceView; firstChargeId: string }> {
-    await this.assertCustomer(client, tenantId, dto.customerId);
-    await this.assertContact(client, tenantId, dto.customerId, dto.contactId);
+    const party = await resolveBillingParty(client, tenantId, dto.customerId, dto.contactId);
 
     const startDate = requireDateOnly(dto.startDate, 'startDate');
     const endDate = dto.endDate ? requireDateOnly(dto.endDate, 'endDate') : null;
@@ -103,8 +101,8 @@ export class BillingRecurrencesService {
     const recurrence = await client.billingRecurrence.create({
       data: {
         tenantId,
-        customerId: dto.customerId,
-        contactId: dto.contactId ?? null,
+        customerId: party.customerId,
+        contactId: party.contactId,
         description: dto.description.trim(),
         amountCents: dto.amountCents,
         frequency: BillingRecurrenceFrequency.MONTHLY,
@@ -119,8 +117,8 @@ export class BillingRecurrencesService {
     const firstCharge = await client.billingCharge.create({
       data: {
         tenantId,
-        customerId: dto.customerId,
-        contactId: dto.contactId ?? null,
+        customerId: party.customerId,
+        contactId: party.contactId,
         recurrenceId: recurrence.id,
         description: dto.description.trim(),
         amountCents: dto.amountCents,
@@ -137,14 +135,24 @@ export class BillingRecurrencesService {
     const { tenantId } = this.tenantContext.requireContext();
     const current = await this.requireRecurrence(tenantId, id);
 
+    const data: Prisma.BillingRecurrenceUncheckedUpdateInput = {};
     if (dto.contactId !== undefined && dto.contactId !== null) {
-      await this.assertContact(this.prisma, tenantId, current.customerId, dto.contactId);
+      const contactCustomerId = await assertBillingContact(
+        this.prisma,
+        tenantId,
+        dto.contactId,
+        current.customerId,
+      );
+      data.contactId = dto.contactId;
+      if (contactCustomerId) {
+        data.customerId = contactCustomerId;
+      }
+    } else if (dto.contactId === null) {
+      data.contactId = null;
     }
 
-    const data: Prisma.BillingRecurrenceUncheckedUpdateInput = {};
     if (dto.description !== undefined) data.description = dto.description.trim();
     if (dto.amountCents !== undefined) data.amountCents = dto.amountCents;
-    if (dto.contactId !== undefined) data.contactId = dto.contactId;
     if (dto.active !== undefined) data.active = dto.active;
     if (dto.endDate !== undefined) {
       data.endDate = dto.endDate ? parseDateOnly(requireDateOnly(dto.endDate, 'endDate')) : null;
@@ -237,38 +245,6 @@ export class BillingRecurrencesService {
     }
     return recurrence;
   }
-
-  private async assertCustomer(
-    client: Prisma.TransactionClient,
-    tenantId: string,
-    customerId: string,
-  ): Promise<void> {
-    const customer = await client.customer.findFirst({
-      where: { id: customerId, tenantId },
-      select: { id: true },
-    });
-    if (!customer) {
-      throw new BillingCustomerNotFoundError();
-    }
-  }
-
-  private async assertContact(
-    client: Prisma.TransactionClient,
-    tenantId: string,
-    customerId: string,
-    contactId?: string | null,
-  ): Promise<void> {
-    if (!contactId) {
-      return;
-    }
-    const contact = await client.contact.findFirst({
-      where: { id: contactId, tenantId },
-      select: { customerId: true },
-    });
-    if (!contact || (contact.customerId && contact.customerId !== customerId)) {
-      throw new BillingContactNotFoundError();
-    }
-  }
 }
 
 function toView(recurrence: PrismaRecurrence): BillingRecurrenceView {
@@ -277,6 +253,7 @@ function toView(recurrence: PrismaRecurrence): BillingRecurrenceView {
     customerId: recurrence.customerId,
     customerName: recurrence.customer?.name ?? null,
     contactId: recurrence.contactId,
+    contactName: recurrence.contact?.name ?? null,
     description: recurrence.description,
     amountCents: recurrence.amountCents,
     frequency: recurrence.frequency,

@@ -13,7 +13,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import type { BillingRecurrence } from '@/types/billing';
-import { formatCurrency } from './billing-utils';
+import { formatCurrency, resolveBillingError } from './billing-utils';
 import { useBillingRecurrences, useDeactivateRecurrence } from './queries';
 
 interface RecurrencesDialogProps {
@@ -26,13 +26,22 @@ export function RecurrencesDialog({ open, onOpenChange, canManage }: Recurrences
   const recurrences = useBillingRecurrences({ perPage: 50, active: true });
   const deactivate = useDeactivateRecurrence();
   const [pending, setPending] = useState<BillingRecurrence | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const confirmDeactivate = async (): Promise<void> => {
     if (!pending) {
       return;
     }
-    await deactivate.mutateAsync(pending.id);
-    setPending(null);
+    setActionError(null);
+    try {
+      await deactivate.mutateAsync(pending.id);
+      setPending(null);
+    } catch (requestError) {
+      setActionError(
+        resolveBillingError(requestError, 'Não foi possível encerrar a recorrência.'),
+      );
+      setPending(null);
+    }
   };
 
   return (
@@ -45,6 +54,12 @@ export function RecurrencesDialog({ open, onOpenChange, canManage }: Recurrences
               Cada recorrência gera uma nova cobrança por mês até ser encerrada.
             </p>
           </DialogHeader>
+
+          {actionError ? (
+            <p className="rounded-md border border-danger/30 bg-danger/5 p-2 text-xs font-medium text-danger">
+              {actionError}
+            </p>
+          ) : null}
 
           {recurrences.isPending ? (
             <div className="space-y-2">
@@ -77,7 +92,7 @@ export function RecurrencesDialog({ open, onOpenChange, canManage }: Recurrences
                 <TableBody>
                   {recurrences.data.data.map((recurrence) => (
                     <TableRow key={recurrence.id}>
-                      <TableCell>{recurrence.customerName ?? '—'}</TableCell>
+                      <TableCell>{recurrence.contactName ?? recurrence.customerName ?? '—'}</TableCell>
                       <TableCell className="max-w-[10rem] truncate">{recurrence.description}</TableCell>
                       <TableCell>{formatCurrency(recurrence.amountCents)}</TableCell>
                       <TableCell>

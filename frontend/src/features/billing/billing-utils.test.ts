@@ -7,6 +7,7 @@ import {
   parseCurrencyToCents,
   parseOffsets,
   reminderStatusLabel,
+  resolveBillingError,
   serializeOffsets,
 } from './billing-utils';
 
@@ -48,5 +49,20 @@ describe('billing-utils', () => {
     expect(offsetLabel(0)).toBe('No vencimento');
     expect(offsetLabel(-3)).toBe('3 dia(s) antes');
     expect(offsetLabel(2)).toBe('2 dia(s) depois');
+  });
+
+  it('treats a 403 as a permission error and preserves other messages', () => {
+    const forbidden = Object.assign(new Error('Insufficient role for this operation'), {
+      status: 403,
+      code: 'FORBIDDEN',
+    });
+    expect(resolveBillingError(forbidden, 'fallback')).toBe(
+      'Você não tem permissão para esta operação.',
+    );
+
+    const conflict = Object.assign(new Error('Cobrança não encontrada'), { status: 404 });
+    expect(resolveBillingError(conflict, 'fallback')).toBe('Cobrança não encontrada');
+
+    expect(resolveBillingError('unexpected', 'fallback')).toBe('fallback');
   });
 });

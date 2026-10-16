@@ -80,6 +80,7 @@ describe('Billing (integration)', () => {
   let reminders: BillingRemindersService;
   let recurrences: BillingRecurrencesService;
   let ownerA: SeededTenant;
+  let adminA: SeededTenant;
   let userA: SeededTenant;
   let ownerB: SeededTenant;
 
@@ -100,12 +101,13 @@ describe('Billing (integration)', () => {
     evolution.calls = 0;
     evolution.failWith = undefined;
     ownerA = await seedTenant(app, prisma, { name: 'Billing Owner A', role: 'OWNER' });
+    adminA = await seedMember(app, prisma, ownerA.tenantId, { name: 'Billing Admin A', role: 'ADMIN' });
     userA = await seedMember(app, prisma, ownerA.tenantId, { name: 'Billing User A', role: 'USER' });
     ownerB = await seedTenant(app, prisma, { name: 'Billing Owner B', role: 'OWNER' });
   });
 
   afterEach(async () => {
-    await cleanupTenants(prisma, [ownerA, userA, ownerB]);
+    await cleanupTenants(prisma, [ownerA, adminA, userA, ownerB]);
   });
 
   async function createCustomer(tenant: SeededTenant, name = 'Cliente'): Promise<string> {
@@ -407,6 +409,58 @@ describe('Billing (integration)', () => {
       });
       expect(list.statusCode).toBe(200);
     });
+
+    it('lets an ADMIN (not only the OWNER) save the billing settings', async () => {
+      const response = await updateSettings(adminA, {
+        remindersEnabled: true,
+        reminderOffsets: [-5, 0, 5],
+        messageTemplate: 'Oi {cliente}, vence {vencimento}.',
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({
+        remindersEnabled: true,
+        reminderOffsets: [-5, 0, 5],
+        messageTemplate: 'Oi {cliente}, vence {vencimento}.',
+      });
+
+      const persisted = await app.inject({
+        method: 'GET',
+        url: '/api/billing/settings',
+        headers: authHeaders(adminA),
+      });
+      expect(persisted.json().reminderOffsets).toEqual([-5, 0, 5]);
+    });
+
+    it('rejects a USER trying to change the billing settings', async () => {
+      const response = await updateSettings(userA, { messageTemplate: 'hacked' });
+      expect(response.statusCode).toBe(403);
+      expect(response.json().code).toBe('FORBIDDEN');
+    });
+
+    it('requires authentication for the billing settings', async () => {
+      const response = await app.inject({ method: 'PATCH', url: '/api/billing/settings', payload: {} });
+      expect(response.statusCode).toBe(401);
+    });
+
+    it('scopes settings changes to the authenticated tenant', async () => {
+      await updateSettings(ownerA, { messageTemplate: 'mensagem do tenant A' });
+      await updateSettings(ownerB, { messageTemplate: 'mensagem do tenant B' });
+
+      const settingsA = await app.inject({
+        method: 'GET',
+        url: '/api/billing/settings',
+        headers: authHeaders(ownerA),
+      });
+      const settingsB = await app.inject({
+        method: 'GET',
+        url: '/api/billing/settings',
+        headers: authHeaders(ownerB),
+      });
+
+      expect(settingsA.json().messageTemplate).toBe('mensagem do tenant A');
+      expect(settingsB.json().messageTemplate).toBe('mensagem do tenant B');
+    });
   });
 
   describe('tenant isolation', () => {
@@ -632,6 +686,111 @@ describe('Billing (integration)', () => {
       expect(history.statusCode).toBe(200);
       expect(history.json().data).toHaveLength(1);
       expect(history.json().data[0].status).toBe('SKIPPED');
+    });
+  });
+
+  describe('contact-based charges (the CRM clients)', () => {
+    async function createStandaloneContact(
+      tenant: SeededTenant,
+      name: string,
+      phone: string | null,
+    ): Promise<string> {
+      const contact = await prisma.contact.create({
+        data: { tenantId: tenant.tenantId, name, phone, customerId: null },
+        select: { id: true },
+      });
+      return contact.id;
+    }
+
+    it('creates a charge for an existing contact without a customer and reminds it', async () => {
+      const contactId = await createStandaloneContact(ownerA, 'Ana Souza', '5511911111111');
+      await createConnectedInstance(ownerA);
+      await updateSettings(ownerA, {
+        remindersEnabled: true,
+        reminderOffsets: [0],
+        sendWindowStartHour: 0,
+        sendWindowEndHour: 23,
+        messageTemplate: 'Oi {cliente}, {descricao} = {valor}.',
+      });
+
+      const created = await createCharge(ownerA, {
+        contactId,
+        description: 'Mensalidade',
+        amountCents: 9900,
+        dueDate: today(),
+      });
+
+      expect(created.statusCode).toBe(201);
+      expect(created.json()).toMatchObject({
+        customerId: null,
+        contactId,
+        contactName: 'Ana Souza',
+        status: 'PENDING',
+      });
+
+      const list = await app.inject({
+        method: 'GET',
+        url: '/api/billing/charges?status=PENDING',
+        headers: authHeaders(ownerA),
+      });
+      expect(list.json().data[0]).toMatchObject({ contactName: 'Ana Souza' });
+
+      await reminders.runScan();
+      expect(evolution.sent).toHaveLength(1);
+      expect(evolution.sent[0].number).toBe('5511911111111');
+      expect(evolution.sent[0].text).toBe('Oi Ana Souza, Mensalidade = R$ 99,00.');
+    });
+
+    it('reuses the customer linked to the contact when present', async () => {
+      const customerId = await createCustomer(ownerA, 'Empresa X');
+      const contactId = await createContact(ownerA, customerId, '5511922222222');
+
+      const created = await createCharge(ownerA, {
+        contactId,
+        description: 'Serviço',
+        amountCents: 100,
+        dueDate: today(),
+      });
+
+      expect(created.statusCode).toBe(201);
+      expect(created.json()).toMatchObject({ customerId, customerName: 'Empresa X' });
+    });
+
+    it('requires a customer or a contact', async () => {
+      const response = await createCharge(ownerA, {
+        description: 'Sem parte',
+        amountCents: 100,
+        dueDate: today(),
+      });
+      expect(response.statusCode).toBe(400);
+      expect(response.json().code).toBe('BILLING_PARTY_REQUIRED');
+    });
+
+    it('never accepts a contact from another tenant', async () => {
+      const foreignContactId = await createStandaloneContact(ownerB, 'Foreign', '5511933333333');
+
+      const response = await createCharge(ownerA, {
+        contactId: foreignContactId,
+        description: 'Cruzado',
+        amountCents: 100,
+        dueDate: today(),
+      });
+      expect(response.statusCode).toBe(404);
+      expect(response.json().code).toBe('BILLING_CONTACT_NOT_FOUND');
+    });
+
+    it('still lists contacts through the contacts endpoint', async () => {
+      await createStandaloneContact(ownerA, 'Contato Visível', '5511944444444');
+
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/contacts',
+        headers: authHeaders(ownerA),
+      });
+      expect(response.statusCode).toBe(200);
+      expect(response.json().data.map((item: { name: string }) => item.name)).toContain(
+        'Contato Visível',
+      );
     });
   });
 });

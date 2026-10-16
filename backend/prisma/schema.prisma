@@ -372,7 +372,7 @@ model WebhookEvent {
 model BillingCharge {
   id           String              @id @default(uuid()) @db.Uuid
   tenantId     String              @map("tenant_id") @db.Uuid
-  customerId   String              @map("customer_id") @db.Uuid
+  customerId   String?             @map("customer_id") @db.Uuid
   contactId    String?             @map("contact_id") @db.Uuid
   recurrenceId String?             @map("recurrence_id") @db.Uuid
   description  String
@@ -386,7 +386,7 @@ model BillingCharge {
   updatedAt    DateTime            @updatedAt @map("updated_at")
 
   tenant     Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  customer   Customer           @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  customer   Customer?          @relation(fields: [customerId], references: [id], onDelete: Cascade)
   contact    Contact?           @relation(fields: [contactId], references: [id], onDelete: SetNull)
   recurrence BillingRecurrence? @relation(fields: [recurrenceId], references: [id], onDelete: SetNull)
   reminders  BillingReminder[]
@@ -395,13 +395,14 @@ model BillingCharge {
   @@index([tenantId, status])
   @@index([tenantId, dueDate])
   @@index([tenantId, customerId])
+  @@index([tenantId, contactId])
   @@map("billing_charges")
 }
 
 model BillingRecurrence {
   id          String                     @id @default(uuid()) @db.Uuid
   tenantId    String                     @map("tenant_id") @db.Uuid
-  customerId  String                     @map("customer_id") @db.Uuid
+  customerId  String?                    @map("customer_id") @db.Uuid
   contactId   String?                    @map("contact_id") @db.Uuid
   description String
   amountCents Int                        @map("amount_cents")
@@ -414,12 +415,13 @@ model BillingRecurrence {
   updatedAt   DateTime                   @updatedAt @map("updated_at")
 
   tenant   Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  customer Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  customer Customer?       @relation(fields: [customerId], references: [id], onDelete: Cascade)
   contact  Contact?        @relation(fields: [contactId], references: [id], onDelete: SetNull)
   charges  BillingCharge[]
 
   @@index([tenantId, active])
   @@index([tenantId, customerId])
+  @@index([tenantId, contactId])
   @@map("billing_recurrences")
 }
 

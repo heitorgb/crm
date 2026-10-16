@@ -114,7 +114,7 @@ export function StartConversationDialog({
             description="Conecte um número para iniciar um atendimento."
             action={
               <Button asChild onClick={() => handleOpenChange(false)}>
-                <Link to="/atendimento/whatsapp">Conectar WhatsApp</Link>
+                <Link to="/configuracoes?tab=whatsapp">Conectar WhatsApp</Link>
               </Button>
             }
           />

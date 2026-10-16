@@ -99,7 +99,7 @@ humano para grupos usa o JID completo; para contatos, apenas os dígitos.
 
 ### Conectar um número (UI)
 
-Em **Atendimento → WhatsApp** (`/atendimento/whatsapp`):
+Em **Configurações → WhatsApp** (`/configuracoes?tab=whatsapp`):
 
 1. **Nova instância** (nome, `instanceName`, telefone, credenciais opcionais).
 2. **Conectar** → o backend cria a instância na Evolution (`POST /instance/create`) ou, se já

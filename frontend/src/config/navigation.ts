@@ -1,4 +1,4 @@
-import { Building2, Contact, Headset, MessagesSquare, Receipt, Settings, Shield, Smartphone, Users, Wallet } from 'lucide-react';
+import { Building2, Contact, Headset, MessagesSquare, Receipt, Settings, Shield, Users, Wallet } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
 export interface NavItem {
@@ -25,10 +25,7 @@ export const navigation: NavEntry[] = [
   {
     title: 'Atendimento',
     icon: Headset,
-    items: [
-      { title: 'Conversas', to: '/atendimento/conversas', icon: MessagesSquare },
-      { title: 'WhatsApp', to: '/atendimento/whatsapp', icon: Smartphone },
-    ],
+    items: [{ title: 'Conversas', to: '/atendimento/conversas', icon: MessagesSquare }],
   },
   {
     title: 'Contatos',

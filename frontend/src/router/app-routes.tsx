@@ -10,9 +10,6 @@ const AttendancePage = lazy(() =>
     default: module.AttendancePage,
   })),
 );
-const WhatsAppPage = lazy(() =>
-  import('@/features/whatsapp/whatsapp-page').then((module) => ({ default: module.WhatsAppPage })),
-);
 const AdminTenantsPage = lazy(() =>
   import('@/features/admin/admin-tenants-page').then((module) => ({
     default: module.AdminTenantsPage,
@@ -62,7 +59,10 @@ export function AppRoutes() {
           }
         >
           <Route path="/atendimento/conversas" element={<AttendancePage />} />
-          <Route path="/atendimento/whatsapp" element={<WhatsAppPage />} />
+          <Route
+            path="/atendimento/whatsapp"
+            element={<Navigate to="/configuracoes?tab=whatsapp" replace />}
+          />
 
           <Route path="/admin/tenants" element={<AdminTenantsPage />} />
           <Route path="/admin/tenants/:id" element={<AdminTenantDetailPage />} />

@@ -168,7 +168,7 @@ export function ConversationList({
                 description="As conversas aparecem aqui quando o WhatsApp receber mensagens."
                 action={
                   <Button variant="outline" asChild>
-                    <Link to="/atendimento/whatsapp">
+                    <Link to="/configuracoes?tab=whatsapp">
                       <Smartphone />
                       Conectar WhatsApp
                     </Link>

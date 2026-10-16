@@ -1,7 +1,7 @@
 # Perfil e configurações — OrderUp CRM
 
 > Status: **Implementado**. Telas de **Meu perfil** (`/perfil`) e **Configurações** (`/configuracoes`)
-> com organização, equipe e aparência.
+> com organização, equipe, aparência, atendimento, notificações e WhatsApp.
 
 Complementa [`authentication.md`](./authentication.md) e [`multi-tenancy.md`](./multi-tenancy.md).
 
@@ -16,6 +16,10 @@ Complementa [`authentication.md`](./authentication.md) e [`multi-tenancy.md`](./
 
 ## Configurações — `/configuracoes` (abas)
 
+A aba ativa é sincronizada com o parâmetro `?tab=` da URL (`organization`, `team`, `appearance`,
+`attendance`, `notifications`, `whatsapp`); sem parâmetro, abre em **Organização**. A rota antiga
+`/atendimento/whatsapp` redireciona para `/configuracoes?tab=whatsapp`.
+
 | Aba          | Endpoints                                     | Papéis        |
 | ------------ | --------------------------------------------- | ------------- |
 | Organização  | `GET/PATCH /api/tenants/current`              | leitura: todos; PATCH: `OWNER`, `ADMIN` |
@@ -23,6 +27,7 @@ Complementa [`authentication.md`](./authentication.md) e [`multi-tenancy.md`](./
 | Aparência    | (frontend) tema claro/escuro/sistema          | todos         |
 | Atendimento  | (frontend) exibir nome do atendente           | todos         |
 | Notificações | (frontend) contador de não lidas e som        | todos         |
+| WhatsApp     | `GET/POST/PATCH/DELETE /api/whatsapp/instances` + `connect`/`disconnect`/`status`/`webhook` | todos |
 
 ### Organização
 
@@ -68,6 +73,15 @@ Preferências do navegador persistidas em `localStorage` (`orderup-notifications
 O estado de não lidas e a detecção de mensagens recebidas vêm do socket compartilhado
 (`RealtimeProvider`) e do evento `message.created` com `direction = INBOUND` — ver
 [`attendance.md`](./attendance.md).
+
+### WhatsApp
+
+Administração das instâncias da integração com a Evolution API (endpoints `/api/whatsapp/instances`):
+listagem (nome, `instanceName`, telefone, status de conexão e indicador de credenciais próprias),
+criação, edição, exclusão, conexão/reconexão com **QR code** (`connect`, com *poll* de `status`) e
+**reconfiguração de webhook**. A lógica de integração não muda; a interface foi movida de
+Atendimento para Configurações. Fluxo completo em [`attendance.md`](./attendance.md). Nenhuma
+credencial é exibida após ser salva.
 
 ## Segurança e isolamento
 

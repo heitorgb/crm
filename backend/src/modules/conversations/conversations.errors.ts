@@ -34,6 +34,16 @@ export class WhatsAppInstanceInactiveError extends AppException {
   }
 }
 
+export class WhatsAppInstanceNotConnectedError extends AppException {
+  constructor() {
+    super(
+      'WHATSAPP_INSTANCE_NOT_CONNECTED',
+      'A instância do WhatsApp não está conectada. Reconecte o número para enviar mensagens.',
+      409,
+    );
+  }
+}
+
 export class WhatsAppInstanceNotFoundError extends AppException {
   constructor() {
     super('WHATSAPP_INSTANCE_NOT_FOUND', 'WhatsApp instance not found', 404);

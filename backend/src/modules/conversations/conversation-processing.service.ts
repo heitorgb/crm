@@ -1,7 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { Inject, Injectable, Logger, type OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { ConversationStatus, MessageStatus, MessageType, Prisma } from '@prisma/client';
+import {
+  ConversationStatus,
+  MessageStatus,
+  MessageType,
+  Prisma,
+  WhatsAppInstanceStatus,
+} from '@prisma/client';
 import type { TenantContext } from '../../common/tenant-context/tenant-context.types.js';
 import { TenantContextService } from '../../common/tenant-context/tenant-context.service.js';
 import type { Env } from '../../config/env.validation.js';
@@ -23,13 +29,15 @@ import {
   type EvolutionQuotedMessage,
   type EvolutionSendResult,
 } from '../whatsapp/evolution/evolution.client.js';
-import { MessageNotEditableError } from './conversations.errors.js';
+import { MessageNotEditableError, WhatsAppInstanceNotConnectedError } from './conversations.errors.js';
 import { MessagesService, type MessageView, type QuotedMessageInfo } from './messages.service.js';
 
 const SYSTEM_USER_ID = '00000000-0000-4000-8000-000000000001';
 const SYSTEM_MEMBERSHIP_ID = '00000000-0000-4000-8000-000000000002';
 
-type ConversationWithInstance = Prisma.ConversationGetPayload<{ include: { instance: true } }>;
+type ConversationWithInstance = Prisma.ConversationGetPayload<{
+  include: { instance: true; contact: { select: { phone: true } } };
+}>;
 
 export interface DeliverMediaInput {
   buffer: Buffer;
@@ -85,10 +93,14 @@ export class ConversationProcessingService implements OnModuleInit {
   ): Promise<void> {
     const conversation = await this.prisma.conversation.findFirst({
       where: { id: conversationId, tenantId },
-      include: { instance: true },
+      include: { instance: true, contact: { select: { phone: true } } },
     });
     if (!conversation) {
       return;
+    }
+
+    if (conversation.instance.status !== WhatsAppInstanceStatus.CONNECTED) {
+      throw new WhatsAppInstanceNotConnectedError();
     }
 
     const outbound = await this.messages.persistOutbound({
@@ -124,10 +136,14 @@ export class ConversationProcessingService implements OnModuleInit {
   ): Promise<void> {
     const conversation = await this.prisma.conversation.findFirst({
       where: { id: conversationId, tenantId },
-      include: { instance: true },
+      include: { instance: true, contact: { select: { phone: true } } },
     });
     if (!conversation) {
       return;
+    }
+
+    if (conversation.instance.status !== WhatsAppInstanceStatus.CONNECTED) {
+      throw new WhatsAppInstanceNotConnectedError();
     }
 
     const isImage = await this.media.isImage(input.buffer);
@@ -249,7 +265,10 @@ export class ConversationProcessingService implements OnModuleInit {
     content: string,
   ): Promise<void> {
     const remoteJid = conversation.externalContactId;
-    const destination = deliveryDestination(remoteJid);
+    const destination = deliveryDestination(remoteJid, conversation.contact?.phone ?? null);
+    if (conversation.instance.status !== WhatsAppInstanceStatus.CONNECTED) {
+      throw new WhatsAppInstanceNotConnectedError();
+    }
     if (!this.evolution.configured || !remoteJid || !destination) {
       throw new EvolutionUnavailableError('Evolution API is not configured for this instance');
     }
@@ -438,7 +457,10 @@ export class ConversationProcessingService implements OnModuleInit {
     await this.runAsTenant(tenantId, async () => {
       const message = await this.prisma.message.findFirst({
         where: { id: messageId, tenantId },
-        include: { conversation: { include: { instance: true } }, attachments: true },
+        include: {
+          conversation: { include: { instance: true, contact: { select: { phone: true } } } },
+          attachments: true,
+        },
       });
 
       // Only a message that was never accepted by the provider may be resent:
@@ -450,8 +472,24 @@ export class ConversationProcessingService implements OnModuleInit {
       }
 
       const conversation = message.conversation;
+      if (conversation.instance.status !== WhatsAppInstanceStatus.CONNECTED) {
+        this.logger.warn(
+          `whatsapp.send.skipped ${JSON.stringify({
+            phase: 'retry',
+            messageId,
+            tenantId,
+            instance: conversation.instance.instanceName,
+            reason: 'instance_not_connected',
+          })}`,
+        );
+        return;
+      }
+
       const instanceName = conversation.instance.instanceName;
-      const destination = deliveryDestination(conversation.externalContactId);
+      const destination = deliveryDestination(
+        conversation.externalContactId,
+        conversation.contact?.phone ?? null,
+      );
       const showAgentName = isRecord(message.metadata) && message.metadata.showAgentName === true;
       const outgoingText =
         buildOutboundText(message.content, {
@@ -552,7 +590,10 @@ export class ConversationProcessingService implements OnModuleInit {
     caption: string | null,
     quoted: EvolutionQuotedMessage | null,
   ): Promise<void> {
-    const destination = deliveryDestination(conversation.externalContactId);
+    const destination = deliveryDestination(
+      conversation.externalContactId,
+      conversation.contact?.phone ?? null,
+    );
     const instanceName = conversation.instance.instanceName;
     const endpoint = file
       ? type === MessageType.AUDIO
@@ -840,10 +881,21 @@ function normalizePhone(value: string): string {
   return value.replace(/\D/g, '');
 }
 
-function deliveryDestination(externalContactId: string | null): string {
+function deliveryDestination(
+  externalContactId: string | null,
+  contactPhone: string | null = null,
+): string {
   const value = externalContactId ?? '';
-  if (value.endsWith('@g.us') || value.endsWith('@lid')) {
+  if (value.endsWith('@g.us')) {
     return value;
+  }
+  if (value.endsWith('@lid')) {
+    // A LID is not a dialable address and relies on the provider's LID→PN
+    // mapping, which is unreliable on WhatsApp Business accounts: the send is
+    // accepted but fails later. When the contact's phone was resolved from
+    // `remoteJidAlt`/`participantAlt`, prefer it; otherwise keep the LID.
+    const phone = contactPhone ? normalizePhone(contactPhone) : '';
+    return phone.length > 0 ? phone : value;
   }
   return normalizePhone(value);
 }

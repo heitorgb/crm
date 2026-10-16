@@ -21,6 +21,8 @@ import {
 } from '../../common/http/pagination.js';
 import { ConversationsService } from './conversations.service.js';
 import { MessagesService } from './messages.service.js';
+import { RequireModule } from '../modules/require-module.decorator.js';
+import { MODULE_KEYS } from '../modules/modules.constants.js';
 import {
   CreateConversationDto,
   EditConversationMessageDto,
@@ -31,6 +33,7 @@ import {
 } from './dto/conversation.dto.js';
 
 @Controller('conversations')
+@RequireModule(MODULE_KEYS.ATTENDANCE)
 export class ConversationsController {
   constructor(
     private readonly conversations: ConversationsService,

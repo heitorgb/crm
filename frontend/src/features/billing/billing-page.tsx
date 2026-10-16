@@ -32,6 +32,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useDebouncedValue } from '@/lib/use-debounced-value';
 import { formatDate } from '@/lib/format';
+import { useEnabledModules } from '@/features/modules/queries';
+import { MODULE_KEYS } from '@/types/modules';
 import type { BillingCharge } from '@/types/billing';
 import { chargeStatusLabel, chargeStatusTone, formatCurrency } from './billing-utils';
 import { BillingSettingsDialog } from './billing-settings-dialog';
@@ -51,6 +53,11 @@ const PAGE_SIZE = 20;
 
 export function BillingPage() {
   const { canManage } = useBillingPermissions();
+  const enabledModules = useEnabledModules().data;
+  const collectionEnabled = enabledModules
+    ? enabledModules.includes(MODULE_KEYS.BILLING_COLLECTION)
+    : true;
+  const canManageCollection = canManage && collectionEnabled;
 
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('all');
@@ -108,7 +115,7 @@ export function BillingPage() {
         description="Controle manual de cobranças e lembretes por WhatsApp."
         actions={
           <>
-            {canManage ? (
+            {canManageCollection ? (
               <Button variant="outline" onClick={() => setSettingsOpen(true)}>
                 <BellRing />
                 Lembretes
@@ -147,11 +154,13 @@ export function BillingPage() {
           icon={BadgeCheck}
           hint={overview.data ? `${overview.data.paidCount} cobrança(s)` : undefined}
         />
-        <MetricCard
-          label="Lembretes com falha"
-          value={overview.data ? String(overview.data.failedReminders) : '—'}
-          icon={BellRing}
-        />
+        {collectionEnabled ? (
+          <MetricCard
+            label="Lembretes com falha"
+            value={overview.data ? String(overview.data.failedReminders) : '—'}
+            icon={BellRing}
+          />
+        ) : null}
       </div>
 
       {overview.data && overview.data.upcoming.length > 0 ? (
@@ -299,7 +308,7 @@ export function BillingPage() {
                               <BadgeCheck />
                             </Button>
                           ) : null}
-                          {canManage && isOpen ? (
+                          {canManageCollection && isOpen ? (
                             <Button
                               variant="ghost"
                               size="icon"
@@ -314,16 +323,18 @@ export function BillingPage() {
                               <Send />
                             </Button>
                           ) : null}
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="size-8"
-                            title="Histórico de lembretes"
-                            aria-label="Histórico de lembretes"
-                            onClick={() => setHistoryCharge(charge)}
-                          >
-                            <History />
-                          </Button>
+                          {collectionEnabled ? (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="size-8"
+                              title="Histórico de lembretes"
+                              aria-label="Histórico de lembretes"
+                              onClick={() => setHistoryCharge(charge)}
+                            >
+                              <History />
+                            </Button>
+                          ) : null}
                           {canManage && isOpen ? (
                             <>
                               <Button

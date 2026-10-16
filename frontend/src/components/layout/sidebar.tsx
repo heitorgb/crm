@@ -1,7 +1,13 @@
 import { useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { ChevronDown, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
-import { isNavGroup, navigation, type NavGroup, type NavItem } from '@/config/navigation';
+import {
+  isNavGroup,
+  visibleNavigation,
+  type NavGroup,
+  type NavItem,
+} from '@/config/navigation';
+import { useEnabledModules } from '@/features/modules/queries';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useAuthStore } from '@/stores/auth-store';
 import { useUiStore } from '@/stores/ui-store';
@@ -16,7 +22,8 @@ interface SidebarProps {
 export function Sidebar({ collapsed, onNavigate, className }: SidebarProps) {
   const toggleSidebar = useUiStore((state) => state.toggleSidebar);
   const platformAdmin = useAuthStore((state) => state.platformAdmin);
-  const entries = navigation.filter((entry) => !entry.platformAdminOnly || platformAdmin);
+  const enabledModules = useEnabledModules().data;
+  const entries = visibleNavigation({ platformAdmin, enabledModules });
 
   return (
     <div

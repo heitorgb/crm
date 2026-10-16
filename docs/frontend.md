@@ -140,7 +140,10 @@ frontend/
   Equipe, Aparência, Atendimento, Notificações e WhatsApp). A aba ativa é sincronizada com o
   parâmetro `?tab=` da URL. Ver [`settings.md`](./settings.md).
 - Sidebar: Atendimento (Conversas), Contatos, Financeiro (Cobranças), Administração (Organizações,
-  visível só para `isPlatformAdmin`) e Configurações.
+  visível só para `isPlatformAdmin`) e Configurações. As entradas ligadas a módulos são filtradas
+  pela disponibilidade real retornada por `GET /api/modules/enabled` (`visibleNavigation`); rotas de
+  módulos desativados redirecionam para `/indisponivel` via `ModuleRoute`. Ver
+  [`modules.md`](./modules.md).
 - `/settings/qualification-bot` e `/settings/lead-digest` com formulários orientados a negócio (sem
   pedir prompts técnicos). O bot de qualificação persiste perfis reais por tenant.
 - `ProtectedRoute` preparado para exigir sessão; a persistência real do refresh usa cookie HttpOnly.

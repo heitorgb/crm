@@ -102,6 +102,7 @@ model Tenant {
   billingRecurrences BillingRecurrence[]
   billingSettings    BillingSettings?
   billingReminders   BillingReminder[]
+  modules            TenantModule[]
 
   @@map("tenants")
 }
@@ -477,4 +478,54 @@ model BillingReminder {
   @@index([tenantId, status])
   @@index([tenantId, createdAt])
   @@map("billing_reminders")
+}
+
+model Module {
+  id           String   @id @default(uuid()) @db.Uuid
+  key          String   @unique
+  name         String
+  description  String?
+  category     String?
+  icon         String?
+  sortOrder    Int      @default(0) @map("sort_order")
+  controllable Boolean  @default(true)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  tenants TenantModule[]
+
+  @@index([sortOrder])
+  @@map("modules")
+}
+
+model TenantModule {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  moduleId  String   @map("module_id") @db.Uuid
+  enabled   Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  module Module @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, moduleId])
+  @@index([tenantId, enabled])
+  @@index([moduleId])
+  @@map("tenant_modules")
+}
+
+model AdminAuditLog {
+  id          String   @id @default(uuid()) @db.Uuid
+  actorUserId String?  @map("actor_user_id") @db.Uuid
+  tenantId    String?  @map("tenant_id") @db.Uuid
+  action      String
+  entity      String
+  entityId    String?  @map("entity_id")
+  metadata    Json     @default("{}")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([tenantId, createdAt])
+  @@index([actorUserId, createdAt])
+  @@map("admin_audit_logs")
 }

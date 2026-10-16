@@ -82,6 +82,10 @@ Claims mínimas:
   usuário autenticado esteja em `PLATFORM_ADMIN_EMAILS`; usado apenas em `AdminController`
   (`/api/admin/*`). Não concede acesso cross-tenant a nenhuma outra rota. Ver
   [`tenant-provisioning.md`](./tenant-provisioning.md).
+- **`ModuleEnabledGuard`** (autorização por módulo, global): aplica `@RequireModule('<key>')` e
+  bloqueia a operação com `403 MODULE_DISABLED` quando o módulo está desabilitado para a
+  organização do `TenantContext`. É ortogonal às permissões por papel; ver
+  [`modules.md`](./modules.md).
 - Decorators: `@Public()`, `@Roles(OWNER, ADMIN)`, `@CurrentTenant()`.
 
 ### Roles (enum `Role`)

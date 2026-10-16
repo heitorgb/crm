@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { ArrowLeft, Plus, RefreshCw, Trash2 } from 'lucide-react';
+import { ArrowLeft, Package, Plus, RefreshCw, Trash2, Users } from 'lucide-react';
 import { ConfirmDialog } from '@/components/common/confirm-dialog';
 import { PageHeader } from '@/components/common/page-header';
 import { StatusBadge } from '@/components/common/status-badge';
@@ -15,11 +15,13 @@ import {
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ApiError } from '@/lib/api-client';
 import { formatDate } from '@/lib/format';
 import type { Role } from '@/types/auth';
 import type { AdminTenantMember } from '@/types/admin';
+import { ModulesTab } from '@/features/modules/modules-tab';
 import { MemberForm } from './member-form';
 import { useAdminTenant, useRemoveMember, useUpdateMember } from './queries';
 
@@ -100,7 +102,20 @@ export function AdminTenantDetailPage() {
 
       {error ? <p className="text-xs font-medium text-danger">{error}</p> : null}
 
-      <Card className="overflow-hidden">
+      <Tabs defaultValue="users">
+        <TabsList className="h-auto flex-wrap">
+          <TabsTrigger value="users">
+            <Users />
+            Usuários
+          </TabsTrigger>
+          <TabsTrigger value="modules">
+            <Package />
+            Módulos
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="users">
+          <Card className="overflow-hidden">
         {query.isPending ? (
           <div className="space-y-3 p-4">
             {Array.from({ length: 3 }).map((_, index) => (
@@ -180,7 +195,13 @@ export function AdminTenantDetailPage() {
             </TableBody>
           </Table>
         )}
-      </Card>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="modules">
+          {id ? <ModulesTab tenantId={id} /> : null}
+        </TabsContent>
+      </Tabs>
 
       {id ? <MemberForm open={formOpen} onOpenChange={setFormOpen} tenantId={id} /> : null}
 

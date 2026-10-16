@@ -17,13 +17,20 @@ import {
   ListTenantsQueryDto,
   ListUsersQueryDto,
   UpdateMemberDto,
+  UpdateTenantModuleDto,
 } from './dto/admin.dto.js';
 import { PlatformAdminGuard } from './platform-admin.guard.js';
+import type { TenantContext } from '../../common/tenant-context/tenant-context.types.js';
+import { CurrentTenant } from '../auth/decorators/current-tenant.decorator.js';
+import { ModulesService } from '../modules/modules.service.js';
 
 @Controller('admin')
 @UseGuards(PlatformAdminGuard)
 export class AdminController {
-  constructor(private readonly admin: AdminService) {}
+  constructor(
+    private readonly admin: AdminService,
+    private readonly modules: ModulesService,
+  ) {}
 
   @Get('tenants')
   listTenants(@Query() query: ListTenantsQueryDto) {
@@ -38,6 +45,31 @@ export class AdminController {
   @Get('tenants/:id')
   getTenant(@Param('id', ParseUUIDPipe) id: string) {
     return this.admin.getTenant(id);
+  }
+
+  @Get('modules')
+  listModules() {
+    return this.modules.listCatalog();
+  }
+
+  @Get('tenants/:id/modules')
+  listTenantModules(@Param('id', ParseUUIDPipe) id: string) {
+    return this.modules.listForTenant(id);
+  }
+
+  @Patch('tenants/:id/modules/:moduleKey')
+  updateTenantModule(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('moduleKey') moduleKey: string,
+    @Body() dto: UpdateTenantModuleDto,
+    @CurrentTenant() context: TenantContext,
+  ) {
+    return this.modules.setModuleEnabledForTenant({
+      tenantId: id,
+      moduleKey,
+      enabled: dto.enabled,
+      actorUserId: context.userId,
+    });
   }
 
   @Post('tenants/:id/members')

@@ -493,6 +493,7 @@ describe('WhatsApp attendance (integration)', () => {
         'MESSAGES_EDITED',
         'GROUPS_UPSERT',
         'PRESENCE_UPDATE',
+        'CONNECTION_UPDATE',
       ]);
       expect(webhook?.url).toContain('/api/webhooks/evolution?token=');
       expect(JSON.stringify(response.json())).not.toContain('super-secret-webhook');
@@ -1370,6 +1371,35 @@ describe('WhatsApp attendance (integration)', () => {
       await postWebhook(statusPayload(instanceName, externalMessageId, 'READ'));
       await postWebhook(statusPayload(instanceName, externalMessageId, 'DELIVERY_ACK'));
       await postWebhook(statusPayload(instanceName, externalMessageId, 'SERVER_ACK'));
+
+      const message = await prisma.message.findUniqueOrThrow({ where: { id: messageId } });
+      expect(message.status).toBe('READ');
+    });
+
+    it('turns a SENT message into FAILED when the provider reports ERROR', async () => {
+      const { instanceName, messageId, conversationId, externalMessageId } = await seedOutbound();
+      const emit = vi.spyOn(app.get(RealtimeService), 'emitToConversation');
+
+      const response = await postWebhook(statusPayload(instanceName, externalMessageId, 'ERROR'));
+
+      expect(response.statusCode).toBe(200);
+      const message = await prisma.message.findUniqueOrThrow({ where: { id: messageId } });
+      expect(message.status).toBe('FAILED');
+      expect(emit).toHaveBeenCalledWith(
+        ownerA.tenantId,
+        conversationId,
+        'message.updated',
+        expect.objectContaining({ messageId, status: 'FAILED' }),
+      );
+
+      emit.mockRestore();
+    });
+
+    it('never regresses a READ message into FAILED on a late ERROR', async () => {
+      const { instanceName, messageId, externalMessageId } = await seedOutbound();
+
+      await postWebhook(statusPayload(instanceName, externalMessageId, 'READ'));
+      await postWebhook(statusPayload(instanceName, externalMessageId, 'ERROR'));
 
       const message = await prisma.message.findUniqueOrThrow({ where: { id: messageId } });
       expect(message.status).toBe('READ');

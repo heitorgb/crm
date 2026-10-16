@@ -13,8 +13,12 @@ export class EvolutionRequestError extends AppException {
   constructor(
     message = 'Evolution API request failed',
     readonly httpStatus?: number,
+    options?: { cause?: unknown },
   ) {
     super('EVOLUTION_REQUEST_FAILED', message, 502);
+    if (options?.cause !== undefined) {
+      this.cause = options.cause;
+    }
   }
 }
 
@@ -323,7 +327,7 @@ export class EvolutionClient {
         throw error;
       }
       this.logger.warn(`Evolution request failed: ${error instanceof Error ? error.message : 'unknown'}`);
-      throw new EvolutionRequestError();
+      throw new EvolutionRequestError('Evolution API request failed', undefined, { cause: error });
     }
   }
 }

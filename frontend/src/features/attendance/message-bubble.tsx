@@ -316,6 +316,9 @@ export function MessageBubble({
             {isMessageEdited(message) ? (
               <span className="mr-0.5 italic text-muted-foreground/80">editada</span>
             ) : null}
+            {isOutbound && message.status === 'FAILED' ? (
+              <span className="mr-0.5 font-medium text-danger">Não enviada</span>
+            ) : null}
             <span
               className={cn(
                 'tabular-nums',
@@ -469,7 +472,7 @@ function MessageActions({ canEdit, onReply, onEdit }: MessageActionsProps) {
 function DeliveryTicks({ status }: { status: MessageStatus }) {
   if (status === 'FAILED') {
     return (
-      <span title="Falha no envio">
+      <span title="Falha no envio" aria-label="Falha no envio" role="img">
         <AlertCircle className="size-3.5 text-danger" />
       </span>
     );

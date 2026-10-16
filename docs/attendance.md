@@ -107,10 +107,11 @@ Em **Configurações → WhatsApp** (`/configuracoes?tab=whatsapp`):
    pareamento**.
 3. A tela exibe o QR, permite **gerar novo QR** e faz *poll* de status até **Conectado**.
 4. O **webhook é configurado automaticamente** (eventos `MESSAGES_UPSERT`, `MESSAGES_UPDATE`,
-   `GROUPS_UPSERT` e `PRESENCE_UPDATE`) com o token do segredo (da instância ou
-   `EVOLUTION_WEBHOOK_SECRET`); há também a ação **Reconfigurar webhook**. No boot do backend o
-   webhook é **reconciliado** para todas as instâncias conectadas/ativas, de modo que mudar
-   `PUBLIC_API_URL` se autocorrige no próximo restart sem depender de reconfiguração manual.
+   `MESSAGES_EDITED`, `GROUPS_UPSERT`, `PRESENCE_UPDATE` e `CONNECTION_UPDATE`) com o token do
+   segredo (da instância ou `EVOLUTION_WEBHOOK_SECRET`); há também a ação **Reconfigurar webhook**.
+   No boot do backend o webhook é **reconciliado** para todas as instâncias conectadas/ativas, de
+   modo que mudar `PUBLIC_API_URL` se autocorrige no próximo restart sem depender de reconfiguração
+   manual.
 5. Desconectar/excluir a instância permanecem disponíveis.
 
 ### Importação automática de contatos
@@ -404,7 +405,16 @@ Referência do evento: [implementação da Evolution](https://github.com/Evoluti
   request e é o padrão em `NODE_ENV=test`, mantendo os testes determinísticos.
 - Jobs carregam `tenantId` explícito: `whatsapp.message.process`, `whatsapp.message.send`,
   `digest.tick`, `digest.deliver`. O processamento reestabelece o `TenantContext` no início.
-- Envio com falha é persistido como `FAILED` e reenfileirado (`whatsapp.message.send`) com retry.
+- Envio com falha é persistido como `FAILED` com o motivo (`metadata.errorCode`) **mesclado** ao
+  metadata existente (não descarta `showAgentName`/`quoted`). Apenas falhas **definitivas** do
+  provedor (`HTTP 429`/`5xx`, resposta recebida e não aceita) são reenfileiradas
+  (`whatsapp.message.send`) com o retry limitado do BullMQ. Falhas de rede/timeout têm resultado
+  **incerto**: a mensagem fica `FAILED` e **não** é reenviada automaticamente; o operador decide
+  reenviar. Isso evita duplicar uma mensagem que o provedor possa ter aceitado.
+- `retrySend` só reenvia mensagem `OUTBOUND` em `PENDING`/`FAILED` **sem `externalMessageId`**. Uma
+  mensagem que já foi aceita pelo provedor (tem id externo) ou que chegou a `SENT`/`DELIVERED`/`READ`
+  nunca volta para a fila de envio — evita duplicatas. Não há reenvio automático em massa de
+  pendentes após reconexão.
 - Realtime: gateway Socket.IO no namespace `/realtime`, autenticado por JWT + membership no
   handshake. Rooms: `tenant:{tenantId}`, `tenant:{tenantId}:user:{userId}`,
   `tenant:{tenantId}:conversation:{conversationId}`. Eventos são emitidos por room — nunca
@@ -416,15 +426,42 @@ Referência do evento: [implementação da Evolution](https://github.com/Evoluti
 - A Evolution envia recibos pelo evento `messages.update` (status `SERVER_ACK`, `DELIVERY_ACK`,
   `READ`, `PLAYED`, `PENDING`, `ERROR`). O webhook mapeia: `SERVER_ACK` → `SENT`,
   `DELIVERY_ACK` → `DELIVERED`, `READ`/`PLAYED` → `READ`, `ERROR` → `FAILED`.
-- O recibo é casado pelo `externalMessageId` da mensagem **dentro do tenant** e apenas mensagens
-  `OUTBOUND` são atualizadas. A progressão é monotônica: um recibo atrasado nunca regride um status
-  já avançado (ex.: `READ` não volta para `DELIVERED`).
+- O recibo é casado pelo `externalMessageId` da mensagem **dentro do tenant** (a coluna é
+  `UNIQUE (tenantId, externalMessageId)`) e apenas mensagens `OUTBOUND` são atualizadas. A
+  progressão é monotônica: um recibo atrasado nunca regride um status já avançado (ex.: `READ` não
+  volta para `DELIVERED`).
+- **`ERROR` é terminal e corrige o falso sucesso**: uma mensagem `PENDING` ou `SENT` pode virar
+  `FAILED` quando a Evolution reporta erro (ex.: sessão degradada ackou o envio mas falhou depois).
+  `DELIVERED`/`READ` **nunca** regridem para `FAILED` por evento atrasado e uma mensagem já `FAILED`
+  permanece `FAILED` (idempotente). Antes desta correção, `SENT → FAILED` era descartado e o CRM
+  exibia como enviada uma mensagem que falhou.
 - Ao mudar, o backend emite `message.updated` na room da conversa e `conversation.updated` no
-  tenant, e o frontend invalida as queries exibindo o segundo *check* (entregue) ou azul (lido).
+  tenant, e o frontend invalida as queries exibindo o segundo *check* (entregue), azul (lido) ou o
+  indicador de falha (**"Não enviada"** + ícone vermelho) para mensagens `FAILED`.
 - Instâncias novas assinam `MESSAGES_UPDATE`; nas já conectadas o evento entra pela
   reconciliação de webhook no boot (ou por **Reconfigurar webhook**). O *tick* só avança se a
   Evolution emitir o recibo — se o destinatário tiver desativado confirmações de leitura, o azul
   pode nunca aparecer.
+
+### Estado da conexão (CONNECTION_UPDATE)
+
+- Instâncias novas assinam `CONNECTION_UPDATE`. O webhook trata `connection.update`
+  (`data.state`: `open`/`connecting`/`close`, com `statusReason`) persistindo o novo estado da
+  instância (`WhatsAppInstance.status`) e emitindo `whatsapp.instance.updated` na sala
+  `tenant:{tenantId}` (somente quando o estado muda). A tela **Configurações → WhatsApp** reage ao
+  evento invalidando a listagem.
+- `connectionState: open` **não** é prova de que o envio funciona: sessões degradadas
+  (`Stream Errored (conflict)`, `device_removed`, `Connection Closed`) podem continuar reportando
+  `open`. O `connection.update` é a evidência autoritativa para rebaixar o status. A recuperação da
+  sessão (reconectar o número) continua sendo uma ação manual do operador.
+
+### Observabilidade do envio
+
+- O envio inicial e o retry registram log estruturado (`whatsapp.send.succeeded`/`failed`) com
+  `phase`, `messageId`, `tenantId`, `instance`, `endpoint`, `durationMs`, `externalMessageId` e o
+  erro sanitizado (`name`, `message`, `httpStatus`). **Nunca** são registrados tokens, API keys,
+  cookies, QR codes ou credenciais. A causa original da exceção é preservada (`Error.cause`) sem
+  vazá-la ao cliente.
 
 ### Edição de mensagem
 

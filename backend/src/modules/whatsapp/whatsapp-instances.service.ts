@@ -58,6 +58,7 @@ const WEBHOOK_EVENTS = [
   'MESSAGES_EDITED',
   'GROUPS_UPSERT',
   'PRESENCE_UPDATE',
+  'CONNECTION_UPDATE',
 ];
 
 @Injectable()
@@ -280,6 +281,47 @@ export class WhatsAppInstancesService implements OnModuleInit {
     }
 
     return { status: updated.status };
+  }
+
+  /**
+   * System variant used by the CONNECTION_UPDATE webhook. Persists the provider
+   * state and reports whether it changed, so the caller can publish a realtime
+   * event only when something actually changed. `open` is not a guarantee that
+   * sends succeed, but `close`/`connecting`/error is authoritative evidence that
+   * the session is degraded.
+   */
+  async applyProviderConnectionState(
+    instanceName: string,
+    state: string | null,
+  ): Promise<{
+    instanceId: string;
+    tenantId: string;
+    status: WhatsAppInstanceStatus;
+    changed: boolean;
+  } | null> {
+    if (!state) {
+      return null;
+    }
+
+    const instance = await this.prisma.whatsAppInstance.findUnique({
+      where: { instanceName },
+      select: { id: true, tenantId: true, status: true },
+    });
+    if (!instance) {
+      return null;
+    }
+
+    const status = mapEvolutionState(state);
+    if (instance.status !== status) {
+      await this.prisma.whatsAppInstance.update({ where: { id: instance.id }, data: { status } });
+    }
+
+    return {
+      instanceId: instance.id,
+      tenantId: instance.tenantId,
+      status,
+      changed: instance.status !== status,
+    };
   }
 
   private async ensureInstanceAndConnect(instanceName: string): Promise<unknown> {

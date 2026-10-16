@@ -31,10 +31,18 @@ import {
 } from './billing.errors.js';
 import {
   BILLING_MAX_REMINDER_ATTEMPTS,
+  BILLING_REMINDER_CATCHUP_DAYS,
   BILLING_STALE_PROCESSING_MS,
 } from './billing.constants.js';
 import { backoffDelayMs, formatCurrencyBRL, renderReminderTemplate } from './billing-message.js';
-import { addDays, formatDateOnly, localDateString, localHour, parseDateOnly } from './billing-time.js';
+import {
+  addDays,
+  formatDateOnly,
+  isWithinWindow,
+  localDateString,
+  localHour,
+  parseDateOnly,
+} from './billing-time.js';
 import type { ListBillingRemindersQueryDto } from './dto/reminder.dto.js';
 
 const SYSTEM_USER_ID = '00000000-0000-4000-8000-000000000001';
@@ -122,9 +130,12 @@ export class BillingRemindersService {
   }
 
   /**
-   * Creates the reminder row for every charge whose scheduled offset falls on
-   * `today`. The unique (chargeId, offsetDays) constraint plus skipDuplicates
-   * make repeated scans idempotent: a given charge/step pair is created once.
+   * Creates the reminder row for every charge whose scheduled reminder date
+   * (`dueDate + offset`) has already been reached. It matches the exact day and
+   * also catches up targets missed in the last `BILLING_REMINDER_CATCHUP_DAYS`
+   * days, so a scan outage does not lose an eligible reminder. The unique
+   * (chargeId, dedupeKey) constraint plus skipDuplicates keep repeated scans
+   * idempotent: a given charge/step pair is created exactly once.
    */
   async generateReminders(today: string): Promise<number> {
     const tenantRows = await this.prisma.billingCharge.findMany({
@@ -141,14 +152,19 @@ export class BillingRemindersService {
       }
 
       for (const offset of settings.reminderOffsets) {
-        const targetDueDate = addDays(today, -offset);
+        const earliestDueDate = addDays(today, -BILLING_REMINDER_CATCHUP_DAYS - offset);
+        const latestDueDate = addDays(today, -offset);
+
         const charges = await this.prisma.billingCharge.findMany({
           where: {
             tenantId,
             status: BillingChargeStatus.PENDING,
-            dueDate: parseDateOnly(targetDueDate),
+            dueDate: {
+              gte: parseDateOnly(earliestDueDate),
+              lte: parseDateOnly(latestDueDate),
+            },
           },
-          select: { id: true },
+          select: { id: true, dueDate: true },
         });
         if (charges.length === 0) {
           continue;
@@ -161,7 +177,7 @@ export class BillingRemindersService {
             offsetDays: offset,
             origin: BillingReminderOrigin.AUTOMATIC,
             dedupeKey: automaticDedupeKey(offset),
-            scheduledFor: parseDateOnly(today),
+            scheduledFor: parseDateOnly(addDays(formatDateOnly(charge.dueDate), offset)),
             status: BillingReminderStatus.PENDING,
             nextAttemptAt: new Date(),
           })),
@@ -184,6 +200,11 @@ export class BillingRemindersService {
     });
   }
 
+  /**
+   * Enqueues the send job for pending reminders. Tenants with automation
+   * disabled are skipped entirely, and sends are only enqueued while the
+   * configured window is open, so jobs are not created just to be rejected.
+   */
   private async dispatch(today: string): Promise<void> {
     const due = await this.prisma.billingReminder.findMany({
       where: {
@@ -194,7 +215,17 @@ export class BillingRemindersService {
       select: { id: true, tenantId: true },
     });
 
+    const settingsByTenant = new Map<string, BillingSettingsView>();
     for (const reminder of due) {
+      let settings = settingsByTenant.get(reminder.tenantId);
+      if (!settings) {
+        settings = await this.settings.getForTenant(reminder.tenantId);
+        settingsByTenant.set(reminder.tenantId, settings);
+      }
+      if (!settings.remindersEnabled || !this.isWindowOpen(settings)) {
+        continue;
+      }
+
       await this.queue.enqueue(JOB_NAMES.BILLING_REMINDER_SEND, {
         tenantId: reminder.tenantId,
         reminderId: reminder.id,
@@ -231,7 +262,10 @@ export class BillingRemindersService {
     }
 
     const settings = await this.settings.getForTenant(tenantId);
-    if (!this.withinSendWindow(settings)) {
+    if (!settings.remindersEnabled) {
+      return 'retry';
+    }
+    if (!this.isWindowOpen(settings)) {
       return 'retry';
     }
 
@@ -438,13 +472,12 @@ export class BillingRemindersService {
     });
   }
 
-  private withinSendWindow(settings: BillingSettingsView): boolean {
-    const hour = localHour(new Date(), this.timeZone);
-    const { sendWindowStartHour: start, sendWindowEndHour: end } = settings;
-    if (start <= end) {
-      return hour >= start && hour <= end;
-    }
-    return hour >= start || hour <= end;
+  private isWindowOpen(settings: BillingSettingsView): boolean {
+    return isWithinWindow(
+      localHour(new Date(), this.timeZone),
+      settings.sendWindowStartHour,
+      settings.sendWindowEndHour,
+    );
   }
 
   private async resolveDestination(

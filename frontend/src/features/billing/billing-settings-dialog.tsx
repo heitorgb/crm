@@ -22,7 +22,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { useWhatsAppInstances } from '@/features/whatsapp/queries';
 import type { BillingSettings } from '@/types/billing';
 import type { WhatsAppInstance } from '@/types/whatsapp';
-import { parseOffsets, resolveBillingError, serializeOffsets } from './billing-utils';
+import { parseOffsets, reminderScheduleExplanation, resolveBillingError, serializeOffsets } from './billing-utils';
 import { useBillingSettings, useUpdateBillingSettings } from './queries';
 
 interface BillingSettingsDialogProps {
@@ -81,6 +81,15 @@ function BillingSettingsForm({ settings, instances, onDone }: BillingSettingsFor
   const [startHour, setStartHour] = useState(String(settings.sendWindowStartHour));
   const [endHour, setEndHour] = useState(String(settings.sendWindowEndHour));
   const [error, setError] = useState<string | null>(null);
+
+  const startNumeric = Number.parseInt(startHour, 10);
+  const endNumeric = Number.parseInt(endHour, 10);
+  const explanation = reminderScheduleExplanation({
+    scanIntervalMinutes: settings.scanIntervalMinutes,
+    timeZone: settings.timeZone,
+    sendWindowStartHour: isValidHour(startNumeric) ? startNumeric : settings.sendWindowStartHour,
+    sendWindowEndHour: isValidHour(endNumeric) ? endNumeric : settings.sendWindowEndHour,
+  });
 
   const handleSubmit = async (): Promise<void> => {
     setError(null);
@@ -212,6 +221,10 @@ function BillingSettingsForm({ settings, instances, onDone }: BillingSettingsFor
           </FormField>
         </div>
 
+        <p className="rounded-md border border-border bg-surface/60 p-3 text-xs leading-relaxed text-muted-foreground">
+          {explanation}
+        </p>
+
         {error ? <p className="text-xs font-medium text-danger">{error}</p> : null}
       </div>
 
@@ -226,4 +239,8 @@ function BillingSettingsForm({ settings, instances, onDone }: BillingSettingsFor
       </DialogFooter>
     </>
   );
+}
+
+function isValidHour(value: number): boolean {
+  return Number.isInteger(value) && value >= 0 && value <= 23;
 }

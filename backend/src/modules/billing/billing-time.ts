@@ -45,6 +45,21 @@ export function addDays(dateOnly: string, days: number): string {
   return formatDateOnly(date);
 }
 
+/**
+ * Whether an hour (0-23) falls inside the configured send window. When start
+ * equals end the window is treated as open the whole day; when start is after
+ * end the window crosses midnight (e.g. 22h-6h). Both bounds are inclusive.
+ */
+export function isWithinWindow(hour: number, startHour: number, endHour: number): boolean {
+  if (startHour === endHour) {
+    return true;
+  }
+  if (startHour < endHour) {
+    return hour >= startHour && hour <= endHour;
+  }
+  return hour >= startHour || hour <= endHour;
+}
+
 /** Adds months clamping the day to the last valid day of the resulting month. */
 export function addMonthsClamped(dateOnly: string, months: number): string {
   const [year, month, day] = dateOnly.split('-').map(Number);

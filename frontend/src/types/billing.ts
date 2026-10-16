@@ -67,6 +67,8 @@ export interface BillingSettings {
   whatsappInstanceId: string | null;
   sendWindowStartHour: number;
   sendWindowEndHour: number;
+  timeZone: string;
+  scanIntervalMinutes: number;
 }
 
 export interface BillingOverview {

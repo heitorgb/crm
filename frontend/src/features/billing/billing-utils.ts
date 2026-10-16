@@ -3,6 +3,7 @@ import type {
   BillingChargeStatus,
   BillingReminder,
   BillingReminderStatus,
+  BillingSettings,
 } from '@/types/billing';
 
 export function formatCurrency(cents: number): string {
@@ -196,4 +197,39 @@ function describeReminderReason(code: string | null, fallback: string): string {
         ? 'O WhatsApp recusou o envio do lembrete.'
         : fallback;
   }
+}
+
+/** Human text for the configured send window, mirroring the backend rule. */
+export function describeSendWindow(startHour: number, endHour: number): string {
+  if (startHour === endHour) {
+    return 'o dia inteiro (início e fim iguais)';
+  }
+  if (startHour < endHour) {
+    return `entre ${startHour}h e ${endHour}h`;
+  }
+  return `entre ${startHour}h e ${endHour}h, atravessando a meia-noite`;
+}
+
+/**
+ * Explanation of how automatic reminders actually work, derived from the real
+ * scheduler values so the copy never drifts from the backend.
+ */
+export function reminderScheduleExplanation(
+  settings: Pick<
+    BillingSettings,
+    'scanIntervalMinutes' | 'timeZone' | 'sendWindowStartHour' | 'sendWindowEndHour'
+  >,
+): string {
+  const frequency =
+    settings.scanIntervalMinutes > 0
+      ? `a cada ${settings.scanIntervalMinutes} minutos`
+      : 'em intervalos definidos pelo servidor';
+  const window = describeSendWindow(settings.sendWindowStartHour, settings.sendWindowEndHour);
+  return (
+    `Os dias informados definem quando a cobrança fica elegível para um lembrete. ` +
+    `Depois disso, o sistema verifica ${frequency} se há lembretes a enviar e processa as ` +
+    `mensagens elegíveis ${window}, no fuso ${settings.timeZone}. ` +
+    `O envio não ocorre necessariamente no início da janela, pois as mensagens passam pela ` +
+    `fila de processamento. Fora da janela, o lembrete aguarda e é reavaliado na próxima verificação.`
+  );
 }

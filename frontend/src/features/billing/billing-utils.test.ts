@@ -2,11 +2,13 @@ import { describe, expect, it } from 'vitest';
 import {
   centsToInput,
   chargeStatusLabel,
+  describeSendWindow,
   formatCurrency,
   offsetLabel,
   parseCurrencyToCents,
   parseOffsets,
   reminderOutcomeMessage,
+  reminderScheduleExplanation,
   reminderStatusLabel,
   resolveBillingError,
   serializeOffsets,
@@ -111,5 +113,25 @@ describe('billing-utils', () => {
       tone: 'danger',
       description: 'O WhatsApp recusou o envio do lembrete.',
     });
+  });
+
+  it('describes the send window consistently', () => {
+    expect(describeSendWindow(9, 18)).toBe('entre 9h e 18h');
+    expect(describeSendWindow(22, 6)).toBe('entre 22h e 6h, atravessando a meia-noite');
+    expect(describeSendWindow(8, 8)).toBe('o dia inteiro (início e fim iguais)');
+  });
+
+  it('explains the real scheduler behaviour from backend values', () => {
+    const text = reminderScheduleExplanation({
+      scanIntervalMinutes: 5,
+      timeZone: 'America/Sao_Paulo',
+      sendWindowStartHour: 9,
+      sendWindowEndHour: 18,
+    });
+    expect(text).toContain('a cada 5 minutos');
+    expect(text).toContain('entre 9h e 18h');
+    expect(text).toContain('America/Sao_Paulo');
+    expect(text).toContain('fila');
+    expect(text).toContain('elegível');
   });
 });

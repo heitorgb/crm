@@ -3,7 +3,7 @@ import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { PrismaService } from '../../src/infrastructure/prisma/prisma.service.js';
 import { BillingRecurrencesService } from '../../src/modules/billing/billing-recurrences.service.js';
 import { BillingRemindersService } from '../../src/modules/billing/billing-reminders.service.js';
-import { addDays, localDateString } from '../../src/modules/billing/billing-time.js';
+import { addDays, localDateString, localHour } from '../../src/modules/billing/billing-time.js';
 import { EvolutionRequestError } from '../../src/modules/whatsapp/evolution/evolution.client.js';
 import {
   authHeaders,
@@ -998,6 +998,129 @@ describe('Billing (integration)', () => {
 
       const forbidden = await sendManual(userA, chargeId, randomUUID());
       expect(forbidden.statusCode).toBe(403);
+    });
+  });
+
+  describe('reminder scheduling and send window', () => {
+    async function setupChargeOn(dueDate: string, tenant = ownerA): Promise<string> {
+      const customerId = await createCustomer(tenant, 'Agendado');
+      await createContact(tenant, customerId, '5511988888888');
+      const created = await createCharge(tenant, {
+        customerId,
+        description: 'Agenda',
+        amountCents: 1000,
+        dueDate,
+      });
+      return created.json().id as string;
+    }
+
+    it('catches up a reminder missed on a previous day but not older ones', async () => {
+      await createConnectedInstance(ownerA);
+      await updateSettings(ownerA, {
+        remindersEnabled: true,
+        reminderOffsets: [0],
+        sendWindowStartHour: 0,
+        sendWindowEndHour: 23,
+      });
+      const yesterday = await setupChargeOn(addDays(today(), -1));
+      const tooOld = await setupChargeOn(addDays(today(), -10));
+
+      await reminders.generateReminders(today());
+
+      const missed = await prisma.billingReminder.findFirst({ where: { chargeId: yesterday } });
+      expect(missed).not.toBeNull();
+      expect(missed?.scheduledFor.toISOString().slice(0, 10)).toBe(addDays(today(), -1));
+
+      expect(await prisma.billingReminder.findFirst({ where: { chargeId: tooOld } })).toBeNull();
+    });
+
+    it('does not send outside the allowed window and re-evaluates later', async () => {
+      await createConnectedInstance(ownerA);
+      const nowHour = localHour(new Date(), 'America/Sao_Paulo');
+      const excludedStart = (nowHour + 4) % 24;
+      const excludedEnd = (nowHour + 5) % 24;
+      await updateSettings(ownerA, {
+        remindersEnabled: true,
+        reminderOffsets: [0],
+        sendWindowStartHour: excludedStart,
+        sendWindowEndHour: excludedEnd,
+      });
+      const chargeId = await setupChargeOn(today());
+
+      await reminders.runScan();
+
+      expect(evolution.sent).toHaveLength(0);
+      const pending = await prisma.billingReminder.findFirstOrThrow({ where: { chargeId } });
+      expect(pending.status).toBe('PENDING');
+
+      await updateSettings(ownerA, { sendWindowStartHour: 0, sendWindowEndHour: 23 });
+      await reminders.runScan();
+
+      expect(evolution.sent).toHaveLength(1);
+      const sent = await prisma.billingReminder.findFirstOrThrow({ where: { chargeId } });
+      expect(sent.status).toBe('SENT');
+    });
+
+    it('suppresses automatic sends while disabled and resumes after re-enabling', async () => {
+      await createConnectedInstance(ownerA);
+      await updateSettings(ownerA, {
+        remindersEnabled: true,
+        reminderOffsets: [0],
+        sendWindowStartHour: 0,
+        sendWindowEndHour: 23,
+      });
+      const chargeId = await setupChargeOn(today());
+      await reminders.generateReminders(today());
+      expect(await prisma.billingReminder.count({ where: { chargeId } })).toBe(1);
+
+      await updateSettings(ownerA, { remindersEnabled: false });
+      await reminders.runScan();
+      expect(evolution.sent).toHaveLength(0);
+      expect(
+        (await prisma.billingReminder.findFirstOrThrow({ where: { chargeId } })).status,
+      ).toBe('PENDING');
+
+      await updateSettings(ownerA, { remindersEnabled: true });
+      await reminders.runScan();
+      expect(evolution.sent).toHaveLength(1);
+    });
+
+    it('interprets negative, zero and positive offsets', async () => {
+      await createConnectedInstance(ownerA);
+      await updateSettings(ownerA, {
+        remindersEnabled: true,
+        reminderOffsets: [-1, 0, 1],
+        sendWindowStartHour: 0,
+        sendWindowEndHour: 23,
+      });
+      const chargeId = await setupChargeOn(today());
+
+      await reminders.runScan();
+
+      const rows = await prisma.billingReminder.findMany({ where: { chargeId } });
+      const byOffset = new Map(rows.map((row) => [row.offsetDays, row]));
+
+      // -1: target was yesterday, recovered and sent now.
+      expect(byOffset.get(-1)?.scheduledFor.toISOString().slice(0, 10)).toBe(addDays(today(), -1));
+      expect(byOffset.get(-1)?.status).toBe('SENT');
+      // 0: target today, sent now.
+      expect(byOffset.get(0)?.status).toBe('SENT');
+      // +1: future target, not generated yet.
+      expect(byOffset.has(1)).toBe(false);
+      expect(evolution.sent).toHaveLength(2);
+    });
+
+    it('exposes the real scheduler frequency and time zone', async () => {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/billing/settings',
+        headers: authHeaders(ownerA),
+      });
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({
+        scanIntervalMinutes: 5,
+        timeZone: 'America/Sao_Paulo',
+      });
     });
   });
 });

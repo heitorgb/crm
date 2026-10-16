@@ -37,6 +37,8 @@ vi.mock('./queries', () => ({
       whatsappInstanceId: null,
       sendWindowStartHour: 9,
       sendWindowEndHour: 18,
+      timeZone: 'America/Sao_Paulo',
+      scanIntervalMinutes: 5,
     } as BillingSettings,
     isPending: false,
     isError: false,

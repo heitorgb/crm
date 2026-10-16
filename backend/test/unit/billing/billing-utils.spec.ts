@@ -3,6 +3,9 @@ import {
   addDays,
   addMonthsClamped,
   isValidDateOnly,
+  isWithinWindow,
+  localDateString,
+  localHour,
   parseDateOnly,
   formatDateOnly,
 } from '../../../src/modules/billing/billing-time.js';
@@ -34,6 +37,34 @@ describe('billing-time', () => {
 
   it('round-trips parse/format', () => {
     expect(formatDateOnly(parseDateOnly('2026-10-16'))).toBe('2026-10-16');
+  });
+
+  it('resolves the local hour and date in a time zone', () => {
+    const noonUtc = new Date('2026-10-16T12:00:00.000Z');
+    expect(localHour(noonUtc, 'America/Sao_Paulo')).toBe(9);
+    expect(localDateString(noonUtc, 'America/Sao_Paulo')).toBe('2026-10-16');
+
+    const earlyUtc = new Date('2026-10-16T02:00:00.000Z');
+    expect(localHour(earlyUtc, 'America/Sao_Paulo')).toBe(23);
+    expect(localDateString(earlyUtc, 'America/Sao_Paulo')).toBe('2026-10-15');
+  });
+
+  it('evaluates the send window including the overnight case', () => {
+    expect(isWithinWindow(8, 8, 18)).toBe(true);
+    expect(isWithinWindow(18, 8, 18)).toBe(true);
+    expect(isWithinWindow(7, 8, 18)).toBe(false);
+    expect(isWithinWindow(19, 8, 18)).toBe(false);
+
+    expect(isWithinWindow(22, 22, 6)).toBe(true);
+    expect(isWithinWindow(23, 22, 6)).toBe(true);
+    expect(isWithinWindow(5, 22, 6)).toBe(true);
+    expect(isWithinWindow(6, 22, 6)).toBe(true);
+    expect(isWithinWindow(12, 22, 6)).toBe(false);
+
+    // start === end opens the whole day.
+    expect(isWithinWindow(0, 8, 8)).toBe(true);
+    expect(isWithinWindow(8, 8, 8)).toBe(true);
+    expect(isWithinWindow(23, 8, 8)).toBe(true);
   });
 });
 

@@ -421,18 +421,48 @@ Referência do evento: [implementação da Evolution](https://github.com/Evoluti
 
 ### Edição de mensagem
 
-- A Evolution reporta edições pelo evento `messages.edited` (assinado junto com `MESSAGES_UPDATE`)
-  e, em alguns fluxos, também por `messages.update` (`keyId` + `message.editedMessage.message`) ou
-  por um `messages.upsert` com `protocolMessage`/`editedMessage`. O webhook reconhece os três
-  formatos.
+- A Evolution v2.3.7 (Baileys 7.0.0-rc.9) reporta edições de duas formas: `messages.edited`, cujo
+  `data` **é** o `protocolMessage` (`key` = mensagem original + `editedMessage` = novo conteúdo), e
+  `messages.update`, no formato real `{ keyId: <id original>, status: "SERVER_ACK",
+  message: { editedMessage: { message: <novo conteúdo> } } }`. O webhook reconhece ambos, além de
+  um `messages.upsert` com `protocolMessage`/`editedMessage` (fallback).
+- **Envelopes de container**: uma edição feita no próprio celular chega ao dispositivo vinculado
+  embrulhada em `deviceSentMessage`/`ephemeralMessage`. O detector da própria Evolution só olha
+  `message.protocolMessage` e **não** desembrulha o container, então reenvia o evento como
+  `messages.upsert`. O webhook desembrulha o container **antes** de checar edição (via
+  `unwrapViewOnce`), aplicando a edição no lugar em vez de gravar um `[unknown]`. Esse era o
+  sintoma de produção.
+- Mensagens de controle que **não** são edição (`protocolMessage` de revoke, ephemeral setting,
+  app-state sync, etc.) são reconhecidas e descartadas (`ignored: unsupported_message`); nunca
+  viram balões `[unknown]`.
 - A edição **atualiza a mensagem original no lugar** (casada por `externalMessageId` dentro do
   tenant e da instância), preservando `id`, conversa, direção e remetente. Nunca cria uma nova
   mensagem nem o registro `[unknown]`; o novo conteúdo vai para `content` e `metadata.edited`/
   `metadata.editedAt` marcam a edição (sem migração de schema).
 - Processar o mesmo evento mais de uma vez é idempotente (dedupe por evento + update in-place),
   mas edições sucessivas da mesma mensagem são distintas. Se o original ainda não existir (edição
-  antes da mensagem), o evento é ignorado com segurança. Ao aplicar, emite `message.updated` na
-  room da conversa e `conversation.updated` no tenant; o frontend exibe "editada" no balão.
+  antes da mensagem) ou não trouxer conteúdo utilizável, o evento é ignorado com segurança. Ao
+  aplicar, emite `message.updated` na room da conversa e `conversation.updated` no tenant; o
+  frontend exibe "editada" no balão.
+- **Limitação da Evolution**: quando o original não está no banco da própria Evolution
+  (`DATABASE_SAVE_DATA_NEW_MESSAGE` desligado) ou quando o evento chega sem o id da mensagem
+  original, não há como associar a edição com segurança; esses casos são ignorados, sem adivinhar o
+  registro.
+
+### Diagnóstico temporário do webhook
+
+Para comprovar os eventos reais (ex.: ao investigar edições/`[unknown]`), o backend expõe duas
+variáveis **desligadas por padrão**, de uso restrito e fácil remoção:
+
+- `WEBHOOK_DEBUG=true`: registra em log (`debug`) um resumo por evento — nome do evento, instância,
+  id da mensagem, id da original, `fromMe`, tipo, se foi detectada edição, resultado da
+  normalização e a decisão (`insert`/`update`/`ignore`), sem conteúdo das conversas.
+- `WEBHOOK_DEBUG_PAYLOAD=true`: inclui também o payload bruto **redigido** (tokens/senhas/segredos
+  mascarados e textos longos truncados).
+
+Ative apenas durante a investigação (`LOG_LEVEL=debug`), reproduza o fluxo e desative em seguida.
+Esses dois flags e o método `traceWebhook` em `webhook.service.ts` devem ser removidos quando não
+forem mais necessários.
 
 ## Digest agendado
 

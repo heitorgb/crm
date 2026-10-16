@@ -1438,6 +1438,41 @@ describe('WhatsApp attendance (integration)', () => {
       };
     }
 
+    /**
+     * Evolution v2.3.7 + Baileys forwards an edit sent from the user's own phone
+     * as a `messages.upsert` where the edit protocolMessage is wrapped in a
+     * container envelope (deviceSent/ephemeral). Evolution's own detector misses
+     * that envelope, so the raw shape must reach the CRM instead of a `[unknown]`.
+     */
+    function wrappedEdit(
+      instanceName: string,
+      container: 'deviceSentMessage' | 'ephemeralMessage',
+      editId: string,
+      originalId: string,
+      text: string,
+    ) {
+      return {
+        event: 'messages.upsert',
+        instance: instanceName,
+        data: {
+          key: { remoteJid, fromMe: true, id: editId },
+          pushName: 'Atendente',
+          message: {
+            [container]: {
+              message: {
+                protocolMessage: {
+                  key: { remoteJid, fromMe: true, id: originalId },
+                  type: 14,
+                  editedMessage: { conversation: text },
+                },
+              },
+            },
+          },
+          messageTimestamp: Math.floor(Date.now() / 1000),
+        },
+      };
+    }
+
     function outboundFromPhone(instanceName: string, messageId: string, text: string) {
       return {
         event: 'messages.upsert',
@@ -1516,6 +1551,52 @@ describe('WhatsApp attendance (integration)', () => {
       expect(
         await prisma.message.count({ where: { tenantId: ownerA.tenantId, type: 'UNKNOWN' } }),
       ).toBe(0);
+    });
+
+    it.each(['deviceSentMessage', 'ephemeralMessage'] as const)(
+      'applies an edit wrapped in %s without creating a [unknown]',
+      async (container) => {
+        const instanceName = `edit-wrap-${container}-${randomUUID()}`;
+        await createInstance(ownerA, instanceName);
+        const originalId = randomUUID();
+        await postWebhook(outboundFromPhone(instanceName, originalId, 'Enviada do celular'));
+        const original = await prisma.message.findFirstOrThrow({
+          where: { tenantId: ownerA.tenantId, externalMessageId: originalId },
+        });
+
+        const response = await postWebhook(
+          wrappedEdit(instanceName, container, randomUUID(), originalId, 'Corrigida no celular'),
+        );
+
+        expect(response.statusCode).toBe(200);
+        const updated = await prisma.message.findUniqueOrThrow({ where: { id: original.id } });
+        expect(updated.content).toBe('Corrigida no celular');
+        expect(updated.metadata).toMatchObject({ edited: true });
+        expect(await prisma.message.count({ where: { tenantId: ownerA.tenantId } })).toBe(1);
+        expect(
+          await prisma.message.count({ where: { tenantId: ownerA.tenantId, type: 'UNKNOWN' } }),
+        ).toBe(0);
+      },
+    );
+
+    it('ignores a non-edit protocol control message instead of persisting a [unknown]', async () => {
+      const { instanceName } = await seedConversation();
+
+      const response = await postWebhook({
+        event: 'messages.upsert',
+        instance: instanceName,
+        data: {
+          key: { remoteJid, fromMe: true, id: randomUUID() },
+          pushName: 'Atendente',
+          message: {
+            protocolMessage: { type: 0, key: { remoteJid, fromMe: true, id: randomUUID() } },
+          },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json().ignored).toBe('unsupported_message');
+      expect(await prisma.message.count({ where: { tenantId: ownerA.tenantId } })).toBe(1);
     });
 
     it('is idempotent for a repeated edit and still applies a later edit', async () => {

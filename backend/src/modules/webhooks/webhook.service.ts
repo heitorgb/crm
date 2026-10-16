@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { Inject, Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import {
   ConversationStatus,
   MessageDirection,
@@ -8,6 +9,7 @@ import {
   Prisma,
 } from '@prisma/client';
 import { isGroupJid, phoneFromJid } from '../../common/whatsapp/jid.js';
+import type { Env } from '../../config/env.validation.js';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service.js';
 import { JOB_NAMES, JOB_QUEUE, type JobQueue } from '../../infrastructure/queue/job-queue.types.js';
 import { RealtimeService } from '../../infrastructure/realtime/realtime.service.js';
@@ -37,17 +39,64 @@ export class WebhookService {
     private readonly directory: WhatsAppDirectoryService,
     private readonly messages: MessagesService,
     private readonly realtime: RealtimeService,
+    private readonly config: ConfigService<Env, true>,
     @Inject(JOB_QUEUE) private readonly queue: JobQueue,
   ) {}
 
   async ingestEvolution(payload: unknown): Promise<WebhookIngestResult> {
     try {
-      return await this.processEvolution(payload);
+      const result = await this.processEvolution(payload);
+      this.traceWebhook(payload, result);
+      return result;
     } catch (error) {
       this.logger.error(
         `Failed to process webhook event: ${error instanceof Error ? error.message : 'unknown'}`,
       );
       return { accepted: false, ignored: 'processing_error' };
+    }
+  }
+
+  /**
+   * Temporary, opt-in diagnostics (`WEBHOOK_DEBUG`). It records only metadata
+   * and the processing decision, so no message body, token or credential leaks
+   * into the logs; the raw payload is included only when `WEBHOOK_DEBUG_PAYLOAD`
+   * is explicitly enabled and is redacted/truncated. Remove together with the two
+   * env flags once the Evolution edit flow is confirmed in production.
+   */
+  private traceWebhook(payload: unknown, result: WebhookIngestResult): void {
+    if (!this.config.get('WEBHOOK_DEBUG')) {
+      return;
+    }
+
+    const record = isRecord(payload) ? payload : {};
+    const eventType = readString(record.event) ?? 'unknown';
+    const instanceName = readInstanceName(record);
+    const data = isRecord(record.data) ? record.data : null;
+    const key = data && isRecord(data.key) ? data.key : null;
+    const rawMessage = data?.message;
+    const { message } = unwrapViewOnce(rawMessage);
+    const edit = data ? parseMessageEdit(data, message) : null;
+
+    this.logger.debug(
+      `webhook.trace ${JSON.stringify({
+        event: eventType,
+        instance: instanceName,
+        externalMessageId:
+          (key ? readString(key.id) : null) ?? (data ? readString(data.keyId) : null),
+        originalMessageId: edit?.externalMessageId ?? null,
+        fromMe: key?.fromMe === true || (data ? data.fromMe === true : false),
+        messageType: data ? readString(data.messageType) ?? readString(data.status) : null,
+        editDetected: edit !== null,
+        normalizedType: edit?.type ?? null,
+        normalizedContent: edit ? edit.content !== null : null,
+        decision: result.ignored ?? (result.accepted ? 'accepted' : 'rejected'),
+        conversationId: result.conversationId ?? null,
+        messageId: result.messageId ?? null,
+      })}`,
+    );
+
+    if (this.config.get('WEBHOOK_DEBUG_PAYLOAD')) {
+      this.logger.debug(`webhook.payload ${JSON.stringify(redactPayload(payload))}`);
     }
   }
 
@@ -107,10 +156,21 @@ export class WebhookService {
     const data = isRecord(payload.data) ? payload.data : null;
     const key = data && isRecord(data.key) ? data.key : null;
 
-    // Evolution may deliver an edit as `messages.upsert` (protocolMessage or an
-    // `editedMessage` wrapper) when its own edit detection misses the envelope.
-    // Route it to the in-place update instead of creating a bogus `[unknown]`.
-    const upsertEdit = data ? parseMessageEdit(data) : null;
+    // Unwrap container envelopes (deviceSent/ephemeral/view-once/...) up front so
+    // both edit detection and type/content extraction see the real inner message.
+    // An edit sent from the user's own phone reaches the linked device wrapped in
+    // a container; inspecting only `data.message` would miss it and persist a
+    // bogus `[unknown]` (this was the production symptom).
+    const rawMessage = data?.message;
+    const incomingType = readString(data?.messageType);
+    const { message, viewOnce } = unwrapViewOnce(rawMessage);
+    const isViewOnce = viewOnce || isViewOnceMessageType(incomingType);
+
+    // Evolution/Baileys report an edit as `messages.upsert` (protocolMessage or an
+    // `editedMessage` wrapper, possibly inside a container) when its own edit
+    // detection misses the envelope. Route it to the in-place update instead of
+    // creating a bogus `[unknown]`.
+    const upsertEdit = data ? parseMessageEdit(data, message) : null;
     if (upsertEdit) {
       await this.applyMessageEdit(instance, upsertEdit);
       return { accepted: true, ignored: 'message_edited' };
@@ -124,13 +184,13 @@ export class WebhookService {
       return { accepted: true, ignored: 'missing_contact' };
     }
 
-    // Messages sent from the phone or WhatsApp Web arrive with fromMe=true and
-    // no CRM action. They are stored as OUTBOUND (see `direction`) so they
-    // appear next to the ones sent through the CRM.
-    const rawMessage = data?.message;
-    const incomingType = readString(data?.messageType);
-    const { message, viewOnce } = unwrapViewOnce(rawMessage);
-    const isViewOnce = viewOnce || isViewOnceMessageType(incomingType);
+    // A non-edit protocol control message (revoke, ephemeral setting, app-state
+    // sync, ...) is not user-visible content. Persisting it would only create a
+    // bogus `[unknown]` bubble, so it is acknowledged and dropped.
+    if (isRecord(message) && isRecord(message.protocolMessage)) {
+      return { accepted: true, ignored: 'unsupported_message' };
+    }
+
     const reaction = readReaction(message);
     if (reaction && !reaction.emoji) {
       return { accepted: true, ignored: 'reaction_removed' };
@@ -819,16 +879,20 @@ const MESSAGE_EDIT_PROTOCOL_TYPE = 14;
 /**
  * Recognizes the shapes Evolution/Baileys use to report a message edit:
  *  - `messages.edited`: `data` is the edit protocolMessage (`key` + `editedMessage`);
- *  - `messages.upsert`: `data.message.protocolMessage` (same protocolMessage shape);
+ *  - `messages.upsert`: `data.message.protocolMessage` (same protocolMessage shape),
+ *    also when `data.message` is a container envelope (deviceSent/ephemeral/...);
  *  - `messages.update`: `data.keyId` plus `data.message.editedMessage.message`;
  *  - a future-proof `data.message.editedMessage.message` wrapper (target `data.key.id`).
  * Returns null for anything that is not an edit, so status receipts, reactions
  * and regular messages keep their normal flow.
  */
-function parseMessageEdit(entry: Record<string, unknown>): ParsedMessageEdit | null {
+function parseMessageEdit(
+  entry: Record<string, unknown>,
+  unwrappedMessage?: unknown,
+): ParsedMessageEdit | null {
   const direct = readProtocolEdit(entry);
   if (direct) {
-    return fromProtocolEdit(direct);
+    return fromProtocolEdit(direct, entry);
   }
 
   const message = isRecord(entry.message) ? entry.message : null;
@@ -836,29 +900,40 @@ function parseMessageEdit(entry: Record<string, unknown>): ParsedMessageEdit | n
     return null;
   }
 
-  const directProtocol = readProtocolEdit(message.protocolMessage);
-  if (directProtocol) {
-    return fromProtocolEdit(directProtocol);
+  // Check the container-unwrapped message first (deviceSent/ephemeral edits sent
+  // from a linked phone), then the raw one.
+  const candidates: Record<string, unknown>[] = [];
+  if (isRecord(unwrappedMessage)) {
+    candidates.push(unwrappedMessage);
+  }
+  candidates.push(message);
+
+  for (const candidate of candidates) {
+    const directProtocol = readProtocolEdit(candidate.protocolMessage);
+    if (directProtocol) {
+      return fromProtocolEdit(directProtocol, entry);
+    }
+
+    const edited = isRecord(candidate.editedMessage) ? candidate.editedMessage : null;
+    if (!edited) {
+      continue;
+    }
+
+    const inner = isRecord(edited.message) ? edited.message : null;
+    const nestedProtocol = inner ? readProtocolEdit(inner.protocolMessage) : null;
+    if (nestedProtocol) {
+      return fromProtocolEdit(nestedProtocol, entry);
+    }
+
+    const externalMessageId =
+      readString(entry.keyId) ?? (isRecord(entry.key) ? readString(entry.key.id) : null);
+    if (!externalMessageId) {
+      return null;
+    }
+    return buildMessageEdit(externalMessageId, inner ?? edited);
   }
 
-  const edited = isRecord(message.editedMessage) ? message.editedMessage : null;
-  if (!edited) {
-    return null;
-  }
-
-  const inner = isRecord(edited.message) ? edited.message : null;
-  const nestedProtocol = inner ? readProtocolEdit(inner.protocolMessage) : null;
-  if (nestedProtocol) {
-    return fromProtocolEdit(nestedProtocol);
-  }
-
-  const key = isRecord(entry.key) ? entry.key : null;
-  const externalMessageId = readString(entry.keyId) ?? (key ? readString(key.id) : null);
-  const content = inner ?? edited;
-  if (!externalMessageId) {
-    return null;
-  }
-  return buildMessageEdit(externalMessageId, content);
+  return null;
 }
 
 function readProtocolEdit(value: unknown): Record<string, unknown> | null {
@@ -871,14 +946,60 @@ function readProtocolEdit(value: unknown): Record<string, unknown> | null {
   return value;
 }
 
-function fromProtocolEdit(protocol: Record<string, unknown>): ParsedMessageEdit | null {
+function fromProtocolEdit(
+  protocol: Record<string, unknown>,
+  entry: Record<string, unknown>,
+): ParsedMessageEdit | null {
   const key = isRecord(protocol.key) ? protocol.key : null;
-  const externalMessageId = key ? readString(key.id) : null;
+  const entryKey = isRecord(entry.key) ? entry.key : null;
+  const externalMessageId =
+    (key ? readString(key.id) : null) ??
+    readString(entry.keyId) ??
+    (entryKey ? readString(entryKey.id) : null);
   const edited = isRecord(protocol.editedMessage) ? protocol.editedMessage : null;
   if (!externalMessageId || !edited) {
     return null;
   }
   return buildMessageEdit(externalMessageId, edited);
+}
+
+const REDACTED_KEYS = new Set([
+  'token',
+  'apikey',
+  'api_key',
+  'authorization',
+  'password',
+  'secret',
+  'webhooksecret',
+  'webhook_secret',
+]);
+
+/**
+ * Produces a log-safe copy of a webhook payload: credentials are masked and long
+ * strings (message bodies) are truncated. Only used behind `WEBHOOK_DEBUG_PAYLOAD`.
+ */
+function redactPayload(value: unknown, depth = 0): unknown {
+  if (depth > 8) {
+    return '[deep]';
+  }
+  if (typeof value === 'string') {
+    return value.length > 120 ? `${value.slice(0, 120)}…` : value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => redactPayload(item, depth + 1));
+  }
+  if (!isRecord(value)) {
+    return value;
+  }
+  const output: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (REDACTED_KEYS.has(key.toLowerCase())) {
+      output[key] = '[redacted]';
+    } else {
+      output[key] = redactPayload(item, depth + 1);
+    }
+  }
+  return output;
 }
 
 function buildMessageEdit(externalMessageId: string, content: unknown): ParsedMessageEdit {

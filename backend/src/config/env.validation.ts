@@ -84,6 +84,8 @@ const integrationEnvSchema = z.object({
   EVOLUTION_API_KEY: optionalEnv(z.string().min(1)),
   EVOLUTION_WEBHOOK_SECRET: optionalEnv(z.string().min(1)),
   PUBLIC_API_URL: optionalEnv(z.url()),
+  WEBHOOK_DEBUG: optionalBoolean,
+  WEBHOOK_DEBUG_PAYLOAD: optionalBoolean,
   STORAGE_PROVIDER: z.enum(['local', 'minio', 's3']).default('local'),
   STORAGE_LOCAL_DIR: optionalEnv(z.string().min(1)),
   STORAGE_ENDPOINT: optionalEnv(z.string().min(1)),

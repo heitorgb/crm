@@ -241,6 +241,13 @@ CRM (sem dependências novas). A tela é **full-bleed**: `MainContent` deixa de 
   novo `message.created`; eventos repetidos são idempotentes. Mensagens externas de mídia também são
   baixadas (`getBase64FromMediaMessage` com `fromMe` correspondente) e anexadas. Mensagens `OUTBOUND`
   não alteram contadores de não lidas nem o estado de leitura.
+- **Mensagens de cobrança**: os lembretes enviados pelo módulo Financeiro → Cobranças (manuais e
+  automáticos) também aparecem na conversa, como mensagens enviadas (OUTBOUND, alinhadas à direita),
+  com o conteúdo real, quebras de linha e o horário da confirmação do envio. A conversa é
+  resolvida/criada pelo telefone e pela instância usados no disparo; a lista de conversas e o painel
+  aberto se atualizam em tempo real (`message.created`/`conversation.updated`). A dedupe usa o
+  `externalMessageId` da Evolution, então um webhook posterior do mesmo envio é reconciliado sem
+  duplicar a bolha. Detalhes em [`billing.md`](./billing.md).
 - **Painel de contato (direita)**: dados do contato/grupo, cliente, assunto e ações. Em telas menores
   vira um `Sheet`; no mobile a lista e o chat se alternam (botão voltar no cabeçalho do chat).
 - **Tempo real**: eventos Socket.IO invalidam as queries; um aviso "Reconectando ao servidor…" é

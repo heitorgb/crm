@@ -11,6 +11,7 @@ export interface ReminderTemplateVars {
   descricao: string;
   valor: string;
   vencimento: string;
+  nome_empresa: string;
 }
 
 export function formatCurrencyBRL(cents: number): string {
@@ -23,7 +24,7 @@ export function formatCurrencyBRL(cents: number): string {
 
 export function renderReminderTemplate(template: string, vars: ReminderTemplateVars): string {
   return template.replace(
-    /\{(cliente|descricao|valor|vencimento)\}/g,
+    /\{(cliente|descricao|valor|vencimento|nome_empresa)\}/g,
     (_match, key: keyof ReminderTemplateVars) => vars[key],
   );
 }

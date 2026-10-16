@@ -1,9 +1,18 @@
 import { randomUUID } from 'node:crypto';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { PrismaService } from '../../src/infrastructure/prisma/prisma.service.js';
+import { RealtimeService } from '../../src/infrastructure/realtime/realtime.service.js';
 import { BillingRecurrencesService } from '../../src/modules/billing/billing-recurrences.service.js';
 import { BillingRemindersService } from '../../src/modules/billing/billing-reminders.service.js';
-import { addDays, localDateString, localHour } from '../../src/modules/billing/billing-time.js';
+import { ConversationProcessingService } from '../../src/modules/conversations/conversation-processing.service.js';
+import { WebhookService } from '../../src/modules/webhooks/webhook.service.js';
+import {
+  addDays,
+  formatDateBR,
+  localDateString,
+  localHour,
+  parseDateOnly,
+} from '../../src/modules/billing/billing-time.js';
 import { EvolutionRequestError } from '../../src/modules/whatsapp/evolution/evolution.client.js';
 import {
   authHeaders,
@@ -134,7 +143,9 @@ describe('Billing (integration)', () => {
     return response.json().id as string;
   }
 
-  function createConnectedInstance(tenant: SeededTenant): Promise<{ id: string }> {
+  function createConnectedInstance(
+    tenant: SeededTenant,
+  ): Promise<{ id: string; instanceName: string }> {
     return prisma.whatsAppInstance.create({
       data: {
         tenantId: tenant.tenantId,
@@ -143,7 +154,7 @@ describe('Billing (integration)', () => {
         status: 'CONNECTED',
         active: true,
       },
-      select: { id: true },
+      select: { id: true, instanceName: true },
     });
   }
 
@@ -594,7 +605,7 @@ describe('Billing (integration)', () => {
       await reminders.runScan();
       expect(evolution.sent).toHaveLength(1);
       expect(evolution.sent[0].text).toBe(
-        `Oi Cobrado, Mensalidade = R$ 150,75 em ${today()}.`,
+        `Oi Cobrado, Mensalidade = R$ 150,75 em ${formatDateBR(parseDateOnly(today()))}.`,
       );
 
       await reminders.runScan();
@@ -1121,6 +1132,233 @@ describe('Billing (integration)', () => {
         scanIntervalMinutes: 5,
         timeZone: 'America/Sao_Paulo',
       });
+    });
+  });
+
+  describe('billing reminders in Atendimento → Conversas', () => {
+    const PHONE = '5511977777777';
+    const JID = `${PHONE}@s.whatsapp.net`;
+    const TEMPLATE =
+      'Olá, *{cliente}*! 👋\n{descricao} = {valor} vence {vencimento}.\nAssinado: *{nome_empresa}*';
+
+    async function setup(
+      tenant: SeededTenant,
+      options: { amountCents?: number } = {},
+    ): Promise<{ chargeId: string; instanceId: string; instanceName: string }> {
+      const instance = await createConnectedInstance(tenant);
+      const customerId = await createCustomer(tenant, 'Cobrado');
+      await createContact(tenant, customerId, PHONE);
+      await updateSettings(tenant, {
+        remindersEnabled: true,
+        reminderOffsets: [0],
+        sendWindowStartHour: 0,
+        sendWindowEndHour: 23,
+        messageTemplate: TEMPLATE,
+      });
+      const created = await createCharge(tenant, {
+        customerId,
+        description: 'Mensalidade',
+        amountCents: options.amountCents ?? 15075,
+        dueDate: today(),
+      });
+      return {
+        chargeId: created.json().id as string,
+        instanceId: instance.id,
+        instanceName: instance.instanceName,
+      };
+    }
+
+    async function sendManual(tenant: SeededTenant, chargeId: string): Promise<string> {
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/billing/charges/${chargeId}/reminders`,
+        headers: authHeaders(tenant),
+        payload: { idempotencyKey: randomUUID() },
+      });
+      expect(response.statusCode).toBe(201);
+      return response.json().id as string;
+    }
+
+    async function conversationOf(tenant: SeededTenant, instanceId: string) {
+      return prisma.conversation.findFirstOrThrow({
+        where: { tenantId: tenant.tenantId, whatsappInstanceId: instanceId, externalContactId: JID },
+      });
+    }
+
+    it('shows an automatic reminder in the conversation as an OUTBOUND message', async () => {
+      const { chargeId, instanceId } = await setup(ownerA);
+
+      await reminders.runScan();
+
+      expect(evolution.sent).toHaveLength(1);
+      const conversation = await conversationOf(ownerA, instanceId);
+      expect(conversation.lastMessageAt).not.toBeNull();
+
+      const messages = await prisma.message.findMany({ where: { conversationId: conversation.id } });
+      expect(messages).toHaveLength(1);
+      expect(messages[0]).toMatchObject({
+        direction: 'OUTBOUND',
+        type: 'TEXT',
+        status: 'SENT',
+      });
+      expect(messages[0].content).toBe(evolution.sent[0].text);
+      expect(messages[0].content).toContain('\n');
+
+      const reminder = await prisma.billingReminder.findFirstOrThrow({ where: { chargeId } });
+      expect(messages[0].externalMessageId).toBe(reminder.externalMessageId);
+    });
+
+    it('shows a manual reminder in the conversation', async () => {
+      const { chargeId, instanceId } = await setup(ownerA);
+
+      await sendManual(ownerA, chargeId);
+
+      const conversation = await conversationOf(ownerA, instanceId);
+      const messages = await prisma.message.findMany({ where: { conversationId: conversation.id } });
+      expect(messages).toHaveLength(1);
+      expect(messages[0]).toMatchObject({ direction: 'OUTBOUND', status: 'SENT' });
+      expect(messages[0].content).toBe(evolution.sent[0].text);
+    });
+
+    it('renders the value, BR date and company name from real data', async () => {
+      const { chargeId } = await setup(ownerA, { amountCents: 15075 });
+      const tenant = await prisma.tenant.findUniqueOrThrow({ where: { id: ownerA.tenantId } });
+
+      await sendManual(ownerA, chargeId);
+
+      const text = evolution.sent[0].text;
+      expect(text).toContain('R$ 150,75');
+      expect(text).toContain(formatDateBR(parseDateOnly(today())));
+      expect(text).toContain(tenant.name);
+    });
+
+    it('creates the conversation when the recipient has none yet', async () => {
+      const { chargeId, instanceId } = await setup(ownerA);
+      expect(
+        await prisma.conversation.count({ where: { tenantId: ownerA.tenantId } }),
+      ).toBe(0);
+
+      await sendManual(ownerA, chargeId);
+
+      const conversation = await conversationOf(ownerA, instanceId);
+      expect(conversation.status).toBe('OPEN');
+      const contact = await prisma.contact.findFirst({
+        where: { tenantId: ownerA.tenantId, phone: PHONE },
+      });
+      expect(conversation.contactId).toBe(contact?.id);
+    });
+
+    it('does not duplicate the message when the webhook echoes the send', async () => {
+      const { chargeId, instanceId, instanceName } = await setup(ownerA);
+      await reminders.runScan();
+      const reminder = await prisma.billingReminder.findFirstOrThrow({ where: { chargeId } });
+      const conversation = await conversationOf(ownerA, instanceId);
+
+      const result = await app.get(WebhookService).ingestEvolution({
+        event: 'messages.upsert',
+        instance: instanceName,
+        data: {
+          key: { id: reminder.externalMessageId, remoteJid: JID, fromMe: true },
+          message: { conversation: evolution.sent[0].text },
+          messageType: 'conversation',
+          pushName: 'Cobrado',
+        },
+      });
+
+      expect(result.accepted).toBe(true);
+      const messages = await prisma.message.count({ where: { conversationId: conversation.id } });
+      expect(messages).toBe(1);
+      expect(evolution.sent).toHaveLength(1);
+    });
+
+    it('does not record a conversation message when the provider fails', async () => {
+      const { chargeId } = await setup(ownerA);
+      evolution.failWith = new EvolutionRequestError('boom', 500);
+
+      await reminders.runScan();
+
+      const reminder = await prisma.billingReminder.findFirstOrThrow({ where: { chargeId } });
+      expect(reminder.status).toBe('PENDING');
+      expect(await prisma.message.count({ where: { tenantId: ownerA.tenantId } })).toBe(0);
+    });
+
+    it('keeps the reminder sent when recording it in the conversation fails', async () => {
+      const { chargeId, instanceId } = await setup(ownerA);
+      const processing = app.get(ConversationProcessingService);
+      const spy = vi
+        .spyOn(processing, 'recordOutboundMessage')
+        .mockRejectedValue(new Error('conversation persistence failed'));
+
+      await reminders.runScan();
+
+      spy.mockRestore();
+      const reminder = await prisma.billingReminder.findFirstOrThrow({ where: { chargeId } });
+      expect(reminder.status).toBe('SENT');
+      expect(evolution.sent).toHaveLength(1);
+      expect(
+        await prisma.message.count({
+          where: { tenantId: ownerA.tenantId, conversation: { whatsappInstanceId: instanceId } },
+        }),
+      ).toBe(0);
+    });
+
+    it('publishes realtime events so the conversation list updates', async () => {
+      const { chargeId } = await setup(ownerA);
+      const realtime = app.get(RealtimeService);
+      const tenantSpy = vi.spyOn(realtime, 'emitToTenant');
+      const conversationSpy = vi.spyOn(realtime, 'emitToConversation');
+
+      await sendManual(ownerA, chargeId);
+
+      expect(tenantSpy).toHaveBeenCalledWith(
+        ownerA.tenantId,
+        'message.created',
+        expect.objectContaining({ direction: 'OUTBOUND' }),
+      );
+      expect(tenantSpy).toHaveBeenCalledWith(
+        ownerA.tenantId,
+        'conversation.updated',
+        expect.anything(),
+      );
+      expect(conversationSpy).toHaveBeenCalledWith(
+        ownerA.tenantId,
+        expect.any(String),
+        'message.created',
+        expect.objectContaining({ direction: 'OUTBOUND' }),
+      );
+
+      tenantSpy.mockRestore();
+      conversationSpy.mockRestore();
+    });
+
+    it('exposes the recorded message through the normal conversations API', async () => {
+      const { chargeId, instanceId } = await setup(ownerA);
+      await sendManual(ownerA, chargeId);
+      const conversation = await conversationOf(ownerA, instanceId);
+
+      const response = await app.inject({
+        method: 'GET',
+        url: `/api/conversations/${conversation.id}/messages`,
+        headers: authHeaders(ownerA),
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json().data).toHaveLength(1);
+      expect(response.json().data[0]).toMatchObject({ direction: 'OUTBOUND', status: 'SENT' });
+    });
+
+    it('never leaks the recorded message across tenants', async () => {
+      const { chargeId } = await setup(ownerA);
+      await sendManual(ownerA, chargeId);
+
+      const foreignConversations = await prisma.conversation.count({
+        where: { tenantId: ownerB.tenantId },
+      });
+      const foreignMessages = await prisma.message.count({
+        where: { tenantId: ownerB.tenantId },
+      });
+      expect(foreignConversations).toBe(0);
+      expect(foreignMessages).toBe(0);
     });
   });
 });

@@ -23,6 +23,7 @@ import {
   EvolutionRequestError,
   EvolutionUnavailableError,
 } from '../whatsapp/evolution/evolution.client.js';
+import { ConversationProcessingService } from '../conversations/conversation-processing.service.js';
 import { MODULE_KEYS } from '../modules/modules.constants.js';
 import { ModuleDisabledError } from '../modules/modules.errors.js';
 import { ModulesService } from '../modules/modules.service.js';
@@ -40,6 +41,7 @@ import {
 import { backoffDelayMs, formatCurrencyBRL, renderReminderTemplate } from './billing-message.js';
 import {
   addDays,
+  formatDateBR,
   formatDateOnly,
   isWithinWindow,
   localDateString,
@@ -71,7 +73,7 @@ export interface BillingReminderView {
 
 const REMINDER_CHARGE_INCLUDE = {
   customer: { select: { name: true } },
-  contact: { select: { name: true, phone: true } },
+  contact: { select: { id: true, name: true, phone: true } },
 } satisfies Prisma.BillingChargeInclude;
 
 type ReminderCharge = Prisma.BillingChargeGetPayload<{
@@ -92,6 +94,7 @@ export class BillingRemindersService {
     private readonly settings: BillingSettingsService,
     private readonly recurrences: BillingRecurrencesService,
     private readonly modules: ModulesService,
+    private readonly conversations: ConversationProcessingService,
     @Inject(JOB_QUEUE) private readonly queue: JobQueue,
   ) {}
 
@@ -294,7 +297,7 @@ export class BillingRemindersService {
       return 'retry';
     }
 
-    const phone = await this.resolveDestination(tenantId, charge);
+    const destination = await this.resolveDestination(tenantId, charge);
     const instance = await this.resolveInstance(tenantId, settings);
 
     return this.deliver({
@@ -302,7 +305,7 @@ export class BillingRemindersService {
       attempt: reminder.attempts + 1,
       charge,
       settings,
-      phone,
+      destination,
       instance,
       maxAttempts: BILLING_MAX_REMINDER_ATTEMPTS,
     });
@@ -340,7 +343,7 @@ export class BillingRemindersService {
     }
 
     const settings = await this.settings.getForTenant(tenantId);
-    const phone = await this.resolveDestination(tenantId, charge);
+    const destination = await this.resolveDestination(tenantId, charge);
     const instance = await this.resolveInstance(tenantId, settings);
 
     let reminder;
@@ -355,7 +358,7 @@ export class BillingRemindersService {
           idempotencyKey,
           scheduledFor: parseDateOnly(localDateString(new Date(), this.timeZone)),
           status: BillingReminderStatus.PENDING,
-          destination: phone,
+          destination: destination?.phone ?? null,
           whatsappInstanceId: instance?.id ?? null,
           nextAttemptAt: null,
         },
@@ -377,7 +380,7 @@ export class BillingRemindersService {
       attempt: 1,
       charge,
       settings,
-      phone,
+      destination,
       instance,
       maxAttempts: 1,
     });
@@ -392,16 +395,17 @@ export class BillingRemindersService {
     attempt: number;
     charge: ReminderCharge;
     settings: BillingSettingsView;
-    phone: string | null;
+    destination: { phone: string; contactId: string | null } | null;
     instance: { id: string; instanceName: string } | null;
     maxAttempts: number;
   }): Promise<ReminderOutcome> {
-    const { reminderId, attempt, charge, settings, phone, instance, maxAttempts } = params;
+    const { reminderId, attempt, charge, settings, destination, instance, maxAttempts } = params;
 
-    if (!phone) {
+    if (!destination) {
       await this.markSkipped(reminderId, 'missing_phone');
       return 'skipped';
     }
+    const phone = destination.phone;
     if (!instance) {
       return this.registerFailure(reminderId, attempt, phone, null, 'no_instance', maxAttempts);
     }
@@ -423,7 +427,8 @@ export class BillingRemindersService {
       cliente: charge.contact?.name ?? charge.customer?.name ?? 'cliente',
       descricao: charge.description,
       valor: formatCurrencyBRL(charge.amountCents),
-      vencimento: formatDateOnly(charge.dueDate),
+      vencimento: formatDateBR(charge.dueDate),
+      nome_empresa: await this.resolveCompanyName(charge.tenantId),
     });
 
     try {
@@ -442,6 +447,28 @@ export class BillingRemindersService {
           nextAttemptAt: null,
         },
       });
+
+      // The message is recorded in the conversation after the provider confirms
+      // the send. A failure here never rolls the reminder back to PENDING (which
+      // would re-send the message) and never drops the audit history.
+      try {
+        await this.conversations.recordOutboundMessage({
+          tenantId: charge.tenantId,
+          whatsappInstanceId: instance.id,
+          externalContactId: `${phone}@s.whatsapp.net`,
+          contactId: destination.contactId,
+          text,
+          externalMessageId: sent.externalMessageId ?? null,
+          metadata: { source: 'billing_reminder', chargeId: charge.id, reminderId },
+        });
+      } catch (error) {
+        this.logger.warn(
+          `Failed to record reminder ${reminderId} in the conversation: ${
+            error instanceof Error ? error.message : 'unknown'
+          }`,
+        );
+      }
+
       return 'sent';
     } catch (error) {
       return this.registerFailure(
@@ -453,6 +480,14 @@ export class BillingRemindersService {
         maxAttempts,
       );
     }
+  }
+
+  private async resolveCompanyName(tenantId: string): Promise<string> {
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { name: true },
+    });
+    return tenant?.name?.trim() ?? '';
   }
 
   private async registerFailure(
@@ -511,11 +546,15 @@ export class BillingRemindersService {
 
   private async resolveDestination(
     tenantId: string,
-    charge: { customerId: string | null; contact: { phone: string | null } | null },
-  ): Promise<string | null> {
+    charge: {
+      contactId: string | null;
+      customerId: string | null;
+      contact: { id: string; phone: string | null } | null;
+    },
+  ): Promise<{ phone: string; contactId: string | null } | null> {
     const direct = normalizePhone(charge.contact?.phone);
     if (direct) {
-      return direct;
+      return { phone: direct, contactId: charge.contact?.id ?? charge.contactId };
     }
 
     if (!charge.customerId) {
@@ -525,9 +564,10 @@ export class BillingRemindersService {
     const contact = await this.prisma.contact.findFirst({
       where: { tenantId, customerId: charge.customerId, phone: { not: null } },
       orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
-      select: { phone: true },
+      select: { id: true, phone: true },
     });
-    return normalizePhone(contact?.phone ?? null);
+    const fallbackPhone = normalizePhone(contact?.phone ?? null);
+    return fallbackPhone ? { phone: fallbackPhone, contactId: contact?.id ?? null } : null;
   }
 
   private async resolveInstance(

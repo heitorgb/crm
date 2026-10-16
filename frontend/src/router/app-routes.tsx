@@ -44,6 +44,9 @@ const ProfilePage = lazy(() =>
 const SettingsPage = lazy(() =>
   import('@/features/settings/settings-page').then((module) => ({ default: module.SettingsPage })),
 );
+const BillingPage = lazy(() =>
+  import('@/features/billing/billing-page').then((module) => ({ default: module.BillingPage })),
+);
 
 export function AppRoutes() {
   return (
@@ -66,6 +69,8 @@ export function AppRoutes() {
 
           <Route path="/contatos" element={<ContactListPage />} />
           <Route path="/contatos/:id" element={<ContactDetailPage />} />
+
+          <Route path="/cobrancas" element={<BillingPage />} />
 
           <Route path="/perfil" element={<ProfilePage />} />
           <Route path="/configuracoes" element={<SettingsPage />} />

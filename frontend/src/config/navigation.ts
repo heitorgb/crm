@@ -1,4 +1,4 @@
-import { Building2, Contact, Headset, MessagesSquare, Settings, Shield, Smartphone, Users } from 'lucide-react';
+import { Building2, Contact, Headset, MessagesSquare, Receipt, Settings, Shield, Smartphone, Users, Wallet } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
 export interface NavItem {
@@ -34,6 +34,11 @@ export const navigation: NavEntry[] = [
     title: 'Contatos',
     icon: Users,
     items: [{ title: 'Contatos', to: '/contatos', icon: Contact }],
+  },
+  {
+    title: 'Financeiro',
+    icon: Wallet,
+    items: [{ title: 'Cobranças', to: '/cobrancas', icon: Receipt }],
   },
   {
     title: 'Administração',

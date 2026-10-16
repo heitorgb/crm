@@ -18,6 +18,7 @@ Contatos (histórico de conversas por contato)
 - [AGENTS.md](./AGENTS.md) — regras obrigatórias para agentes de IA e desenvolvedores.
 - [docs/architecture.md](./docs/architecture.md) — visão geral da arquitetura.
 - [docs/database.md](./docs/database.md) — banco, modelagem e migrations.
+- [docs/billing.md](./docs/billing.md) — cobranças e lembretes por WhatsApp.
 - [docs/multi-tenancy.md](./docs/multi-tenancy.md) — isolamento entre tenants.
 - [docs/authentication.md](./docs/authentication.md) — autenticação/autorização.
 - [docs/como-executar.md](./docs/como-executar.md) — guia passo a passo para executar (infra, backend, frontend, Evolution).

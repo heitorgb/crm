@@ -29,7 +29,6 @@ import {
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { useAuthStore } from '@/stores/auth-store';
 import { useDebouncedValue } from '@/lib/use-debounced-value';
 import { formatDate } from '@/lib/format';
 import type { BillingCharge } from '@/types/billing';
@@ -38,6 +37,7 @@ import { BillingSettingsDialog } from './billing-settings-dialog';
 import { ChargeForm } from './charge-form';
 import { ReminderHistoryDialog } from './reminder-history-dialog';
 import { RecurrencesDialog } from './recurrences-dialog';
+import { useBillingPermissions } from './use-billing-permissions';
 import {
   useBillingCharges,
   useBillingOverview,
@@ -48,8 +48,7 @@ import {
 const PAGE_SIZE = 20;
 
 export function BillingPage() {
-  const role = useAuthStore((state) => state.session?.role);
-  const canManage = role === 'OWNER' || role === 'ADMIN';
+  const { canManage } = useBillingPermissions();
 
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('all');
@@ -105,10 +104,12 @@ export function BillingPage() {
         description="Controle manual de cobranças e lembretes por WhatsApp."
         actions={
           <>
-            <Button variant="outline" onClick={() => setSettingsOpen(true)}>
-              <BellRing />
-              Lembretes
-            </Button>
+            {canManage ? (
+              <Button variant="outline" onClick={() => setSettingsOpen(true)}>
+                <BellRing />
+                Lembretes
+              </Button>
+            ) : null}
             <Button variant="outline" onClick={() => setRecurrencesOpen(true)}>
               <Repeat />
               Recorrentes

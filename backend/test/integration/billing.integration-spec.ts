@@ -80,6 +80,7 @@ describe('Billing (integration)', () => {
   let reminders: BillingRemindersService;
   let recurrences: BillingRecurrencesService;
   let ownerA: SeededTenant;
+  let adminA: SeededTenant;
   let userA: SeededTenant;
   let ownerB: SeededTenant;
 
@@ -100,12 +101,13 @@ describe('Billing (integration)', () => {
     evolution.calls = 0;
     evolution.failWith = undefined;
     ownerA = await seedTenant(app, prisma, { name: 'Billing Owner A', role: 'OWNER' });
+    adminA = await seedMember(app, prisma, ownerA.tenantId, { name: 'Billing Admin A', role: 'ADMIN' });
     userA = await seedMember(app, prisma, ownerA.tenantId, { name: 'Billing User A', role: 'USER' });
     ownerB = await seedTenant(app, prisma, { name: 'Billing Owner B', role: 'OWNER' });
   });
 
   afterEach(async () => {
-    await cleanupTenants(prisma, [ownerA, userA, ownerB]);
+    await cleanupTenants(prisma, [ownerA, adminA, userA, ownerB]);
   });
 
   async function createCustomer(tenant: SeededTenant, name = 'Cliente'): Promise<string> {
@@ -406,6 +408,58 @@ describe('Billing (integration)', () => {
         headers: authHeaders(userA),
       });
       expect(list.statusCode).toBe(200);
+    });
+
+    it('lets an ADMIN (not only the OWNER) save the billing settings', async () => {
+      const response = await updateSettings(adminA, {
+        remindersEnabled: true,
+        reminderOffsets: [-5, 0, 5],
+        messageTemplate: 'Oi {cliente}, vence {vencimento}.',
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({
+        remindersEnabled: true,
+        reminderOffsets: [-5, 0, 5],
+        messageTemplate: 'Oi {cliente}, vence {vencimento}.',
+      });
+
+      const persisted = await app.inject({
+        method: 'GET',
+        url: '/api/billing/settings',
+        headers: authHeaders(adminA),
+      });
+      expect(persisted.json().reminderOffsets).toEqual([-5, 0, 5]);
+    });
+
+    it('rejects a USER trying to change the billing settings', async () => {
+      const response = await updateSettings(userA, { messageTemplate: 'hacked' });
+      expect(response.statusCode).toBe(403);
+      expect(response.json().code).toBe('FORBIDDEN');
+    });
+
+    it('requires authentication for the billing settings', async () => {
+      const response = await app.inject({ method: 'PATCH', url: '/api/billing/settings', payload: {} });
+      expect(response.statusCode).toBe(401);
+    });
+
+    it('scopes settings changes to the authenticated tenant', async () => {
+      await updateSettings(ownerA, { messageTemplate: 'mensagem do tenant A' });
+      await updateSettings(ownerB, { messageTemplate: 'mensagem do tenant B' });
+
+      const settingsA = await app.inject({
+        method: 'GET',
+        url: '/api/billing/settings',
+        headers: authHeaders(ownerA),
+      });
+      const settingsB = await app.inject({
+        method: 'GET',
+        url: '/api/billing/settings',
+        headers: authHeaders(ownerB),
+      });
+
+      expect(settingsA.json().messageTemplate).toBe('mensagem do tenant A');
+      expect(settingsB.json().messageTemplate).toBe('mensagem do tenant B');
     });
   });
 

@@ -110,3 +110,21 @@ export function offsetLabel(offsetDays: number): string {
   if (offsetDays < 0) return `${Math.abs(offsetDays)} dia(s) antes`;
   return `${offsetDays} dia(s) depois`;
 }
+
+/**
+ * Maps an API error to a user-facing message. A legitimate 403 (the user lacks
+ * the required membership role) is always presented as a permission error,
+ * never as a generic failure.
+ */
+export function resolveBillingError(error: unknown, fallback: string): string {
+  if (typeof error === 'object' && error !== null && 'status' in error) {
+    const status = (error as { status: unknown }).status;
+    if (status === 403) {
+      return 'Você não tem permissão para esta operação.';
+    }
+  }
+  if (error instanceof Error && error.message.length > 0) {
+    return error.message;
+  }
+  return fallback;
+}

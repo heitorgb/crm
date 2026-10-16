@@ -136,7 +136,9 @@ inesperados e mantém o comportamento previsível.
 
 ## Endpoints
 
-Todos exigem autenticação. Escritas financeiras exigem `OWNER`/`ADMIN`.
+Todos exigem autenticação. Escritas financeiras exigem `OWNER`/`ADMIN` (mesma regra dos demais
+módulos: clientes, contatos e WhatsApp). A regra é aplicada no backend pelo `RolesGuard`; o
+frontend apenas espelha essa regra nos pontos de entrada de gestão (não a substitui).
 
 | Método | Rota                                  | Permissão     |
 | ------ | ------------------------------------- | ------------- |

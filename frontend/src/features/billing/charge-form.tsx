@@ -20,9 +20,8 @@ import {
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { useCustomer, useCustomers } from '@/features/customers/queries';
-import { ApiError } from '@/lib/api-client';
 import type { BillingCharge } from '@/types/billing';
-import { centsToInput, formatCurrency, parseCurrencyToCents } from './billing-utils';
+import { centsToInput, formatCurrency, parseCurrencyToCents, resolveBillingError } from './billing-utils';
 import { useCreateCharge, useUpdateCharge } from './queries';
 
 interface ChargeFormProps {
@@ -108,11 +107,7 @@ export function ChargeForm({ open, onOpenChange, charge }: ChargeFormProps) {
       }
       onOpenChange(false);
     } catch (requestError) {
-      setError(
-        requestError instanceof ApiError
-          ? requestError.message
-          : 'Não foi possível salvar a cobrança.',
-      );
+      setError(resolveBillingError(requestError, 'Não foi possível salvar a cobrança.'));
     }
   };
 

@@ -20,10 +20,9 @@ import {
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { useWhatsAppInstances } from '@/features/whatsapp/queries';
-import { ApiError } from '@/lib/api-client';
 import type { BillingSettings } from '@/types/billing';
 import type { WhatsAppInstance } from '@/types/whatsapp';
-import { parseOffsets, serializeOffsets } from './billing-utils';
+import { parseOffsets, resolveBillingError, serializeOffsets } from './billing-utils';
 import { useBillingSettings, useUpdateBillingSettings } from './queries';
 
 interface BillingSettingsDialogProps {
@@ -125,9 +124,7 @@ function BillingSettingsForm({ settings, instances, onDone }: BillingSettingsFor
       onDone();
     } catch (requestError) {
       setError(
-        requestError instanceof ApiError
-          ? requestError.message
-          : 'Não foi possível salvar as configurações.',
+        resolveBillingError(requestError, 'Não foi possível salvar as configurações.'),
       );
     }
   };

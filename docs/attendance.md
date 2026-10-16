@@ -449,6 +449,35 @@ Referência do evento: [implementação da Evolution](https://github.com/Evoluti
   original, não há como associar a edição com segurança; esses casos são ignorados, sem adivinhar o
   registro.
 
+### Edição pelo CRM
+
+- Endpoint `PATCH /conversations/:id/messages/:messageId` (corpo `{ content }`). Antes de chamar o
+  provedor ele valida, no escopo do tenant e da conversa, que a mensagem é **OUTBOUND**, tem
+  `externalMessageId` e é de um tipo suportado. Mensagem recebida, sem id externo ou de tipo não
+  suportado responde `422 MESSAGE_NOT_EDITABLE`; mensagem/conversa de outro tenant responde `404`.
+- Tipos suportados (limite do contrato da Evolution): `TEXT` e a legenda de `IMAGE`/`VIDEO`. Áudio,
+  documento, figurinha, localização, contato e reação não podem ser editados.
+- `EvolutionClient.updateMessage` chama `POST /chat/updateMessage/{instance}` com
+  `{ number, key: { id, remoteJid, fromMe: true }, text }`. O `number` é o destino
+  (`deliveryDestination`) e o `key.remoteJid` é o `externalContactId` completo (funciona para
+  `@s.whatsapp.net`, `@g.us` e `@lid`).
+- O banco **só é atualizado após a confirmação** da Evolution. O registro mantém `id`, conversa,
+  direção e `occurredAt`; muda apenas `content` (e `metadata.edited`/`metadata.editedAt`). Falha
+  externa (`404`/`400`) vira `422 MESSAGE_NOT_EDITABLE` sem alterar a mensagem; demais falhas
+  propagam `502`. Não há criação de linhas — a edição é idempotente.
+- Após aplicar, emite `message.updated` na room da conversa e `conversation.updated` no tenant. A
+  mesma mensagem vinda do webhook (celular) e a confirmada pela API são idempotentes, então a
+  resposta HTTP e o evento em tempo real não duplicam a bolha.
+- **Limitação da Evolution (CRM → WhatsApp)**: o `updateMessage` exige
+  `DATABASE_SAVE_DATA_NEW_MESSAGE=true` (a Evolution precisa ter a mensagem original no próprio
+  banco para validar `remoteJid`/`fromMe`); o compose já habilita. O WhatsApp aplica a janela de
+  edição de ~15 minutos do lado do servidor — além dela a API externa recusa e o CRM responde
+  `422`.
+- No chat, a ação **Editar** aparece apenas em mensagens enviadas elegíveis (próprias, com id
+  externo, não pendentes/falhas, tipo suportado). O editor abre com o texto atual, bloqueia
+  reenvio enquanto salva, mostra erro claro e, ao salvar, atualiza a mensagem original no lugar
+  (indicador "editada"), preservando horário e posição.
+
 ### Diagnóstico temporário do webhook
 
 Para comprovar os eventos reais (ex.: ao investigar edições/`[unknown]`), o backend expõe duas

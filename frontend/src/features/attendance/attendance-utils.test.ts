@@ -4,6 +4,7 @@ import type { PageResult } from '@/types/crm';
 import {
   areGrouped,
   buildTimeline,
+  canEditMessage,
   computeMessageScrollTop,
   findQuotedMessage,
 } from './attendance-utils';
@@ -204,6 +205,49 @@ describe('findQuotedMessage', () => {
     expect(
       findQuotedMessage([message({ id: 'orig-1' })], 'conv-1', quoted({ messageId: 'orig-1' })),
     ).not.toBeNull();
+  });
+});
+
+describe('canEditMessage', () => {
+  const outbound = (overrides: Partial<ConversationMessage> = {}): ConversationMessage =>
+    message({
+      direction: 'OUTBOUND',
+      externalMessageId: 'wamid.1',
+      status: 'SENT',
+      ...overrides,
+    });
+
+  it('allows editing an outbound text message already sent', () => {
+    expect(canEditMessage(outbound())).toBe(true);
+  });
+
+  it('allows editing the caption of an outbound image or video', () => {
+    expect(canEditMessage(outbound({ type: 'IMAGE' }))).toBe(true);
+    expect(canEditMessage(outbound({ type: 'VIDEO' }))).toBe(true);
+  });
+
+  it('never allows editing an inbound message', () => {
+    expect(canEditMessage(outbound({ direction: 'INBOUND' }))).toBe(false);
+  });
+
+  it('never allows editing without a provider id', () => {
+    expect(canEditMessage(outbound({ externalMessageId: null }))).toBe(false);
+  });
+
+  it('never allows editing a pending or failed send', () => {
+    expect(canEditMessage(outbound({ status: 'PENDING' }))).toBe(false);
+    expect(canEditMessage(outbound({ status: 'FAILED' }))).toBe(false);
+  });
+
+  it('never allows editing unsupported types', () => {
+    expect(canEditMessage(outbound({ type: 'AUDIO' }))).toBe(false);
+    expect(canEditMessage(outbound({ type: 'DOCUMENT' }))).toBe(false);
+    expect(canEditMessage(outbound({ type: 'STICKER' }))).toBe(false);
+    expect(canEditMessage(outbound({ type: 'REACTION' }))).toBe(false);
+  });
+
+  it('never allows editing a view-once message', () => {
+    expect(canEditMessage(outbound({ type: 'IMAGE', metadata: { viewOnce: true } }))).toBe(false);
   });
 });
 

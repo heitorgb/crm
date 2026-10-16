@@ -9,6 +9,7 @@ import {
   Image as ImageIcon,
   MapPin,
   Mic,
+  Pencil,
   Reply,
   Sticker,
   UserRound,
@@ -24,6 +25,8 @@ import type {
 } from '@/types/attendance';
 import {
   formatBubbleTime,
+  canEditMessage,
+  isMessageEdited,
   messageSnippet,
   quotedAuthorLabel,
   readMessageContacts,
@@ -46,6 +49,7 @@ interface MessageBubbleProps {
   groupedWithNext?: boolean;
   highlighted?: boolean;
   onReply?: (message: ConversationMessage) => void;
+  onEdit?: (message: ConversationMessage) => void;
   onNavigateToQuote?: (quoted: QuotedMessage) => void;
 }
 
@@ -58,6 +62,7 @@ export function MessageBubble({
   groupedWithNext = false,
   highlighted = false,
   onReply,
+  onEdit,
   onNavigateToQuote,
 }: MessageBubbleProps) {
   const isOutbound = message.direction === 'OUTBOUND';
@@ -69,6 +74,7 @@ export function MessageBubble({
   const isViewOnce = isViewOnceMessage(message);
   const quoted = readQuotedMessage(message);
   const contacts = message.type === 'CONTACT' ? readMessageContacts(message.metadata) : [];
+  const editable = canEditMessage(message);
 
   if (isViewOnce) {
     return (
@@ -141,7 +147,11 @@ export function MessageBubble({
             </div>
           </div>
         </div>
-        {onReply ? <ReplyButton onClick={() => onReply(message)} /> : null}
+        <MessageActions
+          canEdit={editable}
+          onReply={onReply ? () => onReply(message) : undefined}
+          onEdit={onEdit ? () => onEdit(message) : undefined}
+        />
       </div>
     );
   }
@@ -171,7 +181,11 @@ export function MessageBubble({
             {formatBubbleTime(message.occurredAt)}
           </span>
         </div>
-        {onReply ? <ReplyButton onClick={() => onReply(message)} /> : null}
+        <MessageActions
+          canEdit={editable}
+          onReply={onReply ? () => onReply(message) : undefined}
+          onEdit={onEdit ? () => onEdit(message) : undefined}
+        />
       </div>
     );
   }
@@ -203,7 +217,11 @@ export function MessageBubble({
             {formatBubbleTime(message.occurredAt)}
           </span>
         </div>
-        {onReply ? <ReplyButton onClick={() => onReply(message)} /> : null}
+        <MessageActions
+          canEdit={editable}
+          onReply={onReply ? () => onReply(message) : undefined}
+          onEdit={onEdit ? () => onEdit(message) : undefined}
+        />
       </div>
     );
   }
@@ -295,7 +313,7 @@ export function MessageBubble({
               isMedia && !message.content ? 'px-1 pt-0.5' : 'mt-0.5 px-0.5',
             )}
           >
-            {message.metadata?.edited === true ? (
+            {isMessageEdited(message) ? (
               <span className="mr-0.5 italic text-muted-foreground/80">editada</span>
             ) : null}
             <span
@@ -310,7 +328,11 @@ export function MessageBubble({
           </div>
         </div>
       </div>
-      {onReply ? <ReplyButton onClick={() => onReply(message)} /> : null}
+      <MessageActions
+        canEdit={editable}
+        onReply={onReply ? () => onReply(message) : undefined}
+        onEdit={onEdit ? () => onEdit(message) : undefined}
+      />
     </div>
   );
 }
@@ -405,17 +427,42 @@ function QuoteBlock({ quoted, isOutbound, onNavigate }: QuoteBlockProps) {
   );
 }
 
-function ReplyButton({ onClick }: { onClick: () => void }) {
+interface MessageActionsProps {
+  canEdit: boolean;
+  onReply?: () => void;
+  onEdit?: () => void;
+}
+
+function MessageActions({ canEdit, onReply, onEdit }: MessageActionsProps) {
+  const showEdit = canEdit && onEdit !== undefined;
+  if (!onReply && !showEdit) {
+    return null;
+  }
   return (
-    <Button
-      variant="ghost"
-      size="icon"
-      className="message-reply-button size-8 shrink-0 rounded-full text-foreground/60 hover:bg-surface-hover hover:text-foreground"
-      onClick={onClick}
-      aria-label="Responder"
-    >
-      <Reply className="size-4" />
-    </Button>
+    <div className="flex shrink-0 flex-col gap-0.5">
+      {onReply ? (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="message-reply-button size-8 shrink-0 rounded-full text-foreground/60 hover:bg-surface-hover hover:text-foreground"
+          onClick={onReply}
+          aria-label="Responder"
+        >
+          <Reply className="size-4" />
+        </Button>
+      ) : null}
+      {showEdit ? (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="message-reply-button size-8 shrink-0 rounded-full text-foreground/60 hover:bg-surface-hover hover:text-foreground"
+          onClick={onEdit}
+          aria-label="Editar mensagem"
+        >
+          <Pencil className="size-4" />
+        </Button>
+      ) : null}
+    </div>
   );
 }
 

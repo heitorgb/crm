@@ -23,6 +23,7 @@ import { ConversationsService } from './conversations.service.js';
 import { MessagesService } from './messages.service.js';
 import {
   CreateConversationDto,
+  EditConversationMessageDto,
   ListConversationsQueryDto,
   SendConversationMessageDto,
   StartConversationDto,
@@ -154,6 +155,16 @@ export class ConversationsController {
       dto.quotedMessageId ?? null,
     );
     return { ok: true };
+  }
+
+  @Patch(':id/messages/:messageId')
+  @HttpCode(200)
+  editMessage(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('messageId', ParseUUIDPipe) messageId: string,
+    @Body() dto: EditConversationMessageDto,
+  ) {
+    return this.conversations.editHumanMessage(id, messageId, dto.content);
   }
 
   @Post(':id/messages/media')

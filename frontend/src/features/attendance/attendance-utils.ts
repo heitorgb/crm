@@ -108,6 +108,38 @@ export function messageSnippet(content: string | null, type: MessageType): strin
   return MESSAGE_TYPE_LABEL[type] ?? 'Mensagem';
 }
 
+/**
+ * Message types WhatsApp (through Evolution) accepts for an edit: plain text and
+ * the caption of an image/video. Everything else is rejected by the provider.
+ */
+const EDITABLE_MESSAGE_TYPES: ReadonlySet<MessageType> = new Set(['TEXT', 'IMAGE', 'VIDEO']);
+
+/**
+ * A message is editable only when it was sent by the CRM/agent, already reached
+ * WhatsApp (provider id present), was not rejected and has a supported type.
+ * Inbound messages, failed/pending sends and unsupported types never offer the
+ * edit action.
+ */
+export function canEditMessage(message: ConversationMessage): boolean {
+  if (message.direction !== 'OUTBOUND') {
+    return false;
+  }
+  if (!message.externalMessageId) {
+    return false;
+  }
+  if (message.status === 'FAILED' || message.status === 'PENDING') {
+    return false;
+  }
+  if (message.metadata?.viewOnce === true) {
+    return false;
+  }
+  return EDITABLE_MESSAGE_TYPES.has(message.type);
+}
+
+export function isMessageEdited(message: ConversationMessage): boolean {
+  return message.metadata?.edited === true;
+}
+
 const GROUP_WINDOW_MS = 5 * 60 * 1000;
 
 /**

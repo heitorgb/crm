@@ -1,6 +1,11 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { BillingChargeStatus, BillingReminderStatus, Prisma } from '@prisma/client';
+import {
+  BillingChargeStatus,
+  BillingReminderOrigin,
+  BillingReminderStatus,
+  Prisma,
+} from '@prisma/client';
 import type { TenantContext } from '../../common/tenant-context/tenant-context.types.js';
 import { AppException } from '../../common/errors/app.exception.js';
 import { TenantContextService } from '../../common/tenant-context/tenant-context.service.js';
@@ -21,11 +26,23 @@ import {
 import { BillingRecurrencesService } from './billing-recurrences.service.js';
 import { BillingSettingsService, type BillingSettingsView } from './billing-settings.service.js';
 import {
+  BillingChargeNotFoundError,
+  BillingChargeNotSendableError,
+} from './billing.errors.js';
+import {
   BILLING_MAX_REMINDER_ATTEMPTS,
+  BILLING_REMINDER_CATCHUP_DAYS,
   BILLING_STALE_PROCESSING_MS,
 } from './billing.constants.js';
 import { backoffDelayMs, formatCurrencyBRL, renderReminderTemplate } from './billing-message.js';
-import { addDays, formatDateOnly, localDateString, localHour, parseDateOnly } from './billing-time.js';
+import {
+  addDays,
+  formatDateOnly,
+  isWithinWindow,
+  localDateString,
+  localHour,
+  parseDateOnly,
+} from './billing-time.js';
 import type { ListBillingRemindersQueryDto } from './dto/reminder.dto.js';
 
 const SYSTEM_USER_ID = '00000000-0000-4000-8000-000000000001';
@@ -36,6 +53,8 @@ export interface BillingReminderView {
   id: string;
   chargeId: string;
   offsetDays: number;
+  origin: BillingReminderOrigin;
+  createdByUserId: string | null;
   scheduledFor: string;
   status: BillingReminderStatus;
   attempts: number;
@@ -46,6 +65,15 @@ export interface BillingReminderView {
   processedAt: Date | null;
   createdAt: Date;
 }
+
+const REMINDER_CHARGE_INCLUDE = {
+  customer: { select: { name: true } },
+  contact: { select: { name: true, phone: true } },
+} satisfies Prisma.BillingChargeInclude;
+
+type ReminderCharge = Prisma.BillingChargeGetPayload<{
+  include: typeof REMINDER_CHARGE_INCLUDE;
+}>;
 
 type ReminderOutcome = 'sent' | 'skipped' | 'retry' | 'failed' | 'ignored';
 
@@ -102,9 +130,12 @@ export class BillingRemindersService {
   }
 
   /**
-   * Creates the reminder row for every charge whose scheduled offset falls on
-   * `today`. The unique (chargeId, offsetDays) constraint plus skipDuplicates
-   * make repeated scans idempotent: a given charge/step pair is created once.
+   * Creates the reminder row for every charge whose scheduled reminder date
+   * (`dueDate + offset`) has already been reached. It matches the exact day and
+   * also catches up targets missed in the last `BILLING_REMINDER_CATCHUP_DAYS`
+   * days, so a scan outage does not lose an eligible reminder. The unique
+   * (chargeId, dedupeKey) constraint plus skipDuplicates keep repeated scans
+   * idempotent: a given charge/step pair is created exactly once.
    */
   async generateReminders(today: string): Promise<number> {
     const tenantRows = await this.prisma.billingCharge.findMany({
@@ -121,14 +152,19 @@ export class BillingRemindersService {
       }
 
       for (const offset of settings.reminderOffsets) {
-        const targetDueDate = addDays(today, -offset);
+        const earliestDueDate = addDays(today, -BILLING_REMINDER_CATCHUP_DAYS - offset);
+        const latestDueDate = addDays(today, -offset);
+
         const charges = await this.prisma.billingCharge.findMany({
           where: {
             tenantId,
             status: BillingChargeStatus.PENDING,
-            dueDate: parseDateOnly(targetDueDate),
+            dueDate: {
+              gte: parseDateOnly(earliestDueDate),
+              lte: parseDateOnly(latestDueDate),
+            },
           },
-          select: { id: true },
+          select: { id: true, dueDate: true },
         });
         if (charges.length === 0) {
           continue;
@@ -139,7 +175,9 @@ export class BillingRemindersService {
             tenantId,
             chargeId: charge.id,
             offsetDays: offset,
-            scheduledFor: parseDateOnly(today),
+            origin: BillingReminderOrigin.AUTOMATIC,
+            dedupeKey: automaticDedupeKey(offset),
+            scheduledFor: parseDateOnly(addDays(formatDateOnly(charge.dueDate), offset)),
             status: BillingReminderStatus.PENDING,
             nextAttemptAt: new Date(),
           })),
@@ -162,6 +200,11 @@ export class BillingRemindersService {
     });
   }
 
+  /**
+   * Enqueues the send job for pending reminders. Tenants with automation
+   * disabled are skipped entirely, and sends are only enqueued while the
+   * configured window is open, so jobs are not created just to be rejected.
+   */
   private async dispatch(today: string): Promise<void> {
     const due = await this.prisma.billingReminder.findMany({
       where: {
@@ -172,7 +215,17 @@ export class BillingRemindersService {
       select: { id: true, tenantId: true },
     });
 
+    const settingsByTenant = new Map<string, BillingSettingsView>();
     for (const reminder of due) {
+      let settings = settingsByTenant.get(reminder.tenantId);
+      if (!settings) {
+        settings = await this.settings.getForTenant(reminder.tenantId);
+        settingsByTenant.set(reminder.tenantId, settings);
+      }
+      if (!settings.remindersEnabled || !this.isWindowOpen(settings)) {
+        continue;
+      }
+
       await this.queue.enqueue(JOB_NAMES.BILLING_REMINDER_SEND, {
         tenantId: reminder.tenantId,
         reminderId: reminder.id,
@@ -197,17 +250,7 @@ export class BillingRemindersService {
   }
 
   async attemptSend(tenantId: string, reminderId: string): Promise<ReminderOutcome> {
-    const reminder = await this.prisma.billingReminder.findFirst({
-      where: { id: reminderId, tenantId },
-      include: {
-        charge: {
-          include: {
-            customer: { select: { name: true } },
-            contact: { select: { name: true, phone: true } },
-          },
-        },
-      },
-    });
+    const reminder = await this.loadReminder(tenantId, reminderId);
     if (!reminder || reminder.status !== BillingReminderStatus.PENDING) {
       return 'ignored';
     }
@@ -219,23 +262,123 @@ export class BillingRemindersService {
     }
 
     const settings = await this.settings.getForTenant(tenantId);
-    if (!this.withinSendWindow(settings)) {
+    if (!settings.remindersEnabled) {
+      return 'retry';
+    }
+    if (!this.isWindowOpen(settings)) {
       return 'retry';
     }
 
     const phone = await this.resolveDestination(tenantId, charge);
-    if (!phone) {
-      await this.markSkipped(reminder.id, 'missing_phone');
-      return 'skipped';
+    const instance = await this.resolveInstance(tenantId, settings);
+
+    return this.deliver({
+      reminderId: reminder.id,
+      attempt: reminder.attempts + 1,
+      charge,
+      settings,
+      phone,
+      instance,
+      maxAttempts: BILLING_MAX_REMINDER_ATTEMPTS,
+    });
+  }
+
+  /**
+   * Explicit user action: sends a reminder right away, ignoring the automatic
+   * schedule and send window. Paid/canceled charges are blocked. Idempotent by
+   * (chargeId, idempotencyKey) so a duplicated request returns the recorded
+   * attempt without sending again, while new explicit actions still work.
+   */
+  async sendManual(chargeId: string, idempotencyKey: string): Promise<BillingReminderView> {
+    const { tenantId, userId } = this.tenantContext.requireContext();
+
+    const existing = await this.prisma.billingReminder.findFirst({
+      where: { tenantId, chargeId, idempotencyKey },
+    });
+    if (existing) {
+      return toView(existing);
     }
 
+    const charge = await this.prisma.billingCharge.findFirst({
+      where: { id: chargeId, tenantId },
+      include: REMINDER_CHARGE_INCLUDE,
+    });
+    if (!charge) {
+      throw new BillingChargeNotFoundError();
+    }
+    if (charge.status !== BillingChargeStatus.PENDING) {
+      throw new BillingChargeNotSendableError();
+    }
+
+    const settings = await this.settings.getForTenant(tenantId);
+    const phone = await this.resolveDestination(tenantId, charge);
     const instance = await this.resolveInstance(tenantId, settings);
+
+    let reminder;
+    try {
+      reminder = await this.prisma.billingReminder.create({
+        data: {
+          tenantId,
+          chargeId,
+          offsetDays: 0,
+          origin: BillingReminderOrigin.MANUAL,
+          createdByUserId: userId,
+          idempotencyKey,
+          scheduledFor: parseDateOnly(localDateString(new Date(), this.timeZone)),
+          status: BillingReminderStatus.PENDING,
+          destination: phone,
+          whatsappInstanceId: instance?.id ?? null,
+          nextAttemptAt: null,
+        },
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        const raced = await this.prisma.billingReminder.findFirst({
+          where: { tenantId, chargeId, idempotencyKey },
+        });
+        if (raced) {
+          return toView(raced);
+        }
+      }
+      throw error;
+    }
+
+    await this.deliver({
+      reminderId: reminder.id,
+      attempt: 1,
+      charge,
+      settings,
+      phone,
+      instance,
+      maxAttempts: 1,
+    });
+
+    const final = await this.prisma.billingReminder.findUniqueOrThrow({ where: { id: reminder.id } });
+    return toView(final);
+  }
+
+  /** Shared delivery path for automatic and manual reminders. */
+  private async deliver(params: {
+    reminderId: string;
+    attempt: number;
+    charge: ReminderCharge;
+    settings: BillingSettingsView;
+    phone: string | null;
+    instance: { id: string; instanceName: string } | null;
+    maxAttempts: number;
+  }): Promise<ReminderOutcome> {
+    const { reminderId, attempt, charge, settings, phone, instance, maxAttempts } = params;
+
+    if (!phone) {
+      await this.markSkipped(reminderId, 'missing_phone');
+      return 'skipped';
+    }
     if (!instance) {
-      return this.registerFailure(reminder.id, reminder.attempts + 1, phone, null, 'no_instance');
+      return this.registerFailure(reminderId, attempt, phone, null, 'no_instance', maxAttempts);
     }
 
     const claim = await this.prisma.billingReminder.updateMany({
-      where: { id: reminder.id, status: BillingReminderStatus.PENDING },
+      where: { id: reminderId, status: BillingReminderStatus.PENDING },
       data: {
         status: BillingReminderStatus.PROCESSING,
         destination: phone,
@@ -246,7 +389,6 @@ export class BillingRemindersService {
     if (claim.count === 0) {
       return 'ignored';
     }
-    const attempt = reminder.attempts + 1;
 
     const text = renderReminderTemplate(settings.messageTemplate, {
       cliente: charge.contact?.name ?? charge.customer?.name ?? 'cliente',
@@ -261,7 +403,7 @@ export class BillingRemindersService {
       }
       const sent = await this.evolution.sendText(instance.instanceName, phone, text);
       await this.prisma.billingReminder.updateMany({
-        where: { id: reminder.id, status: BillingReminderStatus.PROCESSING },
+        where: { id: reminderId, status: BillingReminderStatus.PROCESSING },
         data: {
           status: BillingReminderStatus.SENT,
           attempts: attempt,
@@ -273,7 +415,14 @@ export class BillingRemindersService {
       });
       return 'sent';
     } catch (error) {
-      return this.registerFailure(reminder.id, attempt, phone, instance.id, describeError(error));
+      return this.registerFailure(
+        reminderId,
+        attempt,
+        phone,
+        instance.id,
+        describeError(error),
+        maxAttempts,
+      );
     }
   }
 
@@ -283,8 +432,9 @@ export class BillingRemindersService {
     destination: string,
     instanceId: string | null,
     reason: string,
+    maxAttempts: number,
   ): Promise<ReminderOutcome> {
-    const finalAttempt = attempt >= BILLING_MAX_REMINDER_ATTEMPTS;
+    const finalAttempt = attempt >= maxAttempts;
     await this.prisma.billingReminder.updateMany({
       where: {
         id: reminderId,
@@ -303,6 +453,13 @@ export class BillingRemindersService {
     return finalAttempt ? 'failed' : 'retry';
   }
 
+  private loadReminder(tenantId: string, reminderId: string) {
+    return this.prisma.billingReminder.findFirst({
+      where: { id: reminderId, tenantId },
+      include: { charge: { include: REMINDER_CHARGE_INCLUDE } },
+    });
+  }
+
   private async markSkipped(reminderId: string, reason: string): Promise<void> {
     await this.prisma.billingReminder.updateMany({
       where: { id: reminderId, status: { in: [BillingReminderStatus.PENDING, BillingReminderStatus.PROCESSING] } },
@@ -315,13 +472,12 @@ export class BillingRemindersService {
     });
   }
 
-  private withinSendWindow(settings: BillingSettingsView): boolean {
-    const hour = localHour(new Date(), this.timeZone);
-    const { sendWindowStartHour: start, sendWindowEndHour: end } = settings;
-    if (start <= end) {
-      return hour >= start && hour <= end;
-    }
-    return hour >= start || hour <= end;
+  private isWindowOpen(settings: BillingSettingsView): boolean {
+    return isWithinWindow(
+      localHour(new Date(), this.timeZone),
+      settings.sendWindowStartHour,
+      settings.sendWindowEndHour,
+    );
   }
 
   private async resolveDestination(
@@ -381,6 +537,8 @@ function toView(reminder: {
   id: string;
   chargeId: string;
   offsetDays: number;
+  origin: BillingReminderOrigin;
+  createdByUserId: string | null;
   scheduledFor: Date;
   status: BillingReminderStatus;
   attempts: number;
@@ -395,6 +553,8 @@ function toView(reminder: {
     id: reminder.id,
     chargeId: reminder.chargeId,
     offsetDays: reminder.offsetDays,
+    origin: reminder.origin,
+    createdByUserId: reminder.createdByUserId,
     scheduledFor: formatDateOnly(reminder.scheduledFor),
     status: reminder.status,
     attempts: reminder.attempts,
@@ -405,6 +565,10 @@ function toView(reminder: {
     processedAt: reminder.processedAt,
     createdAt: reminder.createdAt,
   };
+}
+
+function automaticDedupeKey(offsetDays: number): string {
+  return `auto:${offsetDays}`;
 }
 
 function asString(value: unknown): string | null {

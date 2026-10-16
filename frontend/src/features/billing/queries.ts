@@ -91,6 +91,20 @@ export function useCancelCharge() {
   });
 }
 
+export function useSendManualReminder() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ chargeId, idempotencyKey }: { chargeId: string; idempotencyKey: string }) =>
+      billingService.sendManualReminder(chargeId, idempotencyKey),
+    onSuccess: (_reminder, variables) => {
+      void queryClient.invalidateQueries({
+        queryKey: billingKeys.chargeReminders(variables.chargeId),
+      });
+      invalidateBilling(queryClient);
+    },
+  });
+}
+
 export function useDeactivateRecurrence() {
   const queryClient = useQueryClient();
   return useMutation({

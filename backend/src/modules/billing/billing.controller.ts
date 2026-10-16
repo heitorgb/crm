@@ -27,7 +27,7 @@ import {
   ListBillingRecurrencesQueryDto,
   UpdateBillingRecurrenceDto,
 } from './dto/recurrence.dto.js';
-import { ListBillingRemindersQueryDto } from './dto/reminder.dto.js';
+import { ListBillingRemindersQueryDto, SendBillingReminderDto } from './dto/reminder.dto.js';
 import { UpdateBillingSettingsDto } from './dto/settings.dto.js';
 
 @Controller('billing')
@@ -60,6 +60,16 @@ export class BillingController {
     @Query() query: PaginationQueryDto,
   ) {
     return this.reminders.list({ ...query, chargeId: id } as ListBillingRemindersQueryDto);
+  }
+
+  @Roles('OWNER', 'ADMIN')
+  @Post('charges/:id/reminders')
+  @HttpCode(201)
+  sendManualReminder(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: SendBillingReminderDto,
+  ) {
+    return this.reminders.sendManual(id, dto.idempotencyKey);
   }
 
   @Roles('OWNER', 'ADMIN')

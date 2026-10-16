@@ -62,6 +62,14 @@ contato. O `nextRunDate` avança mês a mês (com *clamp* do dia para o último 
 | `sendWindowStartHour`  | `9`               | janela de envio (hora local)                                |
 | `sendWindowEndHour`    | `18`              | janela de envio (hora local)                                |
 
+A API também expõe, somente leitura, `timeZone` (`BILLING_TIMEZONE`) e `scanIntervalMinutes`
+(derivado de `BILLING_SCAN_INTERVAL_MS`) para que a interface descreva o comportamento real.
+
+**Janela de envio** (`isWithinWindow`): os limites são **inclusivos**. Se início `<` fim, vale
+`[início, fim]`; se início `>` fim, a janela atravessa a meia-noite (`[início, 23] ∪ [0, fim]`);
+se início `=` fim, a janela fica aberta **o dia inteiro**. A hora avaliada é a do fuso
+`BILLING_TIMEZONE`.
+
 Template padrão:
 `Olá {cliente}! Passando para lembrar da cobrança "{descricao}" no valor de {valor}, com vencimento em {vencimento}.`
 
@@ -70,7 +78,11 @@ Template padrão:
 | Campo               | Observações                                                       |
 | ------------------- | ----------------------------------------------------------------- |
 | `chargeId`          | cobrança relacionada (cascade)                                    |
-| `offsetDays`        | etapa do lembrete                                                 |
+| `offsetDays`        | etapa do lembrete (`0` para manuais)                              |
+| `origin`            | `AUTOMATIC` \| `MANUAL`                                           |
+| `createdByUserId`   | usuário que disparou o envio manual (sem FK — auditoria)          |
+| `dedupeKey`         | chave de idempotência automática (`auto:<offset>`), nula em manuais |
+| `idempotencyKey`    | chave da operação manual (nula em automáticos)                    |
 | `scheduledFor`      | data em que o lembrete venceu                                     |
 | `status`            | `PENDING` \| `PROCESSING` \| `SENT` \| `FAILED` \| `SKIPPED`      |
 | `attempts`          | tentativas realizadas                                             |
@@ -81,8 +93,31 @@ Template padrão:
 | `errorMessage`      | motivo da falha (código seguro, sem segredos)                     |
 | `processedAt`       | data/hora de conclusão                                            |
 
-Constraint único `(chargeId, offsetDays)`: **é a chave de idempotência** — um mesmo par
-cobrança+etapa existe uma única vez, e a criação usa `skipDuplicates`.
+Constraints únicos: `(chargeId, dedupeKey)` — idempotência do automático (um lembrete por
+cobrança+etapa, criação com `skipDuplicates`); `(chargeId, idempotencyKey)` — idempotência do envio
+manual. Chaves nulas (Postgres) não colidem, então várias linhas manuais e automáticas convivem.
+
+## Envio manual
+
+A ação **Enviar lembrete** (ícone + `aria-label`, na linha da cobrança) permite disparar um lembrete
+explicitamente, **independente dos dias/horários da automação** e mesmo com a automação global
+desabilitada (`remindersEnabled=false`). Regras:
+
+- `POST /billing/charges/:id/reminders` com `{ idempotencyKey }` (OWNER/ADMIN).
+- Bloqueia cobranças `PAID`/`CANCELED` (`409 BILLING_CHARGE_NOT_SENDABLE`).
+- Usa o mesmo modelo de mensagem e variáveis do envio automático.
+- Usa a instância configurada; sem configuração, cai no comportamento automático (primeira
+  `CONNECTED`).
+- Sem telefone → registra `SKIPPED (missing_phone)`; sem instância → `FAILED (no_instance)`; erro da
+  Evolution → `FAILED (evolution_http_*)`. A tentativa manual é única (sem retentativas em background),
+  para dar retorno imediato ao usuário.
+- O `idempotencyKey` (gerado pelo frontend por confirmação) impede duplicação por duplo clique ou
+  reenvio da mesma requisição; novas confirmações geram nova chave e são permitidas.
+- `SENT` significa **solicitação aceita** pela Evolution, não entrega confirmada.
+
+O histórico (`GET /billing/charges/:id/reminders`) diferencia `MANUAL` de `AUTOMATIC` e registra
+destinatário, instância, tentativas, resultado e erro. O envio manual **não** altera vencimento,
+valor ou status financeiro.
 
 ## Recorrência
 
@@ -98,29 +133,43 @@ cobrança+etapa existe uma única vez, e a criação usa `skipDuplicates`.
 
 ## Agendamento, idempotência e retentativas
 
-A varredura `billing.scan` roda periodicamente (a cada 5 minutos) pela fila já existente
-(`JobQueue`/BullMQ; inline em testes) e executa:
+A varredura `billing.scan` roda **a cada 5 minutos** (`BILLING_SCAN_INTERVAL_MS = 5 * 60 * 1000`),
+agendada por `BillingSchedulerService` via `queue.scheduleRepeatable` → BullMQ
+`upsertJobScheduler({ every })` (nos testes, `InlineJobQueue` com `setInterval`). O intervalo é
+**fixo** (constante), não configurável, e é exposto à interface em `scanIntervalMinutes`. A cada
+varredura:
 
 1. `generateDue(today)` — gera cobranças recorrentes vencidas.
-2. `generateReminders(today)` — para cada tenant, para cada offset configurado, cria o lembrete
-   (via `createMany ... skipDuplicates`) quando `dueDate == hoje - offset`.
+2. `generateReminders(today)` — cria lembretes automáticos. O lembrete de uma cobrança/offset fica
+   elegível em `dueDate + offset`; além do dia exato, há **catch-up** de alvos perdidos nos últimos
+   `BILLING_REMINDER_CATCHUP_DAYS` (2) dias, então uma indisponibilidade curta do scan não perde o
+   lembrete. A criação usa `createMany ... skipDuplicates` com `dedupeKey = auto:<offset>`.
 3. `resetStaleProcessing()` — volta lembretes travados em `PROCESSING` (mais de 15 min) para
    `PENDING`.
-4. `dispatch(today)` — enfileira `billing.reminder.send` para cada lembrete `PENDING` com
-   `nextAttemptAt <= agora`.
+4. `dispatch(today)` — enfileira `billing.reminder.send` **apenas** para lembretes `PENDING` de
+   tenants com automação habilitada e **com a janela aberta** (evita criar jobs que seriam
+   recusados fora do horário).
 
-Antes de enviar, o processador valida:
+Antes de enviar, o processador revalida:
 
+- a automação do tenant está habilitada (senão mantém `PENDING`, sem enviar);
 - a cobrança continua `PENDING` (paga/cancelada → `SKIPPED charge_closed`);
 - o contato tem telefone utilizável (senão `SKIPPED missing_phone`);
 - existe instância ativa autorizada (configurada ou a primeira `CONNECTED`);
-- o horário atual está dentro da janela de envio (fora dela, mantém pendente);
+- o horário atual está dentro da janela de envio (fora dela, mantém pendente e será reavaliado);
 - o lembrete ainda está `PENDING` (guarda de idempotência — `SENT`/`FAILED`/`SKIPPED` são ignorados).
+
+Um lembrete elegível fora da janela **não é perdido**: permanece `PENDING` e é reenviado na próxima
+verificação dentro do horário. Um envio não ocorre necessariamente no início da janela, pois passa
+pela fila.
 
 Falhas de envio (Evolution indisponível/erro HTTP/instância ausente) **não marcam como enviado**:
 incrementam `attempts`, guardam `errorMessage` e reagendam com *backoff* exponencial (5 → 10 → 20
 min, teto de 60 min). Após 3 tentativas o lembrete vira `FAILED` (visível no dashboard), evitando
 ciclo infinito. Envio aceito pela Evolution vira `SENT` com `externalMessageId`.
+
+Desabilitar `remindersEnabled` interrompe **novas execuções automáticas** (nada é criado nem
+disparado) sem afetar o envio manual; ao reabilitar, lembretes `PENDING` voltam a ser processados.
 
 Pagamento (`POST /billing/charges/:id/pay`) e cancelamento interrompem os lembretes pendentes
 (`SKIPPED`), preservando o histórico dos já enviados.
@@ -152,6 +201,7 @@ frontend apenas espelha essa regra nos pontos de entrada de gestão (não a subs
 | GET    | `/billing/charges`                    | autenticado   |
 | GET    | `/billing/charges/:id`                | autenticado   |
 | GET    | `/billing/charges/:id/reminders`      | autenticado   |
+| POST   | `/billing/charges/:id/reminders`      | OWNER/ADMIN   |
 | POST   | `/billing/charges`                    | OWNER/ADMIN   |
 | PATCH  | `/billing/charges/:id`                | OWNER/ADMIN   |
 | POST   | `/billing/charges/:id/pay`            | OWNER/ADMIN   |
@@ -172,23 +222,32 @@ Filtros de `/billing/charges`: `status` (`PENDING`/`OVERDUE`/`PAID`/`CANCELED`),
 - Rota `/cobrancas` (menu **Financeiro → Cobranças**).
 - Dashboard com cartões (pendente, vencido, pago no período, lembretes com falha) e próximos
   vencimentos.
-- Listagem com filtros, baixa manual, cancelamento, edição e histórico de lembretes.
+- Listagem com filtros, baixa manual, cancelamento, edição, envio manual de lembrete e histórico de
+  lembretes.
 - Formulário único de cobrança (avulsa ou recorrente mensal).
-- Diálogo de recorrências e diálogo de configuração de lembretes.
+- Diálogo de recorrências, de configuração de lembretes e de confirmação do envio manual (com
+  estado de carregamento e resultado real da operação).
+- O diálogo de lembretes mostra uma explicação contextual gerada a partir dos valores reais do
+  backend (frequência em minutos, janela de envio e fuso), sem valores fixos no código.
 - Estados de carregamento, vazio, erro e confirmações de ação.
 
 ## Migração
 
-Migration `20261016132814_billing_module` (versionada em `backend/prisma/migrations`) e, para
-permitir cobrar contatos, `20261016141533_billing_contact_party` (torna `customer_id` opcional e
-adiciona índices por `contact_id`). Aplicar com `npm run prisma:deploy` (ambientes não interativos)
-ou `npm run prisma:migrate` (dev).
+Migrations versionadas em `backend/prisma/migrations`: `20261016132814_billing_module`,
+`20261016141533_billing_contact_party` (torna `customer_id` opcional e indexa `contact_id`) e
+`20261016150000_billing_manual_reminders` (adiciona `origin`, `created_by_user_id`, `dedupe_key`,
+`idempotency_key` e backfill da idempotência automática). Aplicar com `npm run prisma:deploy`
+(ambientes não interativos) ou `npm run prisma:migrate` (dev).
 
 ## Testes
 
-- Unit: `test/unit/billing/billing-utils.spec.ts` (datas, moeda, template, offsets).
+- Unit: `test/unit/billing/billing-utils.spec.ts` (datas, moeda, template, offsets, janela de envio
+  `isWithinWindow` — normal, meia-noite, início=fim — e fuso horário via `localHour`/`localDateString`).
 - Integração: `test/integration/billing.integration-spec.ts` cobre CRUD, validação, baixa manual,
   vencimento, permissões, isolamento entre tenants, recorrência sem duplicação, idempotência dos
-  lembretes, falha da Evolution com retentativas, ausência de telefone/instância e interrupção
-  após pagamento. Usa `FakeEvolution`, sem chamadas reais.
-- Frontend: `billing-utils.test.ts` e `billing-page.test.tsx` (renderização e estados principais).
+  lembretes, falha da Evolution com retentativas, ausência de telefone/instância, interrupção após
+  pagamento, **envio manual** e **agendamento/janela** (catch-up de lembrete perdido, não envio fora
+  da janela com reavaliação posterior, supressão com automação desabilitada, offsets negativo/zero/
+  positivo e exposição de `scanIntervalMinutes`/`timeZone`). Usa `FakeEvolution`, sem chamadas reais.
+- Frontend: `billing-utils.test.ts` (inclui `reminderScheduleExplanation`/`describeSendWindow`),
+  `billing-page.test.tsx` e `send-reminder-dialog.test.tsx`.

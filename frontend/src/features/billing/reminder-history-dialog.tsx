@@ -70,7 +70,16 @@ export function ReminderHistoryDialog({
                 {reminders.data.data.map((reminder) => (
                   <TableRow key={reminder.id}>
                     <TableCell className="whitespace-nowrap">
-                      {offsetLabel(reminder.offsetDays)}
+                      <div className="flex flex-col">
+                        <span>
+                          {reminder.origin === 'MANUAL'
+                            ? 'Manual'
+                            : offsetLabel(reminder.offsetDays)}
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          {reminder.origin === 'MANUAL' ? 'Envio manual' : 'Automático'}
+                        </span>
+                      </div>
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
                       {reminder.scheduledFor}

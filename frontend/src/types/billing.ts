@@ -4,6 +4,7 @@ export type { PageResult };
 
 export type BillingChargeStatus = 'PENDING' | 'OVERDUE' | 'PAID' | 'CANCELED';
 export type BillingReminderStatus = 'PENDING' | 'PROCESSING' | 'SENT' | 'FAILED' | 'SKIPPED';
+export type BillingReminderOrigin = 'AUTOMATIC' | 'MANUAL';
 export type BillingRecurrenceFrequency = 'MONTHLY';
 
 export interface BillingCharge {
@@ -29,6 +30,8 @@ export interface BillingReminder {
   id: string;
   chargeId: string;
   offsetDays: number;
+  origin: BillingReminderOrigin;
+  createdByUserId: string | null;
   scheduledFor: string;
   status: BillingReminderStatus;
   attempts: number;
@@ -64,6 +67,8 @@ export interface BillingSettings {
   whatsappInstanceId: string | null;
   sendWindowStartHour: number;
   sendWindowEndHour: number;
+  timeZone: string;
+  scanIntervalMinutes: number;
 }
 
 export interface BillingOverview {

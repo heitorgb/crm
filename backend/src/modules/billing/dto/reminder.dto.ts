@@ -1,4 +1,4 @@
-import { IsIn, IsOptional, IsUUID } from 'class-validator';
+import { IsIn, IsOptional, IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
 import { PaginationQueryDto } from '../../../common/http/pagination.js';
 
 export const BILLING_REMINDER_STATUSES = [
@@ -19,4 +19,11 @@ export class ListBillingRemindersQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsUUID()
   chargeId?: string;
+}
+
+export class SendBillingReminderDto {
+  @IsString()
+  @MinLength(8)
+  @MaxLength(120)
+  idempotencyKey!: string;
 }

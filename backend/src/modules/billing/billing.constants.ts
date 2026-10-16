@@ -17,6 +17,13 @@ export const BILLING_STALE_PROCESSING_MS = 15 * 60 * 1000;
 /** The periodic scan generates charges/reminders and dispatches pending reminders. */
 export const BILLING_SCAN_INTERVAL_MS = 5 * 60 * 1000;
 
+/**
+ * How many days in the past a missed reminder is still generated for. Bounds the
+ * catch-up after a scan outage so a short downtime does not lose an eligible
+ * reminder, while avoiding a flood of reminders for long-overdue charges.
+ */
+export const BILLING_REMINDER_CATCHUP_DAYS = 2;
+
 /** Upper bound of recurrence catch-up iterations executed in a single scan. */
 export const BILLING_MAX_RECURRENCE_CATCHUP = 60;
 

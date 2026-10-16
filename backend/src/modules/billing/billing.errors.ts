@@ -28,6 +28,16 @@ export class BillingChargeNotCancelableError extends AppException {
   }
 }
 
+export class BillingChargeNotSendableError extends AppException {
+  constructor() {
+    super(
+      'BILLING_CHARGE_NOT_SENDABLE',
+      'Cobranças pagas ou canceladas não podem receber lembretes',
+      409,
+    );
+  }
+}
+
 export class BillingCustomerNotFoundError extends AppException {
   constructor() {
     super('BILLING_CUSTOMER_NOT_FOUND', 'Cliente não encontrado', 404);

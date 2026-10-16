@@ -130,16 +130,17 @@ frontend/
   `/vendas/negocios`, `/tarefas` e `/settings/pipelines` (CRUD de pipelines/etapas).
 - Atendimento (conectado à API + Socket.IO): `/atendimento/conversas` (layout estilo WhatsApp Web em
   tela cheia — lista, chat e painel de contato, com rolagem independente, alternância lista/chat no
-  mobile e painel de contato em `Sheet` abaixo de `xl`) e `/atendimento/whatsapp` (instâncias,
-  conexão por QR code e webhook).
+  mobile e painel de contato em `Sheet` abaixo de `xl`). O gerenciamento de instâncias WhatsApp
+  (conexão por QR code e webhook) fica em **Configurações → WhatsApp** (`/configuracoes?tab=whatsapp`);
+  a rota antiga `/atendimento/whatsapp` redireciona para a nova localização.
 - Administração da plataforma (visível só para `isPlatformAdmin`): `/admin/tenants` (criar/listar
   organizações) e `/admin/tenants/:id` (gerenciar membros, papéis e ativos). Ver
   [`tenant-provisioning.md`](./tenant-provisioning.md).
 - Perfil e configurações: `/perfil` (dados pessoais + senha) e `/configuracoes` (abas Organização,
-  Equipe e Aparência). Ver [`settings.md`](./settings.md).
-- Sidebar: Vendas, Clientes (Clientes, Contatos, Tags), Atendimento (Conversas, Tickets, WhatsApp),
-  Tarefas, Relatórios e Configurações (Bot e Qualificação, Resumo de Leads, Pipelines). Relatórios
-  ainda é placeholder.
+  Equipe, Aparência, Atendimento, Notificações e WhatsApp). A aba ativa é sincronizada com o
+  parâmetro `?tab=` da URL. Ver [`settings.md`](./settings.md).
+- Sidebar: Atendimento (Conversas), Contatos, Financeiro (Cobranças), Administração (Organizações,
+  visível só para `isPlatformAdmin`) e Configurações.
 - `/settings/qualification-bot` e `/settings/lead-digest` com formulários orientados a negócio (sem
   pedir prompts técnicos). O bot de qualificação persiste perfis reais por tenant.
 - `ProtectedRoute` preparado para exigir sessão; a persistência real do refresh usa cookie HttpOnly.

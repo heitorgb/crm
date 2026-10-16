@@ -1,18 +1,21 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import { TenantContextService } from '../../common/tenant-context/tenant-context.service.js';
+import type { Env } from '../../config/env.validation.js';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service.js';
 import {
   BILLING_DEFAULT_MESSAGE_TEMPLATE,
   BILLING_DEFAULT_REMINDER_OFFSETS,
   BILLING_DEFAULT_SEND_WINDOW_END_HOUR,
   BILLING_DEFAULT_SEND_WINDOW_START_HOUR,
+  BILLING_SCAN_INTERVAL_MS,
 } from './billing.constants.js';
 import { BillingInstanceNotFoundError } from './billing.errors.js';
 import { normalizeReminderOffsets } from './billing-message.js';
 import type { UpdateBillingSettingsDto } from './dto/settings.dto.js';
 
-export interface BillingSettingsView {
+export interface BillingSettingsValues {
   remindersEnabled: boolean;
   reminderOffsets: number[];
   messageTemplate: string;
@@ -21,7 +24,14 @@ export interface BillingSettingsView {
   sendWindowEndHour: number;
 }
 
-export function defaultBillingSettings(): BillingSettingsView {
+export interface BillingSettingsView extends BillingSettingsValues {
+  /** IANA time zone used to evaluate the send window (read-only). */
+  timeZone: string;
+  /** How often the scan runs, in minutes (read-only, from the scheduler). */
+  scanIntervalMinutes: number;
+}
+
+export function defaultBillingSettings(): BillingSettingsValues {
   return {
     remindersEnabled: true,
     reminderOffsets: [...BILLING_DEFAULT_REMINDER_OFFSETS],
@@ -37,7 +47,12 @@ export class BillingSettingsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly tenantContext: TenantContextService,
+    private readonly config: ConfigService<Env, true>,
   ) {}
+
+  private get timeZone(): string {
+    return this.config.get('BILLING_TIMEZONE') ?? 'America/Sao_Paulo';
+  }
 
   async get(): Promise<BillingSettingsView> {
     const { tenantId } = this.tenantContext.requireContext();
@@ -47,10 +62,7 @@ export class BillingSettingsService {
   /** System lookup used by the reminder scan where no request context exists. */
   async getForTenant(tenantId: string): Promise<BillingSettingsView> {
     const settings = await this.prisma.billingSettings.findUnique({ where: { tenantId } });
-    if (!settings) {
-      return defaultBillingSettings();
-    }
-    return toView(settings);
+    return this.present(settings ? toValues(settings) : defaultBillingSettings());
   }
 
   async update(dto: UpdateBillingSettingsDto): Promise<BillingSettingsView> {
@@ -92,22 +104,30 @@ export class BillingSettingsService {
           sendWindowEndHour: dto.sendWindowEndHour ?? defaultBillingSettings().sendWindowEndHour,
         },
       });
-      return toView(created);
+      return this.present(toValues(created));
     }
 
     const updated = await this.prisma.billingSettings.update({ where: { tenantId }, data });
-    return toView(updated);
+    return this.present(toValues(updated));
+  }
+
+  private present(values: BillingSettingsValues): BillingSettingsView {
+    return {
+      ...values,
+      timeZone: this.timeZone,
+      scanIntervalMinutes: Math.round(BILLING_SCAN_INTERVAL_MS / 60_000),
+    };
   }
 }
 
-function toView(settings: {
+function toValues(settings: {
   remindersEnabled: boolean;
   reminderOffsets: Prisma.JsonValue;
   messageTemplate: string;
   whatsappInstanceId: string | null;
   sendWindowStartHour: number;
   sendWindowEndHour: number;
-}): BillingSettingsView {
+}): BillingSettingsValues {
   return {
     remindersEnabled: settings.remindersEnabled,
     reminderOffsets: normalizeReminderOffsets(settings.reminderOffsets),

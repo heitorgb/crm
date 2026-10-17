@@ -403,8 +403,12 @@ responde `409 CONVERSATION_NOT_HUMAN_OWNED`. O bot só responde enquanto a conve
   em Atendimento → WhatsApp para ativar esse evento. O indicador depende de a Evolution emitir
   a presença do contato.
 - Fotos dos contatos são buscadas na lista e no cabeçalho pelo endpoint autenticado
-  `participant-avatar`, reutilizando o cache de 6 horas e a validação de vínculo com a conversa.
-  Se o WhatsApp não disponibilizar a foto, permanecem as iniciais.
+  `participant-avatar`, reutilizando o cache de 6 horas para fotos encontradas e de 1 minuto para
+  respostas sem foto, sempre com validação de vínculo com a conversa. Enquanto a foto estiver
+  ausente, a interface consulta novamente a cada minuto em primeiro plano.
+  Em conversas individuais endereçadas por LID, se a busca não retornar foto, o backend tenta o
+  telefone do contato vinculado. Se ainda não houver foto, usa a foto importada desse contato.
+  Se nenhuma fonte disponibilizar a foto, permanecem as iniciais. Não há migration nova.
 - O chat ocupa a largura disponível e altura baseada na janela; o painel de detalhes começa
   recolhido. Os balões limitam a largura no contêiner externo e acomodam textos longos e mídias.
 - Não há dependências ou migrations novas. Testes: `npm test` e

@@ -2268,6 +2268,73 @@ describe('WhatsApp attendance (integration)', () => {
     expect(evolution.avatarLookups).toEqual([jid]);
   });
 
+  it('refreshes missing photos after one minute instead of retaining them for six hours', async () => {
+    const instanceName = `missing-avatar-${randomUUID()}`;
+    const jid = '5511999999999@s.whatsapp.net';
+    const instanceId = await createInstance(ownerA, instanceName);
+    await postWebhook(evolutionPayload(instanceName, randomUUID(), 'Olá', jid));
+    const conversation = await prisma.conversation.findFirstOrThrow({ where: { tenantId: ownerA.tenantId } });
+    const url = `/api/conversations/${conversation.id}/participant-avatar?jid=${encodeURIComponent(jid)}`;
+    evolution.avatarUrl = null;
+    const missing = await app.inject({ method: 'GET', url, headers: authHeaders(ownerA) });
+    expect(missing.json().url).toBeNull();
+    evolution.avatarUrl = 'https://cdn.example/new-photo.jpg';
+    const cached = await app.inject({ method: 'GET', url, headers: authHeaders(ownerA) });
+    expect(cached.json().url).toBeNull();
+    expect(evolution.avatarLookups).toHaveLength(1);
+    await prisma.whatsAppAvatar.update({
+      where: { whatsappInstanceId_jid: { whatsappInstanceId: instanceId, jid } },
+      data: { fetchedAt: new Date(Date.now() - 61000) },
+    });
+    const refreshed = await app.inject({ method: 'GET', url, headers: authHeaders(ownerA) });
+    expect(refreshed.statusCode).toBe(200);
+    expect(refreshed.json().url).toBe(evolution.avatarUrl);
+    expect(evolution.avatarLookups).toHaveLength(2);
+  });
+
+  it('uses the linked contact photo when Evolution returns no photo', async () => {
+    const instanceName = `imported-avatar-${randomUUID()}`;
+    const jid = '5511999999999@s.whatsapp.net';
+    await createInstance(ownerA, instanceName);
+    await postWebhook(evolutionPayload(instanceName, randomUUID(), 'Olá', jid));
+    const conversation = await prisma.conversation.findFirstOrThrow({ where: { tenantId: ownerA.tenantId } });
+    await prisma.contact.updateMany({
+      where: { id: conversation.contactId!, tenantId: ownerA.tenantId },
+      data: { avatarUrl: 'https://cdn.example/imported.jpg' },
+    });
+    evolution.avatarUrl = null;
+    const url = `/api/conversations/${conversation.id}/participant-avatar?jid=${encodeURIComponent(jid)}`;
+    const response = await app.inject({ method: 'GET', url, headers: authHeaders(ownerA) });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().url).toBe('https://cdn.example/imported.jpg');
+    const foreign = await app.inject({ method: 'GET', url, headers: authHeaders(ownerB) });
+    expect(foreign.statusCode).toBe(404);
+  });
+
+  it('resolves a LID photo through the linked phone without accepting arbitrary addresses', async () => {
+    const instanceName = `lid-avatar-${randomUUID()}`;
+    const jid = '5511999999999@s.whatsapp.net';
+    const lid = '123456789012345@lid';
+    await createInstance(ownerA, instanceName);
+    await postWebhook(evolutionPayload(instanceName, randomUUID(), 'Olá', jid));
+    const conversation = await prisma.conversation.findFirstOrThrow({ where: { tenantId: ownerA.tenantId } });
+    await prisma.conversation.update({ where: { id: conversation.id, tenantId: ownerA.tenantId }, data: { externalContactId: lid } });
+    const lookup = vi.spyOn(evolution, 'fetchProfilePictureUrl').mockResolvedValueOnce(null);
+    try {
+      const url = `/api/conversations/${conversation.id}/participant-avatar?jid=${encodeURIComponent(lid)}`;
+      const response = await app.inject({ method: 'GET', url, headers: authHeaders(ownerA) });
+      expect(response.statusCode).toBe(200);
+      expect(response.json().url).toBe(evolution.avatarUrl);
+      expect(lookup).toHaveBeenNthCalledWith(1, instanceName, lid);
+      expect(lookup).toHaveBeenNthCalledWith(2, instanceName, jid);
+      const unknown = await app.inject({ method: 'GET', url: url.replace(encodeURIComponent(lid), encodeURIComponent('999999999@lid')), headers: authHeaders(ownerA) });
+      expect(unknown.statusCode).toBe(404);
+      expect(lookup).toHaveBeenCalledTimes(2);
+    } finally {
+      lookup.mockRestore();
+    }
+  });
+
   describe('conversations and messages', () => {
     async function seedConversation(): Promise<{
       conversationId: string;

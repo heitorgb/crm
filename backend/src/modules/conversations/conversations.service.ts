@@ -642,6 +642,8 @@ export class ConversationsService {
       select: {
         id: true,
         externalContactId: true,
+        isGroup: true,
+        contact: { select: { phone: true, avatarUrl: true } },
         whatsappInstanceId: true,
         instance: { select: { instanceName: true } },
       },
@@ -662,12 +664,26 @@ export class ConversationsService {
       throw new AppException('AVATAR_NOT_AVAILABLE', 'Participante não encontrado.', 404);
     }
 
-    const url = await this.directory.resolveAvatar({
+    let url = await this.directory.resolveAvatar({
       tenantId,
       whatsappInstanceId: conversation.whatsappInstanceId,
       instanceName: conversation.instance.instanceName,
       jid,
     });
+
+    const isDirectContact = !conversation.isGroup && conversation.externalContactId === jid;
+    const phone = isDirectContact ? conversation.contact?.phone?.replace(/\D/g, '') : null;
+    if (!url && jid.endsWith('@lid') && phone) {
+      url = await this.directory.resolveAvatar({
+        tenantId,
+        whatsappInstanceId: conversation.whatsappInstanceId,
+        instanceName: conversation.instance.instanceName,
+        jid: `${phone}@s.whatsapp.net`,
+      });
+    }
+    if (!url && isDirectContact) {
+      url = conversation.contact?.avatarUrl ?? null;
+    }
 
     return { url };
   }

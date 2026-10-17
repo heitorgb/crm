@@ -85,7 +85,8 @@ export function useParticipantAvatar(conversationId: string, jid: string | null)
     queryKey: attendanceKeys.participantAvatar(conversationId, jid ?? ''),
     queryFn: () => attendanceService.resolveParticipantAvatar(conversationId, jid as string),
     enabled: Boolean(jid),
-    staleTime: 30 * 60 * 1000,
+    staleTime: (query) => query.state.data?.url ? 30 * 60 * 1000 : 60 * 1000,
+    refetchInterval: (query) => query.state.data?.url ? false : 60 * 1000,
   });
 }
 

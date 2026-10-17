@@ -7,6 +7,7 @@ import { RealtimeService } from '../../infrastructure/realtime/realtime.service.
 import { EvolutionClient } from './evolution/evolution.client.js';
 
 const AVATAR_TTL_MS = 6 * 60 * 60 * 1000;
+const MISSING_AVATAR_TTL_MS = 60 * 1000;
 const BACKFILL_LIMIT = 100;
 
 export interface GroupInfo {
@@ -118,7 +119,8 @@ export class WhatsAppDirectoryService implements OnModuleInit {
       select: { url: true, fetchedAt: true },
     });
 
-    if (cached && Date.now() - cached.fetchedAt.getTime() < AVATAR_TTL_MS) {
+    const ttl = cached?.url ? AVATAR_TTL_MS : MISSING_AVATAR_TTL_MS;
+    if (cached && Date.now() - cached.fetchedAt.getTime() < ttl) {
       return cached.url;
     }
 

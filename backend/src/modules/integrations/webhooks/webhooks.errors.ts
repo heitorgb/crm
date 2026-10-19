@@ -110,3 +110,27 @@ export class WebhookIdempotencyKeyInvalidError extends AppException {
     );
   }
 }
+
+export class WebhookImageUrlInvalidError extends AppException {
+  constructor(message = 'A URL da imagem deve ser HTTPS e apontar para um host público.') {
+    super('WEBHOOK_IMAGE_URL_INVALID', message, 400);
+  }
+}
+
+export class WebhookImageFetchFailedError extends AppException {
+  constructor() {
+    super('WEBHOOK_IMAGE_FETCH_FAILED', 'Não foi possível baixar a imagem informada.', 502);
+  }
+}
+
+export class WebhookImageInvalidError extends AppException {
+  constructor() {
+    super('WEBHOOK_IMAGE_INVALID', 'O conteúdo da imageUrl não é uma imagem válida.', 400);
+  }
+}
+
+export class WebhookImageTooLargeError extends AppException {
+  constructor() {
+    super('WEBHOOK_IMAGE_TOO_LARGE', 'A imagem informada excede o tamanho máximo permitido.', 413);
+  }
+}

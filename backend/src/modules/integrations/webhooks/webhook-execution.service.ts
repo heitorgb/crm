@@ -17,6 +17,8 @@ import {
   EvolutionUnavailableError,
 } from '../../whatsapp/evolution/evolution.client.js';
 import type { ListWebhookExecutionsQueryDto } from './dto/webhook.dto.js';
+import { WEBHOOK_MAX_CAPTION_LENGTH } from './dto/webhook.dto.js';
+import { WebhookImageService } from './webhook-image.service.js';
 import {
   WebhookExecutionFailedError,
   WebhookExecutionInProgressError,
@@ -35,11 +37,13 @@ import { webhookSecretMatches } from './webhook-secret.js';
 const EXECUTIONS_PER_WEBHOOK_PER_MINUTE = 60;
 const MAX_IDEMPOTENCY_KEY_LENGTH = 200;
 const MAX_ERROR_MESSAGE_LENGTH = 300;
+const WEBHOOK_IMAGE_SHORT_CAPTION = 'Atualização da contribuição';
 
 export interface ExecuteWebhookInput {
   webhookId: string;
   secret: string | null;
   message: string;
+  imageUrl?: string | null;
   idempotencyKey?: string | null;
   ip: string;
 }
@@ -75,6 +79,7 @@ export class WebhookExecutionService {
     private readonly limiter: RateLimitService,
     private readonly evolution: EvolutionClient,
     private readonly conversations: ConversationProcessingService,
+    private readonly images: WebhookImageService,
   ) {}
 
   async execute(input: ExecuteWebhookInput): Promise<WebhookExecutionResult> {
@@ -144,6 +149,15 @@ export class WebhookExecutionService {
       idempotencyKey,
     );
 
+    if (input.imageUrl) {
+      return this.executeImage({
+        integration,
+        executionId,
+        message: input.message,
+        imageUrl: input.imageUrl,
+      });
+    }
+
     let sent: Awaited<ReturnType<EvolutionClient['sendText']>>;
     try {
       sent = await this.evolution.sendText(
@@ -206,6 +220,146 @@ export class WebhookExecutionService {
       messageId: updated.messageId,
       conversationId: updated.conversationId,
     };
+  }
+
+  private async executeImage(params: {
+    integration: {
+      id: string;
+      tenantId: string;
+      groupJid: string;
+      groupName: string | null;
+      instance: { id: string; instanceName: string };
+    };
+    executionId: string;
+    message: string;
+    imageUrl: string;
+  }): Promise<WebhookExecutionResult> {
+    let image: Awaited<ReturnType<WebhookImageService['fetch']>>;
+    try {
+      image = await this.images.fetch(params.imageUrl);
+    } catch (error) {
+      const sanitized = sanitizeImageError(error);
+      await this.markFailed(params.executionId, sanitized.code, sanitized.message);
+      throw error;
+    }
+
+    const caption =
+      params.message.length <= WEBHOOK_MAX_CAPTION_LENGTH
+        ? params.message
+        : WEBHOOK_IMAGE_SHORT_CAPTION;
+
+    let sent: Awaited<ReturnType<ConversationProcessingService['sendExternalImage']>>;
+    try {
+      sent = await this.conversations.sendExternalImage({
+        tenantId: params.integration.tenantId,
+        whatsappInstanceId: params.integration.instance.id,
+        externalContactId: params.integration.groupJid,
+        contactId: null,
+        caption,
+        buffer: image.buffer,
+        fileName: image.fileName,
+        isGroup: true,
+        groupName: params.integration.groupName,
+        metadata: {
+          source: 'webhook_integration',
+          webhookIntegrationId: params.integration.id,
+          imageSourceUrl: params.imageUrl,
+          imageCaptionMode: caption === params.message ? 'full' : 'short',
+        },
+      });
+    } catch (error) {
+      return this.failExecution(params.executionId, error);
+    }
+
+    if (params.message.length > WEBHOOK_MAX_CAPTION_LENGTH) {
+      let textSent: Awaited<ReturnType<EvolutionClient['sendText']>>;
+      try {
+        textSent = await this.evolution.sendText(
+          params.integration.instance.instanceName,
+          params.integration.groupJid,
+          params.message,
+          undefined,
+          { linkPreview: false },
+        );
+      } catch (error) {
+        return this.failExecution(params.executionId, error);
+      }
+
+      let recorded: Awaited<ReturnType<ConversationProcessingService['recordOutboundMessage']>>;
+      try {
+        recorded = await this.conversations.recordOutboundMessage({
+          tenantId: params.integration.tenantId,
+          whatsappInstanceId: params.integration.instance.id,
+          externalContactId: params.integration.groupJid,
+          contactId: null,
+          text: params.message,
+          externalMessageId: textSent.externalMessageId ?? null,
+          isGroup: true,
+          groupName: params.integration.groupName,
+          metadata: {
+            source: 'webhook_integration',
+            webhookIntegrationId: params.integration.id,
+            imageSourceUrl: params.imageUrl,
+            imageExternalMessageId: sent.externalMessageId,
+          },
+        });
+      } catch (error) {
+        return this.failExecution(params.executionId, error);
+      }
+
+      if (!recorded) {
+        await this.markFailed(
+          params.executionId,
+          'WEBHOOK_RECORDING_FAILED',
+          'Falha ao registrar a mensagem.',
+        );
+        throw new WebhookRecordingFailedError(params.executionId);
+      }
+
+      sent = {
+        messageId: recorded.messageId,
+        conversationId: recorded.conversationId,
+        externalMessageId: textSent.externalMessageId ?? null,
+      };
+    }
+
+    const updated = await this.markSucceeded(params.executionId, {
+      externalMessageId: sent.externalMessageId,
+      messageId: sent.messageId,
+      conversationId: sent.conversationId,
+    });
+
+    return {
+      ok: true,
+      executionId: updated.id,
+      status: updated.status,
+      externalMessageId: updated.externalMessageId,
+      messageId: updated.messageId,
+      conversationId: updated.conversationId,
+    };
+  }
+
+  private async failExecution(executionId: string, error: unknown): Promise<never> {
+    if (error instanceof EvolutionUnavailableError) {
+      await this.markFailed(executionId, 'EVOLUTION_UNAVAILABLE', 'Evolution API indisponível.');
+      throw new WebhookProviderUnavailableError(executionId);
+    }
+    if (error instanceof EvolutionRequestError) {
+      const sanitized = sanitizeSendError(error);
+      await this.markFailed(executionId, sanitized.code, sanitized.message);
+      throw new WebhookProviderError(executionId, error.httpStatus);
+    }
+    if (error instanceof AppException) {
+      await this.markFailed(executionId, error.code, error.message);
+      throw error;
+    }
+    this.logger.warn(
+      `Failed to send webhook integration image ${executionId}: ${
+        error instanceof Error ? error.message : 'unknown'
+      }`,
+    );
+    await this.markFailed(executionId, 'WEBHOOK_SEND_FAILED', 'Falha ao enviar a imagem.');
+    throw new WebhookProviderError(executionId);
   }
 
   async listExecutions(
@@ -412,6 +566,13 @@ function sanitizeSendError(error: unknown): { code: string; message: string } {
     return { code: error.code, message: error.message };
   }
   return { code: 'WEBHOOK_SEND_FAILED', message: 'Falha ao enviar a mensagem pelo WhatsApp.' };
+}
+
+function sanitizeImageError(error: unknown): { code: string; message: string } {
+  if (error instanceof AppException) {
+    return { code: error.code, message: error.message };
+  }
+  return { code: 'WEBHOOK_IMAGE_FETCH_FAILED', message: 'Não foi possível obter a imagem.' };
 }
 
 function toExecutionView(execution: {

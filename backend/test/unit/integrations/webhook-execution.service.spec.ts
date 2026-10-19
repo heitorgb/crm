@@ -12,6 +12,7 @@ import {
 import {
   WebhookExecutionFailedError,
   WebhookGroupInvalidError,
+  WebhookImageInvalidError,
   WebhookInstanceUnavailableError,
   WebhookIntegrationInactiveError,
   WebhookProviderError,
@@ -68,6 +69,18 @@ function createHarness() {
       messageId: 'message-1',
       conversationId: 'conversation-1',
     }),
+    sendExternalImage: vi.fn().mockResolvedValue({
+      messageId: 'image-message-1',
+      conversationId: 'conversation-1',
+      externalMessageId: 'ext-image-1',
+    }),
+  };
+  const images = {
+    fetch: vi.fn().mockResolvedValue({
+      buffer: Buffer.from('fake-image'),
+      mimeType: 'image/png',
+      fileName: 'card.png',
+    }),
   };
 
   const service = new WebhookExecutionService(
@@ -77,9 +90,10 @@ function createHarness() {
     limiter as unknown as RateLimitService,
     evolution as never,
     conversations as unknown as ConversationProcessingService,
+    images as never,
   );
 
-  return { service, prisma, modules, limiter, evolution, conversations };
+  return { service, prisma, modules, limiter, evolution, conversations, images };
 }
 
 function input(overrides: Record<string, unknown> = {}) {
@@ -236,6 +250,115 @@ describe('WebhookExecutionService', () => {
     expect(result).toMatchObject({ executionId: 'execution-old', externalMessageId: 'ext-old' });
     expect(evolution.sendText).not.toHaveBeenCalled();
     expect(prisma.webhookExecution.create).not.toHaveBeenCalled();
+  });
+
+  it('sends an image with caption when imageUrl is provided', async () => {
+    const { service, images, conversations, evolution, prisma } = createHarness();
+
+    const result = await service.execute(
+      input({ imageUrl: 'https://example.com/card.png', message: 'Legenda' }),
+    );
+
+    expect(images.fetch).toHaveBeenCalledWith('https://example.com/card.png');
+    expect(evolution.sendText).not.toHaveBeenCalled();
+    expect(conversations.sendExternalImage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: 'tenant-1',
+        whatsappInstanceId: 'instance-1',
+        externalContactId: '120363000000000000@g.us',
+        caption: 'Legenda',
+        fileName: 'card.png',
+        isGroup: true,
+        metadata: expect.objectContaining({
+          source: 'webhook_integration',
+          webhookIntegrationId: 'webhook-1',
+          imageSourceUrl: 'https://example.com/card.png',
+        }),
+      }),
+    );
+    expect(prisma.webhookExecution.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: 'SUCCESS',
+          externalMessageId: 'ext-image-1',
+          messageId: 'image-message-1',
+        }),
+      }),
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      externalMessageId: 'ext-image-1',
+      messageId: 'image-message-1',
+    });
+  });
+
+  it('sends a short image caption followed by the full text when the caption is too long', async () => {
+    const { service, images, conversations, evolution, prisma } = createHarness();
+    const message = 'x'.repeat(1025);
+
+    await service.execute(
+      input({
+        imageUrl: 'https://example.com/card.png',
+        message,
+      }),
+    );
+
+    expect(images.fetch).toHaveBeenCalledWith('https://example.com/card.png');
+    expect(conversations.sendExternalImage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        caption: 'Atualização da contribuição',
+        metadata: expect.objectContaining({
+          imageCaptionMode: 'short',
+        }),
+      }),
+    );
+    expect(evolution.sendText).toHaveBeenCalledWith(
+      'inst-1',
+      '120363000000000000@g.us',
+      message,
+      undefined,
+      { linkPreview: false },
+    );
+    expect(conversations.recordOutboundMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: message,
+        externalMessageId: 'ext-1',
+        metadata: expect.objectContaining({
+          imageSourceUrl: 'https://example.com/card.png',
+          imageExternalMessageId: 'ext-image-1',
+        }),
+      }),
+    );
+    expect(prisma.webhookExecution.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: 'SUCCESS',
+          externalMessageId: 'ext-1',
+          messageId: 'message-1',
+        }),
+      }),
+    );
+  });
+
+  it('records a failed execution when the image cannot be fetched', async () => {
+    const { service, images, conversations, prisma } = createHarness();
+    images.fetch.mockRejectedValue(
+      new WebhookImageInvalidError(),
+    );
+
+    await expect(
+      service.execute(input({ imageUrl: 'https://example.com/card.txt', message: 'Legenda' })),
+    ).rejects.toBeInstanceOf(WebhookImageInvalidError);
+
+    expect(conversations.sendExternalImage).not.toHaveBeenCalled();
+    expect(prisma.webhookExecution.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: 'FAILED',
+          errorCode: 'WEBHOOK_IMAGE_INVALID',
+        }),
+      }),
+    );
   });
 
   it('does not resend a failed execution with the same idempotency key', async () => {

@@ -8,6 +8,7 @@ import { createFastifyAdapter } from '../../src/common/http/create-fastify-adapt
 import { registerHttpPlugins } from '../../src/common/http/register-http-plugins.js';
 import { PrismaService } from '../../src/infrastructure/prisma/prisma.service.js';
 import { PasswordService } from '../../src/modules/auth/password.service.js';
+import { WebhookImageService } from '../../src/modules/integrations/webhooks/webhook-image.service.js';
 import { EvolutionClient } from '../../src/modules/whatsapp/evolution/evolution.client.js';
 
 export const TEST_PASSWORD = 'correct-horse-battery';
@@ -22,6 +23,7 @@ export interface TestApp {
 
 export interface TestAppOptions {
   evolution?: unknown;
+  imageService?: unknown;
 }
 
 export async function createTestApp(options: TestAppOptions = {}): Promise<TestApp> {
@@ -30,6 +32,9 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestA
   const builder = Test.createTestingModule({ imports: [AppModule] });
   if (options.evolution) {
     builder.overrideProvider(EvolutionClient).useValue(options.evolution);
+  }
+  if (options.imageService) {
+    builder.overrideProvider(WebhookImageService).useValue(options.imageService);
   }
 
   const moduleRef = await builder.compile();

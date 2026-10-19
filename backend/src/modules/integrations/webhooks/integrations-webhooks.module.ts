@@ -6,6 +6,7 @@ import { WebhookExecutionController } from './webhook-execution.controller.js';
 import { WebhookExecutionService } from './webhook-execution.service.js';
 import { WebhookGroupsController } from './webhook-groups.controller.js';
 import { WebhookIntegrationsController } from './webhook-integrations.controller.js';
+import { WebhookImageService } from './webhook-image.service.js';
 import { WebhookIntegrationsService } from './webhook-integrations.service.js';
 
 @Module({
@@ -15,7 +16,7 @@ import { WebhookIntegrationsService } from './webhook-integrations.service.js';
     WebhookGroupsController,
     WebhookExecutionController,
   ],
-  providers: [WebhookIntegrationsService, WebhookExecutionService],
-  exports: [WebhookIntegrationsService, WebhookExecutionService],
+  providers: [WebhookImageService, WebhookIntegrationsService, WebhookExecutionService],
+  exports: [WebhookImageService, WebhookIntegrationsService, WebhookExecutionService],
 })
 export class IntegrationsWebhooksModule {}

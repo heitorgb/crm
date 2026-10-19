@@ -3,6 +3,7 @@ import {
   IsBoolean,
   IsOptional,
   IsString,
+  IsUrl,
   IsUUID,
   Matches,
   MaxLength,
@@ -12,6 +13,8 @@ import { PaginationQueryDto } from '../../../../common/http/pagination.js';
 
 export const WEBHOOK_GROUP_JID_PATTERN = /^[0-9][0-9-]*@g\.us$/;
 export const WEBHOOK_MAX_MESSAGE_LENGTH = 4096;
+export const WEBHOOK_MAX_CAPTION_LENGTH = 1024;
+export const WEBHOOK_MAX_IMAGE_URL_LENGTH = 2048;
 
 export class CreateWebhookIntegrationDto {
   @IsString()
@@ -82,4 +85,12 @@ export class ExecuteWebhookDto {
   @MinLength(1)
   @MaxLength(WEBHOOK_MAX_MESSAGE_LENGTH)
   message!: string;
+
+  @IsOptional()
+  @IsUrl(
+    { protocols: ['https'], require_protocol: true },
+    { message: 'imageUrl deve ser uma URL HTTPS válida' },
+  )
+  @MaxLength(WEBHOOK_MAX_IMAGE_URL_LENGTH)
+  imageUrl?: string;
 }

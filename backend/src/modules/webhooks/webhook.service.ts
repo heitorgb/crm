@@ -13,6 +13,14 @@ import {
   pickDestination,
   type DestinationInput,
 } from '../../common/whatsapp/destination.js';
+import {
+  MAX_PREVIEW_DESCRIPTION_LENGTH,
+  MAX_PREVIEW_TITLE_LENGTH,
+  normalizePreviewUrl,
+  previewDomain,
+  sanitizePreviewText,
+  type LinkPreviewMetadata,
+} from '../../common/link-preview/link-preview.js';
 import { isGroupJid, lidFromJid, phoneFromJid } from '../../common/whatsapp/jid.js';
 import type { Env } from '../../config/env.validation.js';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service.js';
@@ -255,6 +263,7 @@ export class WebhookService {
 
     const content = reaction ? reaction.emoji : extractText(message);
     const type = reaction ? MessageType.REACTION : detectType(message);
+    const linkPreview = extractWhatsAppLinkPreview(message);
     const externalMessageId = readString(key?.id);
     const quoted = await this.resolveInboundQuoted(instance.tenantId, message);
     const contacts = extractContacts(message);
@@ -293,6 +302,7 @@ export class WebhookService {
           : {}),
         ...(quoted ? { quoted } : {}),
         ...(contacts ? { contacts } : {}),
+        ...(linkPreview ? { linkPreview } : {}),
         instanceName,
       },
     });
@@ -1233,6 +1243,57 @@ function detectType(message: unknown): MessageType {
   if (message.contactMessage !== undefined || message.contactsArrayMessage !== undefined)
     return MessageType.CONTACT;
   return MessageType.UNKNOWN;
+}
+
+export function extractWhatsAppLinkPreview(message: unknown): LinkPreviewMetadata | null {
+  if (!isRecord(message)) {
+    return null;
+  }
+
+  const extended = isRecord(message.extendedTextMessage) ? message.extendedTextMessage : null;
+  if (!extended) {
+    return null;
+  }
+
+  const rawUrl = readString(extended.canonicalUrl) ?? readString(extended.matchedText);
+  const url = rawUrl ? normalizePreviewUrl(rawUrl) : null;
+  if (!url) {
+    return null;
+  }
+
+  const title = sanitizePreviewText(readString(extended.title), MAX_PREVIEW_TITLE_LENGTH);
+  const description = sanitizePreviewText(
+    readString(extended.description),
+    MAX_PREVIEW_DESCRIPTION_LENGTH,
+  );
+  const thumbnailUrl = readString(extended.thumbnailUrl);
+  const imageUrl = thumbnailUrl
+    ? normalizePreviewUrl(thumbnailUrl)
+    : thumbnailDataUrl(readString(extended.jpegThumbnail));
+
+  if (!title && !description && !imageUrl) {
+    return null;
+  }
+
+  return {
+    url,
+    title,
+    description,
+    imageUrl,
+    siteName: null,
+    domain: previewDomain(url),
+  };
+}
+
+function thumbnailDataUrl(value: string | null): string | null {
+  if (!value || value.length > 100_000) {
+    return null;
+  }
+  const payload = value.includes('base64,') ? value.slice(value.indexOf('base64,') + 7) : value;
+  if (!/^[a-zA-Z0-9+/=\r\n]+$/.test(payload)) {
+    return null;
+  }
+  return `data:image/jpeg;base64,${payload.replace(/\s/g, '')}`;
 }
 
 function isMediaType(type: MessageType): boolean {

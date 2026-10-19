@@ -17,6 +17,7 @@ export const attendanceKeys = {
   historyMessages: (id: string) => ['attendance-history', 'messages', id] as const,
   participantAvatar: (conversationId: string, jid: string) =>
     ['attendance', 'participant-avatar', conversationId, jid] as const,
+  linkPreview: (url: string) => ['attendance', 'link-preview', url] as const,
   attachment: (
     conversationId: string,
     messageId: string,
@@ -24,6 +25,19 @@ export const attendanceKeys = {
     variant: 'main' | 'thumb',
   ) => ['attendance', 'attachment', conversationId, messageId, attachmentId, variant] as const,
 };
+
+export function useLinkPreview(url: string | null) {
+  return useQuery({
+    queryKey: attendanceKeys.linkPreview(url ?? ''),
+    queryFn: async () => {
+      const result = await attendanceService.resolveLinkPreviews([url as string]);
+      return result.previews[0] ?? null;
+    },
+    enabled: Boolean(url),
+    staleTime: 24 * 60 * 60 * 1000,
+    retry: false,
+  });
+}
 
 export function useConversations(params: ListConversationsParams = {}) {
   return useQuery({

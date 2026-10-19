@@ -111,6 +111,7 @@ model Tenant {
   modules            TenantModule[]
   webhookIntegrations WebhookIntegration[]
   webhookExecutions   WebhookExecution[]
+  linkPreviews        LinkPreview[]
 
   @@map("tenants")
 }
@@ -349,6 +350,29 @@ model MessageAttachment {
 
   @@index([tenantId, messageId])
   @@map("message_attachments")
+}
+
+model LinkPreview {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
+  url         String
+  urlKey      String   @map("url_key")
+  status      String   @default("OK")
+  title       String?
+  description String?
+  imageUrl    String?  @map("image_url")
+  siteName    String?  @map("site_name")
+  domain      String?
+  fetchedAt   DateTime @default(now()) @map("fetched_at")
+  expiresAt   DateTime @map("expires_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, urlKey])
+  @@index([tenantId, expiresAt])
+  @@map("link_previews")
 }
 
 model WhatsAppAvatar {

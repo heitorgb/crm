@@ -32,6 +32,7 @@ import {
   readMessageContacts,
   readQuotedMessage,
 } from './attendance-utils';
+import { MessageLinkPreview } from './link-preview-card';
 import { LinkifiedText } from './linkified-text';
 import { MessageContact } from './message-contact';
 import { isMediaMessage, isViewOnceMessage } from './media-message-utils';
@@ -296,16 +297,22 @@ export function MessageBubble({
           ) : contacts.length > 0 ? (
             <MessageContact contacts={contacts} whatsappInstanceId={whatsappInstanceId} />
           ) : (
-            <LinkifiedText
-              text={message.content ?? `[${message.type.toLowerCase()}]`}
-              className="whitespace-pre-wrap break-words"
-            />
+            <>
+              <LinkifiedText
+                text={message.content ?? `[${message.type.toLowerCase()}]`}
+                className="whitespace-pre-wrap break-words"
+              />
+              <MessageLinkPreview message={message} isOutbound={isOutbound} />
+            </>
           )}
           {isMedia && message.content ? (
-            <LinkifiedText
-              text={message.content}
-              className="whitespace-pre-wrap break-words px-1.5 pt-1"
-            />
+            <div className="px-1.5">
+              <LinkifiedText
+                text={message.content}
+                className="whitespace-pre-wrap break-words pt-1"
+              />
+              <MessageLinkPreview message={message} isOutbound={isOutbound} />
+            </div>
           ) : null}
           <div
             className={cn(

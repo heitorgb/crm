@@ -8,6 +8,7 @@ import {
   Prisma,
   WhatsAppInstanceStatus,
 } from '@prisma/client';
+import { hasHttpUrl } from '../../common/link-preview/link-preview.js';
 import {
   pickDestination,
   type DestinationInput,
@@ -710,11 +711,12 @@ export class ConversationProcessingService implements OnModuleInit {
             ...(evolutionQuoted ? { quoted: evolutionQuoted } : {}),
           });
         } else {
-          sent = await this.evolution.sendText(
+          sent = await this.sendText(
             instanceName,
             destination.address,
             outgoingText,
             evolutionQuoted ?? undefined,
+            hasHttpUrl(outgoingText),
           );
         }
 
@@ -762,6 +764,18 @@ export class ConversationProcessingService implements OnModuleInit {
     });
   }
 
+  private sendText(
+    instanceName: string,
+    destination: string,
+    text: string,
+    quoted: EvolutionQuotedMessage | undefined,
+    linkPreview: boolean,
+  ): Promise<EvolutionSendResult> {
+    return linkPreview
+      ? this.evolution.sendText(instanceName, destination, text, quoted, { linkPreview: true })
+      : this.evolution.sendText(instanceName, destination, text, quoted);
+  }
+
   private async dispatch(
     tenantId: string,
     conversation: ConversationWithInstance,
@@ -805,11 +819,12 @@ export class ConversationProcessingService implements OnModuleInit {
                 ...(caption ? { caption } : {}),
                 ...(quoted ? { quoted } : {}),
               })
-            : await this.evolution.sendText(
+            : await this.sendText(
                 instanceName,
                 destination.address,
                 mediaOrText,
                 quoted ?? undefined,
+                hasHttpUrl(mediaOrText),
               );
 
       await this.messages.markOutboundStatus(messageId, MessageStatus.SENT, sent.externalMessageId, {

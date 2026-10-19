@@ -44,3 +44,28 @@ export function linkifyText(text: string): TextSegment[] {
 
   return segments;
 }
+
+export function extractPreviewUrls(text: string): string[] {
+  const urls: string[] = [];
+  const seen = new Set<string>();
+
+  for (const segment of linkifyText(text)) {
+    if (segment.type !== 'link' || !segment.href) {
+      continue;
+    }
+    if (
+      !/^https?:\/\//i.test(segment.href) ||
+      segment.href.length > 1024 ||
+      seen.has(segment.href)
+    ) {
+      continue;
+    }
+    seen.add(segment.href);
+    urls.push(segment.href);
+    if (urls.length >= 3) {
+      break;
+    }
+  }
+
+  return urls;
+}

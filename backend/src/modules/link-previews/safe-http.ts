@@ -1,7 +1,7 @@
 import { lookup } from 'node:dns/promises';
 import http from 'node:http';
 import https from 'node:https';
-import { isIP } from 'node:net';
+import { isIP, type LookupFunction } from 'node:net';
 
 export class UnsafeUrlError extends Error {
   constructor(message = 'URL not allowed') {
@@ -290,32 +290,28 @@ function requestOnce(
   });
 }
 
-function createPinnedLookup(
-  addresses: ResolvedAddress[],
-): (
-  hostname: string,
-  options: unknown,
-  callback: (error: NodeJS.ErrnoException | null, address: string, family: number) => void,
-) => void {
+function createPinnedLookup(addresses: ResolvedAddress[]): LookupFunction {
   return (_hostname, lookupOptions, callback) => {
-    const requestedFamily =
-      typeof lookupOptions === 'object' && lookupOptions !== null
-        ? (lookupOptions as { family?: number }).family
-        : undefined;
+    const requestedFamily = lookupOptions.family;
     const candidates =
       requestedFamily === 4 || requestedFamily === 6
         ? addresses.filter((item) => item.family === requestedFamily)
         : addresses;
-    const selected = candidates[0] ?? addresses[0];
+    const selected = candidates.length > 0 ? candidates : addresses;
 
-    if (!selected) {
+    if (selected.length === 0) {
       const error = new Error('No address available') as NodeJS.ErrnoException;
       error.code = 'ENOTFOUND';
       callback(error, '', 0);
       return;
     }
 
-    callback(null, selected.address, selected.family);
+    if (lookupOptions.all === true) {
+      callback(null, selected, 0);
+      return;
+    }
+
+    callback(null, selected[0].address, selected[0].family);
   };
 }
 

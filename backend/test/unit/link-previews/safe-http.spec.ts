@@ -79,6 +79,17 @@ describe('redirect protection', () => {
     });
   });
 
+  it('fetches HTML through the pinned lookup', async () => {
+    const result = await fetchHtmlDocument(`${origin}/`, {
+      timeoutMs: 1000,
+      maxBytes: 4096,
+      resolveAddresses: async () => [{ address: '127.0.0.1', family: 4 }],
+    });
+
+    expect(result.finalUrl).toBe(`${origin}/`);
+    expect(result.body.toString('utf8')).toContain('<title>Página</title>');
+  });
+
   it('rejects a redirect that points to a blocked address', async () => {
     await expect(
       fetchHtmlDocument(`${origin}/redirect-metadata`, {

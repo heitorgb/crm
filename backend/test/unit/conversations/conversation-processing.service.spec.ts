@@ -368,6 +368,36 @@ describe('ConversationProcessingService.dispatch', () => {
     );
   });
 
+  it('asks Evolution to generate a link preview when the text contains a URL', async () => {
+    const { service, prisma, evolution } = createHarness();
+    seedConversation(prisma);
+    prisma.conversation.findFirst.mockResolvedValue({
+      id: 'conversation-1',
+      tenantId: 'tenant-1',
+      externalContactId: '5511999999999@s.whatsapp.net',
+      externalLid: null,
+      preferredAddress: null,
+      contact: { phone: null },
+      instance: { instanceName: 'inst-1', status: 'CONNECTED' },
+    });
+    evolution.sendText.mockResolvedValue({ externalMessageId: 'ext-1', raw: {} });
+
+    await service.deliverText(
+      'tenant-1',
+      'conversation-1',
+      'Veja https://exemplo.com/artigo',
+      author,
+    );
+
+    expect(evolution.sendText).toHaveBeenCalledWith(
+      'inst-1',
+      '5511999999999',
+      'Veja https://exemplo.com/artigo',
+      undefined,
+      { linkPreview: true },
+    );
+  });
+
   it('blocks the send and does not persist when the instance is not connected', async () => {
     const { service, prisma, evolution, messages } = createHarness();
     seedConversation(prisma);

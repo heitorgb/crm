@@ -1,7 +1,12 @@
 import { apiRequest, apiUpload } from '@/lib/api-client';
 import { toQueryString } from '@/lib/query-params';
 import type { PageResult } from '@/types/crm';
-import type { Conversation, ConversationMessage, ConversationStatus } from '@/types/attendance';
+import type {
+  Conversation,
+  ConversationMessage,
+  ConversationStatus,
+  LinkPreview,
+} from '@/types/attendance';
 
 export function attachmentPath(
   conversationId: string,
@@ -55,6 +60,12 @@ export const attendanceService = {
     apiRequest<{ url: string | null }>(
       `/conversations/${id}/participant-avatar${toQueryString({ jid })}`,
     ),
+
+  resolveLinkPreviews: (urls: string[]) =>
+    apiRequest<{ previews: LinkPreview[] }>('/link-previews/resolve', {
+      method: 'POST',
+      body: { urls },
+    }),
 
   listMessages: (id: string, page = 1, perPage = 50) =>
     apiRequest<PageResult<ConversationMessage>>(

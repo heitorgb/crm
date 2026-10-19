@@ -86,6 +86,15 @@ export interface ConversationMessage {
   }[];
 }
 
+export interface LinkPreview {
+  url: string;
+  title: string | null;
+  description: string | null;
+  imageUrl: string | null;
+  siteName: string | null;
+  domain: string;
+}
+
 export interface QuotedMessage {
   messageId: string | null;
   externalId: string | null;

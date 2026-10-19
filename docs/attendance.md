@@ -41,6 +41,10 @@ Lead no WhatsApp
   `customerId?`.
 - `LeadDigestPreference` (1 por membership) e `LeadDigestDelivery` (`UNIQUE (tenantUserId,
   periodStart)` = idempotência).
+- `LinkPreview`: cache **por tenant** de metadados de link (`tenantId`, `url`, `urlKey`,
+  `status` OK/EMPTY/FAILED, `title?`, `description?`, `imageUrl?`, `siteName?`, `domain?`,
+  `fetchedAt`, `expiresAt`), `UNIQUE (tenantId, urlKey)`. O `urlKey` é o SHA-256 da URL
+  normalizada; o cache evita buscar a mesma página repetidamente e também registra falhas.
 - `WebhookEvent`: `provider`, `externalEventId`, `eventType`, `payload`, `processedAt`
   (`UNIQUE (provider, externalEventId)` = idempotência de webhook).
 
@@ -58,6 +62,11 @@ Prompt 09; `MessageAttachment.metadata`, `Message.metadata` e `LeadAnalysis` seg
   `EVOLUTION_WEBHOOK_SECRET` global **ou** o `webhookSecret` da instância.
 - O tenant **nunca** vem do payload: é resolvido por `instanceName` → `WhatsAppInstance`.
 - Endpoints autenticados exigem membership; escrita de instância restrita a OWNER/ADMIN.
+- A resolução de metadados de link roda no backend com proteção contra SSRF: somente HTTP/HTTPS,
+  portas 80/443, bloqueio de loopback/redes privadas/link-local/metadata de nuvem e validação de
+  cada redirecionamento (DNS fixado no IP validado, no máximo 3 redirects). Há limite de tempo,
+  tamanho da resposta, quantidade de URLs por mensagem e *rate limit* por IP. O HTML externo nunca é
+  renderizado: apenas `og:*`/`twitter:*`/`title` são extraídos, sanitizados e devolvidos como texto.
 - Logs não incluem conteúdo sensível nem credenciais.
 
 ## Evolution API
@@ -70,7 +79,7 @@ POST   /instance/create                   body { instanceName, qrcode, integrati
 GET    /instance/connect/{instanceName}
 DELETE /instance/logout/{instanceName}
 GET    /instance/connectionState/{instanceName}
-POST   /message/sendText/{instanceName}   body { number, text }
+POST   /message/sendText/{instanceName}   body { number, text, linkPreview? }
 POST   /webhook/set/{instanceName}        body { webhook: { enabled, url, events, base64 } }
 GET    /group/findGroupInfos/{instanceName}?groupJid={jid}
 POST   /chat/fetchProfilePictureUrl/{instanceName}   body { number }
@@ -195,7 +204,16 @@ CRM (sem dependências novas). A tela é **full-bleed**: `MainContent` deixa de 
   bloco, para que continuem identificáveis; a rolagem é automática somente quando o
   usuário está no fim do histórico, e um botão flutuante ("Ir para as últimas mensagens") aparece ao
   navegar por mensagens antigas. URLs no texto (e em legendas de mídia) são exibidas como links
-  clicáveis que abrem em nova aba. Compositor com anexo (imagem/vídeo/áudio/PDF), texto
+  clicáveis que abrem em nova aba. Quando a mensagem contém uma URL, o chat exibe também um
+  **cartão de pré-visualização** no estilo do WhatsApp Web (imagem, título, descrição e domínio),
+  integrado à bolha enviada ou recebida. Previews entregues pela Evolution/WhatsApp em
+  `extendedTextMessage` são lidos pelo webhook e guardados em `Message.metadata.linkPreview`
+  (título, descrição, thumbnail e URL canônica); mensagens antigas ou sem esses dados consultam
+  `POST /api/link-previews/resolve` de forma assíncrona (skeleton enquanto carrega, sem bloquear o
+  histórico). A URL original permanece clicável, o cartão não é renderizado quando não há metadados
+  úteis e textos longos quebram dentro da bolha. Ao enviar texto com URL, o backend pede à Evolution
+  `linkPreview: true`; isso melhora o preview no WhatsApp do destinatário, mas não o garante (o
+  comportamento é definido pelo WhatsApp). Compositor com anexo (imagem/vídeo/áudio/PDF), texto
   autoexpansível, gravação de áudio e envio por `Enter`, com anexo/emoji/campo/gravação integrados em
   um único campo arredondado. Colar com **Ctrl+V** uma imagem/vídeo do clipboard (ex.: print de tela) abre a
   prévia de mídia — igual ao anexo — com campo de legenda e botões **Enviar**/**Cancelar** antes do

@@ -389,7 +389,27 @@ describe('Webhook integrations (integration)', () => {
 
     const oversized = await execute(id, secret, { message: 'x'.repeat(4097) });
     expect(oversized.statusCode).toBe(400);
+
+    const emptyImage = await execute(id, secret, { message: 'Olá', imageUrl: '' });
+    expect(emptyImage.statusCode).toBe(400);
     expect(evolution.sent).toHaveLength(0);
+  });
+
+  it('treats a null imageUrl as a text-only message', async () => {
+    const instanceId = await createInstance(ownerA);
+    const created = await createWebhook(ownerA, instanceId);
+
+    const response = await execute(created.json().id, created.json().secret as string, {
+      message: 'Olá, pessoal!',
+      imageUrl: null,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ ok: true, status: 'SUCCESS' });
+    expect(evolution.sent).toHaveLength(1);
+    expect(evolution.sent[0].text).toBe('Olá, pessoal!');
+    expect(evolution.sentMedia).toHaveLength(0);
+    expect(imageService.urls).toHaveLength(0);
   });
 
   it('supports idempotency keys without sending twice', async () => {

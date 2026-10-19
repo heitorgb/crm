@@ -66,7 +66,8 @@ Também é aceito `x-webhook-secret: <credencial>` em vez de `Authorization`.
 
 - `message` é obrigatório, com 1 a 4096 caracteres.
 - `imageUrl` é opcional e deve ser uma URL **HTTPS pública** de imagem, com no máximo 2048
-  caracteres.
+  caracteres. O campo pode ser omitido ou enviado como `null`; string vazia (`""`) é rejeitada
+  pela validação. Nesses casos de texto puro, `message` continua obrigatório.
 - Com `imageUrl` e mensagem de até **1024 caracteres**, o texto é enviado como legenda da imagem
   (tipo `IMAGE`). Acima de 1024 caracteres, a imagem é enviada com a legenda curta “Atualização da
   contribuição” e, em seguida, o texto completo é enviado como mensagem separada. Sem `imageUrl`,

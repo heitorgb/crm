@@ -13,13 +13,14 @@ const allModules = [
   MODULE_KEYS.CONTACTS,
   MODULE_KEYS.BILLING_CHARGES,
   MODULE_KEYS.BILLING_COLLECTION,
+  MODULE_KEYS.WEBHOOKS,
 ];
 
 describe('visibleNavigation', () => {
   it('shows the business entries when their modules are enabled', () => {
     const entries = visibleNavigation({ platformAdmin: false, enabledModules: allModules });
     expect(titles(entries)).toEqual(
-      expect.arrayContaining(['Conversas', 'Contatos', 'Cobranças']),
+      expect.arrayContaining(['Conversas', 'Contatos', 'Cobranças', 'Webhooks']),
     );
   });
 
@@ -43,6 +44,8 @@ describe('visibleNavigation', () => {
 
   it('keeps entries visible while the module list is still loading', () => {
     const entries = visibleNavigation({ platformAdmin: false, enabledModules: undefined });
-    expect(titles(entries)).toEqual(expect.arrayContaining(['Conversas', 'Contatos', 'Cobranças']));
+    expect(titles(entries)).toEqual(
+      expect.arrayContaining(['Conversas', 'Contatos', 'Cobranças', 'Webhooks']),
+    );
   });
 });

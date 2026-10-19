@@ -72,6 +72,14 @@ export interface RecordOutboundMessageInput {
   text: string;
   externalMessageId: string | null;
   metadata?: Record<string, unknown>;
+  isGroup?: boolean;
+  groupName?: string | null;
+  groupAvatarUrl?: string | null;
+}
+
+export interface RecordedOutboundMessage {
+  messageId: string;
+  conversationId: string;
 }
 
 @Injectable()
@@ -213,21 +221,26 @@ export class ConversationProcessingService implements OnModuleInit {
    * the provider id is unavailable the message is still recorded, but the
    * webhook can no longer be correlated (Evolution limitation).
    */
-  async recordOutboundMessage(input: RecordOutboundMessageInput): Promise<void> {
+  async recordOutboundMessage(
+    input: RecordOutboundMessageInput,
+  ): Promise<RecordedOutboundMessage | null> {
     const conversation = await this.findOrCreateConversation(
       input.tenantId,
       input.whatsappInstanceId,
       input.externalContactId,
       input.contactId,
+      input.isGroup ?? input.externalContactId.endsWith('@g.us'),
+      input.groupName ?? null,
+      input.groupAvatarUrl ?? null,
     );
 
     if (input.externalMessageId) {
       const existing = await this.prisma.message.findFirst({
         where: { tenantId: input.tenantId, externalMessageId: input.externalMessageId },
-        select: { id: true },
+        select: { id: true, conversationId: true },
       });
       if (existing) {
-        return;
+        return { messageId: existing.id, conversationId: existing.conversationId };
       }
     }
 
@@ -243,7 +256,18 @@ export class ConversationProcessingService implements OnModuleInit {
       });
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-        return;
+        const existing = input.externalMessageId
+          ? await this.prisma.message.findFirst({
+              where: {
+                tenantId: input.tenantId,
+                externalMessageId: input.externalMessageId,
+              },
+              select: { id: true, conversationId: true },
+            })
+          : null;
+        return existing
+          ? { messageId: existing.id, conversationId: existing.conversationId }
+          : null;
       }
       throw error;
     }
@@ -267,6 +291,8 @@ export class ConversationProcessingService implements OnModuleInit {
     this.realtime.emitToTenant(input.tenantId, 'conversation.updated', {
       conversationId: conversation.id,
     });
+
+    return { messageId: message.id, conversationId: conversation.id };
   }
 
   /** Edits a message already delivered to WhatsApp, in place. */
@@ -818,10 +844,21 @@ export class ConversationProcessingService implements OnModuleInit {
     whatsappInstanceId: string,
     externalContactId: string,
     contactId: string | null,
+    isGroup = false,
+    groupName: string | null = null,
+    groupAvatarUrl: string | null = null,
   ): Promise<{ id: string }> {
     const existing = await this.prisma.conversation.findFirst({
       where: { tenantId, whatsappInstanceId, externalContactId },
-      select: { id: true, contactId: true, status: true, deletedAt: true },
+      select: {
+        id: true,
+        contactId: true,
+        status: true,
+        deletedAt: true,
+        isGroup: true,
+        groupName: true,
+        avatarUrl: true,
+      },
     });
 
     if (existing) {
@@ -836,6 +873,15 @@ export class ConversationProcessingService implements OnModuleInit {
       if (!existing.contactId && contactId) {
         data.contactId = contactId;
       }
+      if (isGroup && !existing.isGroup) {
+        data.isGroup = true;
+      }
+      if (groupName && existing.groupName !== groupName) {
+        data.groupName = groupName;
+      }
+      if (groupAvatarUrl && existing.avatarUrl !== groupAvatarUrl) {
+        data.avatarUrl = groupAvatarUrl;
+      }
       if (Object.keys(data).length > 0) {
         await this.prisma.conversation.update({ where: { id: existing.id }, data });
       }
@@ -849,6 +895,9 @@ export class ConversationProcessingService implements OnModuleInit {
           whatsappInstanceId,
           externalContactId,
           contactId,
+          isGroup,
+          ...(groupName ? { groupName } : {}),
+          ...(groupAvatarUrl ? { avatarUrl: groupAvatarUrl } : {}),
           status: ConversationStatus.OPEN,
         },
         select: { id: true },

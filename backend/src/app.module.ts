@@ -30,6 +30,7 @@ import { WhatsAppModule } from './modules/whatsapp/whatsapp.module.js';
 import { ConversationsModule } from './modules/conversations/conversations.module.js';
 import { WebhooksModule } from './modules/webhooks/webhooks.module.js';
 import { BillingModule } from './modules/billing/billing.module.js';
+import { IntegrationsWebhooksModule } from './modules/integrations/webhooks/integrations-webhooks.module.js';
 
 @Module({
   imports: [
@@ -69,6 +70,7 @@ import { BillingModule } from './modules/billing/billing.module.js';
     ConversationsModule,
     WebhooksModule,
     BillingModule,
+    IntegrationsWebhooksModule,
   ],
   providers: [{ provide: APP_FILTER, useClass: AllExceptionsFilter }],
 })

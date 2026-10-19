@@ -248,6 +248,41 @@ export class EvolutionClient {
     };
   }
 
+  /**
+   * Lists the groups available to an instance. Evolution v2 exposes
+   * `GET /group/fetchAllGroups/:instanceName`; older/newer builds may wrap the
+   * array in `groups` or `data`, so both shapes are accepted.
+   */
+  async findGroups(instanceName: string): Promise<EvolutionGroupInfo[]> {
+    const raw = await this.request(
+      'GET',
+      `/group/fetchAllGroups/${encodeURIComponent(instanceName)}?getParticipants=false`,
+    );
+
+    const list = Array.isArray(raw)
+      ? raw
+      : isRecord(raw) && Array.isArray(raw.groups)
+        ? raw.groups
+        : isRecord(raw) && Array.isArray(raw.data)
+          ? raw.data
+          : [];
+
+    return list.filter(isRecord).flatMap((entry) => {
+      const groupJid = readString(entry.id) ?? readString(entry.groupJid) ?? readString(entry.jid);
+      if (!groupJid || !groupJid.endsWith('@g.us')) {
+        return [];
+      }
+      const subject = readString(entry.subject) ?? readString(entry.name);
+      const pictureUrl =
+        readString(entry.pictureUrl) ??
+        readString(entry.profilePictureUrl) ??
+        readString(entry.avatar);
+      const size = typeof entry.size === 'number' ? entry.size : null;
+
+      return [{ groupJid, subject, pictureUrl, size }];
+    });
+  }
+
   /** Address book of the connected number, used to import contacts into the CRM. */
   async findContacts(instanceName: string): Promise<EvolutionContact[]> {
     const raw = await this.request(

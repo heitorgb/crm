@@ -138,6 +138,7 @@ describe('Modules management (integration)', () => {
         'contacts',
         'billing.charges',
         'billing.collection',
+        'webhooks',
       ]),
     );
     expect((response.json() as { enabled: boolean }[]).every((m) => m.enabled)).toBe(true);
@@ -232,7 +233,7 @@ describe('Modules management (integration)', () => {
     expect(enabledA.statusCode).toBe(200);
     expect(enabledA.json().modules).not.toContain('contacts');
     expect(enabledA.json().modules).toEqual(
-      expect.arrayContaining(['attendance', 'billing.charges', 'billing.collection']),
+      expect.arrayContaining(['attendance', 'billing.charges', 'billing.collection', 'webhooks']),
     );
 
     const enabledB = await getEnabledModules(orgB);
@@ -247,6 +248,7 @@ describe('Modules management (integration)', () => {
         'contacts',
         'billing.charges',
         'billing.collection',
+        'webhooks',
       ]),
     );
 

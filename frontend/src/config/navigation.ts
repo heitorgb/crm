@@ -1,4 +1,4 @@
-import { Building2, Contact, Headset, MessagesSquare, Receipt, Settings, Shield, Users, Wallet } from 'lucide-react';
+import { Building2, Contact, Headset, MessagesSquare, Receipt, Settings, Shield, Users, Wallet, Webhook } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { MODULE_KEYS } from '@/types/modules';
 
@@ -50,6 +50,18 @@ export const navigation: NavEntry[] = [
         to: '/cobrancas',
         icon: Receipt,
         moduleKey: MODULE_KEYS.BILLING_CHARGES,
+      },
+    ],
+  },
+  {
+    title: 'Integrações',
+    icon: Webhook,
+    items: [
+      {
+        title: 'Webhooks',
+        to: '/integracoes/webhooks',
+        icon: Webhook,
+        moduleKey: MODULE_KEYS.WEBHOOKS,
       },
     ],
   },

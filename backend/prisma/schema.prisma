@@ -80,6 +80,12 @@ enum BillingReminderOrigin {
   MANUAL
 }
 
+enum WebhookExecutionStatus {
+  PROCESSING
+  SUCCESS
+  FAILED
+}
+
 model Tenant {
   id        String   @id @default(uuid()) @db.Uuid
   name      String
@@ -103,6 +109,8 @@ model Tenant {
   billingSettings    BillingSettings?
   billingReminders   BillingReminder[]
   modules            TenantModule[]
+  webhookIntegrations WebhookIntegration[]
+  webhookExecutions   WebhookExecution[]
 
   @@map("tenants")
 }
@@ -256,6 +264,7 @@ model WhatsAppInstance {
   conversations Conversation[]
   avatars       WhatsAppAvatar[]
   billingSettings BillingSettings[]
+  webhookIntegrations WebhookIntegration[]
 
   @@index([tenantId, status])
   @@index([tenantId, createdAt])
@@ -515,6 +524,51 @@ model TenantModule {
   @@index([tenantId, enabled])
   @@index([moduleId])
   @@map("tenant_modules")
+}
+
+model WebhookIntegration {
+  id                 String    @id @default(uuid()) @db.Uuid
+  tenantId           String    @map("tenant_id") @db.Uuid
+  name               String
+  whatsappInstanceId String    @map("whatsapp_instance_id") @db.Uuid
+  groupJid           String    @map("group_jid")
+  groupName          String?   @map("group_name")
+  secretHash         String    @map("secret_hash")
+  secretHint         String    @map("secret_hint")
+  active             Boolean   @default(true)
+  deletedAt          DateTime? @map("deleted_at")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  tenant     Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  instance   WhatsAppInstance @relation(fields: [whatsappInstanceId], references: [id], onDelete: Cascade)
+  executions WebhookExecution[]
+
+  @@index([tenantId, deletedAt])
+  @@index([tenantId, active])
+  @@map("webhook_integrations")
+}
+
+model WebhookExecution {
+  id                String                 @id @default(uuid()) @db.Uuid
+  tenantId          String                 @map("tenant_id") @db.Uuid
+  webhookId         String                 @map("webhook_id") @db.Uuid
+  status            WebhookExecutionStatus @default(PROCESSING)
+  idempotencyKey    String?                @map("idempotency_key")
+  externalMessageId String?                @map("external_message_id")
+  messageId         String?                @map("message_id") @db.Uuid
+  conversationId    String?                @map("conversation_id") @db.Uuid
+  errorCode         String?                @map("error_code")
+  errorMessage      String?                @map("error_message")
+  createdAt         DateTime               @default(now()) @map("created_at")
+
+  tenant  Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  webhook WebhookIntegration @relation(fields: [webhookId], references: [id], onDelete: Cascade)
+
+  @@unique([webhookId, idempotencyKey])
+  @@index([tenantId, createdAt])
+  @@index([webhookId, createdAt])
+  @@map("webhook_executions")
 }
 
 model AdminAuditLog {

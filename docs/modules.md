@@ -53,6 +53,7 @@ Cada habilitação/desabilitação grava uma linha em `admin_audit_logs`
 | `contacts`           | Contatos           | CRM        |
 | `billing.charges`    | Cobranças          | Financeiro |
 | `billing.collection` | Régua de Cobrança  | Financeiro |
+| `webhooks`           | Webhooks           | Integrações |
 
 `billing.charges` e `billing.collection` são módulos **independentes**: é possível desativar a
 Régua de Cobrança sem desativar o restante do Financeiro.
@@ -85,6 +86,7 @@ Módulo NestJS `src/modules/modules/`:
 - `conversations` → `attendance`; `contacts` → `contacts`.
 - `billing` (cobranças/recorrências) → `billing.charges`.
 - `billing` (settings, lembretes, envio manual) → `billing.collection`.
+- `integrations/webhooks` (cadastro, consulta, histórico e execução externa) → `webhooks`.
 - Jobs automáticos revalidam o módulo por tenant:
   - `BillingRemindersService.runScan/generateReminders/dispatch/processReminder` e
     `sendManual` checam `billing.collection`.

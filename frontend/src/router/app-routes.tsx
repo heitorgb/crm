@@ -48,6 +48,9 @@ const SettingsPage = lazy(() =>
 const BillingPage = lazy(() =>
   import('@/features/billing/billing-page').then((module) => ({ default: module.BillingPage })),
 );
+const WebhooksPage = lazy(() =>
+  import('@/features/webhooks/webhooks-page').then((module) => ({ default: module.WebhooksPage })),
+);
 
 export function AppRoutes() {
   return (
@@ -114,6 +117,15 @@ export function AppRoutes() {
             element={
               <ModuleRoute moduleKey={MODULE_KEYS.BILLING_CHARGES}>
                 <BillingPage />
+              </ModuleRoute>
+            }
+          />
+
+          <Route
+            path="/integracoes/webhooks"
+            element={
+              <ModuleRoute moduleKey={MODULE_KEYS.WEBHOOKS}>
+                <WebhooksPage />
               </ModuleRoute>
             }
           />

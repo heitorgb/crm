@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { ConversationMessage, LinkPreview } from '@/types/attendance';
 import { readLinkPreviewMetadata } from './link-preview-utils';
@@ -43,6 +44,55 @@ function FetchedLinkPreview({ url, isOutbound }: { url: string; isOutbound: bool
   }
 
   return <LinkPreviewCard preview={data} isOutbound={isOutbound} />;
+}
+
+interface ComposerLinkPreviewProps {
+  url: string;
+  onRemove: () => void;
+}
+
+/**
+ * Preview shown above the composer, using the metadata resolved by the
+ * backend. It never blocks sending: while loading it shows a skeleton and it
+ * disappears when the URL has no usable metadata or the request fails.
+ */
+export function ComposerLinkPreview({ url, onRemove }: ComposerLinkPreviewProps) {
+  const { data, isLoading, isError } = useLinkPreview(url);
+
+  if (isError) {
+    return null;
+  }
+  if (isLoading) {
+    return (
+      <div className="relative">
+        <LinkPreviewSkeleton isOutbound={false} />
+        <RemovePreviewButton onRemove={onRemove} />
+      </div>
+    );
+  }
+  if (!data) {
+    return null;
+  }
+
+  return (
+    <div className="relative">
+      <LinkPreviewCard preview={data} isOutbound={false} />
+      <RemovePreviewButton onRemove={onRemove} />
+    </div>
+  );
+}
+
+function RemovePreviewButton({ onRemove }: { onRemove: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onRemove}
+      aria-label="Remover pré-visualização do link"
+      className="absolute right-1.5 top-1.5 z-10 rounded-full bg-black/55 p-1 text-white shadow-sm transition hover:bg-black/70"
+    >
+      <X className="size-3.5" />
+    </button>
+  );
 }
 
 interface LinkPreviewCardProps {

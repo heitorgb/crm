@@ -156,6 +156,7 @@ export class ConversationsController {
       dto.content.trim(),
       dto.includeAgentName ?? false,
       dto.quotedMessageId ?? null,
+      dto.linkPreview ?? true,
     );
     return { ok: true };
   }

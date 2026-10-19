@@ -3,10 +3,15 @@ import { ConfigService } from '@nestjs/config';
 import { ConversationStatus, MessageDirection, MessageType, Prisma } from '@prisma/client';
 import { AppException } from '../../common/errors/app.exception.js';
 import { buildPage, skipOf, type PageResult } from '../../common/http/pagination.js';
+import {
+  extractPreviewUrlsFromText,
+  type LinkPreviewMetadata,
+} from '../../common/link-preview/link-preview.js';
 import { TenantContextService } from '../../common/tenant-context/tenant-context.service.js';
 import type { Env } from '../../config/env.validation.js';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service.js';
 import { RealtimeService } from '../../infrastructure/realtime/realtime.service.js';
+import { LinkPreviewsService } from '../link-previews/link-previews.service.js';
 import { WhatsAppDirectoryService } from '../whatsapp/whatsapp-directory.service.js';
 import {
   ConversationProcessingService,
@@ -90,6 +95,7 @@ export class ConversationsService {
     private readonly messages: MessagesService,
     private readonly directory: WhatsAppDirectoryService,
     private readonly realtime: RealtimeService,
+    private readonly linkPreviews: LinkPreviewsService,
     private readonly config: ConfigService<Env, true>,
   ) {}
 
@@ -476,6 +482,7 @@ export class ConversationsService {
     content: string,
     includeAgentName: boolean,
     quotedMessageId: string | null = null,
+    linkPreview = true,
   ): Promise<void> {
     const { tenantId } = this.tenantContext.requireContext();
     const conversation = await this.prisma.conversation.findFirst({
@@ -494,9 +501,16 @@ export class ConversationsService {
       });
     }
 
+    const urls = extractPreviewUrlsFromText(content);
+    const previewEnabled = urls.length > 0 && linkPreview;
+    const preview = previewEnabled ? await this.resolvePreview(tenantId, urls) : null;
+
     const author = await this.resolveAuthor(includeAgentName);
     const quoted = await this.resolveQuoted(tenantId, id, quotedMessageId);
-    await this.processing.deliverText(tenantId, id, content, author, quoted);
+    await this.processing.deliverText(tenantId, id, content, author, quoted, {
+      linkPreview: urls.length > 0 ? previewEnabled : undefined,
+      preview,
+    });
   }
 
   async sendHumanMedia(
@@ -582,6 +596,21 @@ export class ConversationsService {
     );
 
     return this.messages.findOne(message.id);
+  }
+
+  /**
+   * Preview metadata is a best-effort enhancement: a resolver/cache failure
+   * must never block the message itself from being sent.
+   */
+  private async resolvePreview(
+    tenantId: string,
+    urls: string[],
+  ): Promise<LinkPreviewMetadata | null> {
+    try {
+      return (await this.linkPreviews.resolveMany(tenantId, urls))[0] ?? null;
+    } catch {
+      return null;
+    }
   }
 
   private async resolveAuthor(showAgentName: boolean): Promise<OutboundAuthor> {

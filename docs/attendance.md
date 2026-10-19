@@ -207,13 +207,20 @@ CRM (sem dependências novas). A tela é **full-bleed**: `MainContent` deixa de 
   clicáveis que abrem em nova aba. Quando a mensagem contém uma URL, o chat exibe também um
   **cartão de pré-visualização** no estilo do WhatsApp Web (imagem, título, descrição e domínio),
   integrado à bolha enviada ou recebida. Previews entregues pela Evolution/WhatsApp em
-  `extendedTextMessage` são lidos pelo webhook e guardados em `Message.metadata.linkPreview`
-  (título, descrição, thumbnail e URL canônica); mensagens antigas ou sem esses dados consultam
-  `POST /api/link-previews/resolve` de forma assíncrona (skeleton enquanto carrega, sem bloquear o
-  histórico). A URL original permanece clicável, o cartão não é renderizado quando não há metadados
-  úteis e textos longos quebram dentro da bolha. Ao enviar texto com URL, o backend pede à Evolution
-  `linkPreview: true`; isso melhora o preview no WhatsApp do destinatário, mas não o garante (o
-  comportamento é definido pelo WhatsApp). Compositor com anexo (imagem/vídeo/áudio/PDF), texto
+  `extendedTextMessage` (incluindo `contextInfo.externalAdReply`) são lidos pelo webhook e guardados
+  em `Message.metadata.linkPreview` (título, descrição, thumbnail e URL canônica); mensagens antigas
+  ou sem esses dados consultam `POST /api/link-previews/resolve` de forma assíncrona (skeleton
+  enquanto carrega, sem bloquear o histórico). A URL original permanece clicável, o cartão não é
+  renderizado quando não há metadados úteis e textos longos quebram dentro da bolha. O compositor
+  também mostra, acima do campo de texto, o **preview da primeira URL do rascunho** (obtido no
+  backend por `POST /api/link-previews/resolve` e cacheado por tenant), com botão para removê-lo
+  antes do envio; a remoção não altera o texto. Ao enviar, o backend resolve os metadados da URL
+  (quando o preview está habilitado), persiste-os em `metadata.linkPreview` e pede à Evolution
+  `linkPreview: true`; se o operador removeu o cartão, envia `linkPreview: false` para suprimir o
+  preview. Na versão instalada (Evolution 2.4.0) o único recurso oficial de preview em
+  `/message/sendText` é esse booleano — a Evolution gera o cartão `externalAdReply`; não há
+  parâmetros para enviar título/descrição/imagem explícitos. Por isso o preview no WhatsApp do
+  destinatário continua dependendo da geração da Evolution/WhatsApp. Compositor com anexo (imagem/vídeo/áudio/PDF), texto
   autoexpansível, gravação de áudio e envio por `Enter`, com anexo/emoji/campo/gravação integrados em
   um único campo arredondado. Colar com **Ctrl+V** uma imagem/vídeo do clipboard (ex.: print de tela) abre a
   prévia de mídia — igual ao anexo — com campo de legenda e botões **Enviar**/**Cancelar** antes do

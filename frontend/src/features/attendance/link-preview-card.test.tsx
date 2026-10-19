@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import type { ConversationMessage, LinkPreview } from '@/types/attendance';
 import { useLinkPreview } from './queries';
-import { LinkPreviewCard, MessageLinkPreview } from './link-preview-card';
+import { ComposerLinkPreview, LinkPreviewCard, MessageLinkPreview } from './link-preview-card';
 import { readLinkPreviewMetadata } from './link-preview-utils';
 
 vi.mock('./queries', () => ({
@@ -122,6 +122,61 @@ describe('readLinkPreviewMetadata', () => {
         linkPreview: { ...PREVIEW, imageUrl: 'javascript:alert(1)' },
       })?.imageUrl,
     ).toBeNull();
+  });
+});
+
+describe('ComposerLinkPreview', () => {
+  it('renders the resolved preview and lets the operator remove it', () => {
+    vi.mocked(useLinkPreview).mockReturnValue({
+      data: PREVIEW,
+      isLoading: false,
+      isError: false,
+    } as never);
+    const onRemove = vi.fn();
+
+    render(<ComposerLinkPreview url="https://exemplo.com/artigo" onRemove={onRemove} />);
+
+    expect(useLinkPreview).toHaveBeenCalledWith('https://exemplo.com/artigo');
+    expect(screen.getByText('Título da página')).toBeTruthy();
+
+    fireEvent.click(screen.getByLabelText('Remover pré-visualização do link'));
+
+    expect(onRemove).toHaveBeenCalledTimes(1);
+  });
+
+  it('renders a skeleton while the metadata is loading', () => {
+    vi.mocked(useLinkPreview).mockReturnValue({
+      data: undefined,
+      isLoading: true,
+      isError: false,
+    } as never);
+    const { container } = render(
+      <ComposerLinkPreview url="https://exemplo.com/artigo" onRemove={vi.fn()} />,
+    );
+
+    expect(container.querySelector('[aria-hidden="true"]')).toBeTruthy();
+    expect(screen.getByLabelText('Remover pré-visualização do link')).toBeTruthy();
+  });
+
+  it('stays hidden when the URL has no metadata or the request fails', () => {
+    vi.mocked(useLinkPreview).mockReturnValue({
+      data: null,
+      isLoading: false,
+      isError: false,
+    } as never);
+    const { container, rerender } = render(
+      <ComposerLinkPreview url="https://exemplo.com/artigo" onRemove={vi.fn()} />,
+    );
+    expect(container.firstChild).toBeNull();
+
+    vi.mocked(useLinkPreview).mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+    } as never);
+    rerender(<ComposerLinkPreview url="https://exemplo.com/artigo" onRemove={vi.fn()} />);
+
+    expect(container.firstChild).toBeNull();
   });
 });
 

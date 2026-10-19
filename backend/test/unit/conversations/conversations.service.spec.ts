@@ -21,6 +21,7 @@ const context: TenantContext = {
 interface PrismaMock {
   contact: { findFirst: ReturnType<typeof vi.fn> };
   message: { findFirst: ReturnType<typeof vi.fn> };
+  user: { findUnique: ReturnType<typeof vi.fn> };
   whatsAppInstance: { findFirst: ReturnType<typeof vi.fn> };
   $queryRaw: ReturnType<typeof vi.fn>;
   $transaction: ReturnType<typeof vi.fn>;
@@ -38,14 +39,25 @@ interface RealtimeMock {
   emitToConversation: ReturnType<typeof vi.fn>;
 }
 
+interface ProcessingMock {
+  deliverText: ReturnType<typeof vi.fn>;
+}
+
+interface LinkPreviewsMock {
+  resolveMany: ReturnType<typeof vi.fn>;
+}
+
 function createService(): {
   service: ConversationsService;
   prisma: PrismaMock;
   realtime: RealtimeMock;
+  processing: ProcessingMock;
+  linkPreviews: LinkPreviewsMock;
 } {
   const prisma: PrismaMock = {
     contact: { findFirst: vi.fn() },
     message: { findFirst: vi.fn() },
+    user: { findUnique: vi.fn() },
     whatsAppInstance: { findFirst: vi.fn() },
     $queryRaw: vi.fn(),
     $transaction: vi.fn(),
@@ -67,17 +79,21 @@ function createService(): {
     requireContext: vi.fn(() => context),
   } as unknown as TenantContextService;
 
+  const processing: ProcessingMock = { deliverText: vi.fn().mockResolvedValue(undefined) };
+  const linkPreviews: LinkPreviewsMock = { resolveMany: vi.fn().mockResolvedValue([]) };
+
   const service = new ConversationsService(
     prisma as unknown as PrismaService,
     tenantContext,
-    {} as never,
+    processing as never,
     { findOne: vi.fn() } as never,
     {} as never,
     realtime as never,
+    linkPreviews as never,
     {} as never,
   );
 
-  return { service, prisma, realtime };
+  return { service, prisma, realtime, processing, linkPreviews };
 }
 
 const conversationView = { id: 'conv-1' } as unknown as ConversationView;
@@ -270,6 +286,88 @@ describe('ConversationsService.list', () => {
     expect(prisma.conversation.count).toHaveBeenCalledWith({ where: expectedWhere });
     expect(prisma.conversation.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: expectedWhere }),
+    );
+  });
+});
+
+describe('ConversationsService.sendHumanMessage', () => {
+  const preview = {
+    url: 'https://exemplo.com/artigo',
+    title: 'Título',
+    description: 'Descrição',
+    imageUrl: null,
+    siteName: null,
+    domain: 'exemplo.com',
+  };
+
+  function seedConversation(prisma: PrismaMock): void {
+    prisma.conversation.findFirst.mockResolvedValue({ id: 'conv-1', status: 'OPEN' });
+    prisma.user.findUnique.mockResolvedValue({ name: 'Atendente' });
+  }
+
+  it('resolves the preview in the backend before sending', async () => {
+    const { service, prisma, processing, linkPreviews } = createService();
+    seedConversation(prisma);
+    linkPreviews.resolveMany.mockResolvedValue([preview]);
+
+    await service.sendHumanMessage(
+      'conv-1',
+      'Veja https://exemplo.com/artigo',
+      false,
+      null,
+      true,
+    );
+
+    expect(linkPreviews.resolveMany).toHaveBeenCalledWith('tenant-1', [
+      'https://exemplo.com/artigo',
+    ]);
+    expect(processing.deliverText).toHaveBeenCalledWith(
+      'tenant-1',
+      'conv-1',
+      'Veja https://exemplo.com/artigo',
+      expect.objectContaining({ senderName: 'Atendente', showAgentName: false }),
+      null,
+      { linkPreview: true, preview },
+    );
+  });
+
+  it('does not fetch metadata and suppresses the preview when the operator removed it', async () => {
+    const { service, prisma, processing, linkPreviews } = createService();
+    seedConversation(prisma);
+
+    await service.sendHumanMessage(
+      'conv-1',
+      'Veja https://exemplo.com/artigo',
+      false,
+      null,
+      false,
+    );
+
+    expect(linkPreviews.resolveMany).not.toHaveBeenCalled();
+    expect(processing.deliverText).toHaveBeenCalledWith(
+      'tenant-1',
+      'conv-1',
+      'Veja https://exemplo.com/artigo',
+      expect.objectContaining({ senderName: 'Atendente', showAgentName: false }),
+      null,
+      { linkPreview: false, preview: null },
+    );
+  });
+
+  it('does not touch link previews for messages without a URL', async () => {
+    const { service, prisma, processing, linkPreviews } = createService();
+    seedConversation(prisma);
+
+    await service.sendHumanMessage('conv-1', 'Olá', false);
+
+    expect(linkPreviews.resolveMany).not.toHaveBeenCalled();
+    expect(processing.deliverText).toHaveBeenCalledWith(
+      'tenant-1',
+      'conv-1',
+      'Olá',
+      expect.objectContaining({ senderName: 'Atendente' }),
+      null,
+      { linkPreview: undefined, preview: null },
     );
   });
 });

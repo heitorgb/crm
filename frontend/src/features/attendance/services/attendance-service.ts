@@ -96,13 +96,20 @@ export const attendanceService = {
   refreshGroup: (id: string) =>
     apiRequest<Conversation>(`/conversations/${id}/refresh-group`, { method: 'POST', body: {} }),
 
-  sendMessage: (id: string, content: string, includeAgentName: boolean, quotedMessageId?: string) =>
+  sendMessage: (
+    id: string,
+    content: string,
+    includeAgentName: boolean,
+    quotedMessageId?: string,
+    linkPreview?: boolean,
+  ) =>
     apiRequest<{ ok: true }>(`/conversations/${id}/messages`, {
       method: 'POST',
       body: {
         content,
         includeAgentName,
         ...(quotedMessageId ? { quotedMessageId } : {}),
+        ...(linkPreview !== undefined ? { linkPreview } : {}),
       },
     }),
 

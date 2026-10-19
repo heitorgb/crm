@@ -8,7 +8,10 @@ import {
   Prisma,
   WhatsAppInstanceStatus,
 } from '@prisma/client';
-import { hasHttpUrl } from '../../common/link-preview/link-preview.js';
+import {
+  hasHttpUrl,
+  type LinkPreviewMetadata,
+} from '../../common/link-preview/link-preview.js';
 import {
   pickDestination,
   type DestinationInput,
@@ -63,6 +66,12 @@ export interface OutboundAuthor {
   senderId: string | null;
   senderName: string | null;
   showAgentName: boolean;
+}
+
+export interface DeliverTextOptions {
+  /** Whether Evolution should render a link preview (false suppresses it). */
+  linkPreview?: boolean;
+  preview?: LinkPreviewMetadata | null;
 }
 
 export interface RecordOutboundMessageInput {
@@ -131,6 +140,7 @@ export class ConversationProcessingService implements OnModuleInit {
     text: string,
     author: OutboundAuthor,
     quoted: QuotedMessageInfo | null = null,
+    options: DeliverTextOptions = {},
   ): Promise<void> {
     const conversation = await this.prisma.conversation.findFirst({
       where: { id: conversationId, tenantId },
@@ -150,7 +160,7 @@ export class ConversationProcessingService implements OnModuleInit {
       content: text,
       senderId: author.senderId,
       senderName: author.senderName,
-      metadata: buildMetadata(author, quoted),
+      metadata: buildMetadata(author, quoted, options),
     });
 
     const outgoingText = buildOutboundText(text, author) ?? text;
@@ -164,6 +174,7 @@ export class ConversationProcessingService implements OnModuleInit {
       null,
       outgoingText,
       buildEvolutionQuoted(conversation.externalContactId, quoted),
+      options.linkPreview ?? (hasHttpUrl(outgoingText) ? true : undefined),
     );
   }
 
@@ -226,6 +237,7 @@ export class ConversationProcessingService implements OnModuleInit {
       { mimeType: stored.mimeType, fileName: stored.fileName },
       caption ? buildOutboundText(caption, author) : caption,
       buildEvolutionQuoted(conversation.externalContactId, quoted),
+      undefined,
     );
   }
 
@@ -672,6 +684,8 @@ export class ConversationProcessingService implements OnModuleInit {
         conversation.preferredAddress,
       );
       const showAgentName = isRecord(message.metadata) && message.metadata.showAgentName === true;
+      const suppressLinkPreview =
+        isRecord(message.metadata) && message.metadata.suppressLinkPreview === true;
       const outgoingText =
         buildOutboundText(message.content, {
           senderName: message.senderName,
@@ -716,7 +730,7 @@ export class ConversationProcessingService implements OnModuleInit {
             destination.address,
             outgoingText,
             evolutionQuoted ?? undefined,
-            hasHttpUrl(outgoingText),
+            hasHttpUrl(outgoingText) ? !suppressLinkPreview : undefined,
           );
         }
 
@@ -769,11 +783,12 @@ export class ConversationProcessingService implements OnModuleInit {
     destination: string,
     text: string,
     quoted: EvolutionQuotedMessage | undefined,
-    linkPreview: boolean,
+    linkPreview: boolean | undefined,
   ): Promise<EvolutionSendResult> {
-    return linkPreview
-      ? this.evolution.sendText(instanceName, destination, text, quoted, { linkPreview: true })
-      : this.evolution.sendText(instanceName, destination, text, quoted);
+    if (linkPreview === undefined) {
+      return this.evolution.sendText(instanceName, destination, text, quoted);
+    }
+    return this.evolution.sendText(instanceName, destination, text, quoted, { linkPreview });
   }
 
   private async dispatch(
@@ -785,6 +800,7 @@ export class ConversationProcessingService implements OnModuleInit {
     file: { mimeType: string; fileName: string } | null,
     caption: string | null,
     quoted: EvolutionQuotedMessage | null,
+    linkPreview: boolean | undefined,
   ): Promise<void> {
     const destination = pickDestination(
       destinationInput(conversation),
@@ -824,7 +840,7 @@ export class ConversationProcessingService implements OnModuleInit {
                 destination.address,
                 mediaOrText,
                 quoted ?? undefined,
-                hasHttpUrl(mediaOrText),
+                linkPreview,
               );
 
       await this.messages.markOutboundStatus(messageId, MessageStatus.SENT, sent.externalMessageId, {
@@ -1171,10 +1187,17 @@ function authorMetadata(author: OutboundAuthor): Record<string, unknown> {
 function buildMetadata(
   author: OutboundAuthor,
   quoted: QuotedMessageInfo | null,
+  options: DeliverTextOptions = {},
 ): Record<string, unknown> {
   const metadata = authorMetadata(author);
   if (quoted) {
     metadata.quoted = quoted;
+  }
+  if (options.preview) {
+    metadata.linkPreview = options.preview;
+  }
+  if (options.linkPreview === false) {
+    metadata.suppressLinkPreview = true;
   }
   return metadata;
 }

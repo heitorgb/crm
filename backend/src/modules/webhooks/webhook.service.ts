@@ -14,6 +14,7 @@ import {
   type DestinationInput,
 } from '../../common/whatsapp/destination.js';
 import {
+  extractPreviewUrlsFromText,
   MAX_PREVIEW_DESCRIPTION_LENGTH,
   MAX_PREVIEW_TITLE_LENGTH,
   normalizePreviewUrl,
@@ -1255,21 +1256,62 @@ export function extractWhatsAppLinkPreview(message: unknown): LinkPreviewMetadat
     return null;
   }
 
-  const rawUrl = readString(extended.canonicalUrl) ?? readString(extended.matchedText);
-  const url = rawUrl ? normalizePreviewUrl(rawUrl) : null;
+  const text = readString(extended.text);
+  const direct = buildLinkPreview({
+    rawUrl: readString(extended.canonicalUrl) ?? readString(extended.matchedText),
+    text,
+    title: readString(extended.title),
+    description: readString(extended.description),
+    imageUrl: readString(extended.thumbnailUrl),
+    thumbnail: readString(extended.jpegThumbnail),
+  });
+  if (direct) {
+    return direct;
+  }
+
+  const contextInfo = isRecord(extended.contextInfo) ? extended.contextInfo : null;
+  const adReply = contextInfo && isRecord(contextInfo.externalAdReply)
+    ? contextInfo.externalAdReply
+    : null;
+  if (!adReply) {
+    return null;
+  }
+
+  return buildLinkPreview({
+    rawUrl:
+      readString(adReply.sourceUrl) ??
+      readString(adReply.mediaUrl) ??
+      readString(adReply.canonicalUrl),
+    text,
+    title: readString(adReply.title),
+    description: readString(adReply.body) ?? readString(adReply.description),
+    imageUrl: readString(adReply.thumbnailUrl),
+    thumbnail: readString(adReply.jpegThumbnail),
+  });
+}
+
+function buildLinkPreview(input: {
+  rawUrl: string | null;
+  text: string | null;
+  title: string | null;
+  description: string | null;
+  imageUrl: string | null;
+  thumbnail: string | null;
+}): LinkPreviewMetadata | null {
+  const url =
+    (input.rawUrl ? normalizePreviewUrl(input.rawUrl) : null) ??
+    extractPreviewUrlsFromText(input.text)[0] ??
+    null;
   if (!url) {
     return null;
   }
 
-  const title = sanitizePreviewText(readString(extended.title), MAX_PREVIEW_TITLE_LENGTH);
-  const description = sanitizePreviewText(
-    readString(extended.description),
-    MAX_PREVIEW_DESCRIPTION_LENGTH,
-  );
-  const thumbnailUrl = readString(extended.thumbnailUrl);
-  const imageUrl = thumbnailUrl
-    ? normalizePreviewUrl(thumbnailUrl)
-    : thumbnailDataUrl(readString(extended.jpegThumbnail));
+  const title = sanitizePreviewText(input.title, MAX_PREVIEW_TITLE_LENGTH);
+  const description = sanitizePreviewText(input.description, MAX_PREVIEW_DESCRIPTION_LENGTH);
+  const imageUrl = input.imageUrl
+    ? normalizePreviewUrl(input.imageUrl)
+    : thumbnailDataUrl(input.thumbnail);
+  const siteName = null;
 
   if (!title && !description && !imageUrl) {
     return null;
@@ -1280,7 +1322,7 @@ export function extractWhatsAppLinkPreview(message: unknown): LinkPreviewMetadat
     title,
     description,
     imageUrl,
-    siteName: null,
+    siteName,
     domain: previewDomain(url),
   };
 }

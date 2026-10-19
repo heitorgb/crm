@@ -91,6 +91,10 @@ export class SendConversationMessageDto {
   includeAgentName?: boolean;
 
   @IsOptional()
+  @IsBoolean()
+  linkPreview?: boolean;
+
+  @IsOptional()
   @IsUUID()
   quotedMessageId?: string;
 }

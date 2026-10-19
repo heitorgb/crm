@@ -398,6 +398,70 @@ describe('ConversationProcessingService.dispatch', () => {
     );
   });
 
+  it('persists the resolved preview and asks Evolution to render it', async () => {
+    const { service, prisma, evolution, messages } = createHarness();
+    seedConversation(prisma);
+    evolution.sendText.mockResolvedValue({ externalMessageId: 'ext-1', raw: {} });
+    const preview = {
+      url: 'https://exemplo.com/artigo',
+      title: 'Título',
+      description: 'Descrição',
+      imageUrl: 'https://exemplo.com/capa.png',
+      siteName: 'Exemplo',
+      domain: 'exemplo.com',
+    };
+
+    await service.deliverText(
+      'tenant-1',
+      'conversation-1',
+      'Veja https://exemplo.com/artigo',
+      author,
+      null,
+      { linkPreview: true, preview },
+    );
+
+    expect(messages.persistOutbound).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({ linkPreview: preview }),
+      }),
+    );
+    expect(evolution.sendText).toHaveBeenCalledWith(
+      'inst-1',
+      '5511999999999',
+      'Veja https://exemplo.com/artigo',
+      undefined,
+      { linkPreview: true },
+    );
+  });
+
+  it('suppresses the preview when the operator removed it before sending', async () => {
+    const { service, prisma, evolution, messages } = createHarness();
+    seedConversation(prisma);
+    evolution.sendText.mockResolvedValue({ externalMessageId: 'ext-1', raw: {} });
+
+    await service.deliverText(
+      'tenant-1',
+      'conversation-1',
+      'Veja https://exemplo.com/artigo',
+      author,
+      null,
+      { linkPreview: false, preview: null },
+    );
+
+    expect(messages.persistOutbound).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({ suppressLinkPreview: true }),
+      }),
+    );
+    expect(evolution.sendText).toHaveBeenCalledWith(
+      'inst-1',
+      '5511999999999',
+      'Veja https://exemplo.com/artigo',
+      undefined,
+      { linkPreview: false },
+    );
+  });
+
   it('blocks the send and does not persist when the instance is not connected', async () => {
     const { service, prisma, evolution, messages } = createHarness();
     seedConversation(prisma);

@@ -53,15 +53,27 @@ export function extractPreviewUrls(text: string): string[] {
     if (segment.type !== 'link' || !segment.href) {
       continue;
     }
-    if (
-      !/^https?:\/\//i.test(segment.href) ||
-      segment.href.length > 1024 ||
-      seen.has(segment.href)
-    ) {
+
+    let normalized: string;
+    try {
+      const url = new URL(segment.href);
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+        continue;
+      }
+      if (url.username || url.password || !url.hostname) {
+        continue;
+      }
+      url.hash = '';
+      normalized = url.toString();
+    } catch {
       continue;
     }
-    seen.add(segment.href);
-    urls.push(segment.href);
+
+    if (normalized.length > 1024 || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    urls.push(normalized);
     if (urls.length >= 3) {
       break;
     }

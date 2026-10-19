@@ -187,12 +187,21 @@ export function useSendConversationMessage() {
       content,
       includeAgentName,
       quotedMessageId,
+      linkPreview,
     }: {
       id: string;
       content: string;
       includeAgentName: boolean;
       quotedMessageId?: string;
-    }) => attendanceService.sendMessage(id, content, includeAgentName, quotedMessageId),
+      linkPreview?: boolean;
+    }) =>
+      attendanceService.sendMessage(
+        id,
+        content,
+        includeAgentName,
+        quotedMessageId,
+        linkPreview,
+      ),
     onSuccess: (_result, variables) => {
       void queryClient.invalidateQueries({ queryKey: attendanceKeys.messages(variables.id) });
       void queryClient.invalidateQueries({ queryKey: attendanceKeys.all });

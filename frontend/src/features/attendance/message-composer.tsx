@@ -3,10 +3,13 @@ import { Mic, Paperclip, Send, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { ApiError } from '@/lib/api-client';
+import { useDebouncedValue } from '@/lib/use-debounced-value';
 import { useAttendanceStore } from '@/stores/attendance-store';
 import type { ConversationMessage } from '@/types/attendance';
 import { messageSnippet } from './attendance-utils';
 import { EmojiPicker } from './emoji-picker';
+import { ComposerLinkPreview } from './link-preview-card';
+import { extractPreviewUrls } from './linkify-text';
 import { MediaPreviewDialog } from './media-preview-dialog';
 import { useSendConversationMedia, useSendConversationMessage } from './queries';
 import { useAudioRecorder } from './use-audio-recorder';
@@ -42,6 +45,20 @@ export function MessageComposer({ conversationId, replyTo, onCancelReply }: Mess
   const setShowAgentName = useAttendanceStore((state) => state.setShowAgentName);
   const busy = sendMessage.isPending || sendMedia.isPending;
   const canSend = draft.trim().length > 0;
+
+  const candidatePreviewUrl = extractPreviewUrls(draft)[0] ?? null;
+  const debouncedPreviewUrl = useDebouncedValue(candidatePreviewUrl, 400);
+  const [removedPreviewUrl, setRemovedPreviewUrl] = useState<string | null>(null);
+  const previewUrl =
+    candidatePreviewUrl &&
+    candidatePreviewUrl === debouncedPreviewUrl &&
+    candidatePreviewUrl !== removedPreviewUrl
+      ? candidatePreviewUrl
+      : null;
+  const linkPreview =
+    candidatePreviewUrl === null
+      ? undefined
+      : removedPreviewUrl !== candidatePreviewUrl;
 
   useEffect(() => {
     const element = textareaRef.current;
@@ -103,8 +120,10 @@ export function MessageComposer({ conversationId, replyTo, onCancelReply }: Mess
         content: draft.trim(),
         includeAgentName: showAgentName,
         quotedMessageId: replyTo?.id,
+        linkPreview,
       });
       setDraft('');
+      setRemovedPreviewUrl(null);
       onCancelReply();
     } catch (caught) {
       setError(
@@ -155,6 +174,7 @@ export function MessageComposer({ conversationId, replyTo, onCancelReply }: Mess
         quotedMessageId: replyTo?.id,
       });
       setDraft('');
+      setRemovedPreviewUrl(null);
       setPendingFile(null);
       onCancelReply();
     } catch (caught) {
@@ -214,6 +234,14 @@ export function MessageComposer({ conversationId, replyTo, onCancelReply }: Mess
           </Button>
         </div>
       ) : null}
+      {previewUrl && !recorder.recording ? (
+        <div className="mb-1.5">
+          <ComposerLinkPreview
+            url={previewUrl}
+            onRemove={() => setRemovedPreviewUrl(previewUrl)}
+          />
+        </div>
+      ) : null}
       {!recorder.recording ? (
         <label className="mb-1.5 flex w-fit cursor-pointer select-none items-center gap-2 px-1 text-xs font-medium text-muted-foreground">
           <input
@@ -268,7 +296,13 @@ export function MessageComposer({ conversationId, replyTo, onCancelReply }: Mess
             ref={textareaRef}
             rows={1}
             value={draft}
-            onChange={(event) => setDraft(event.target.value)}
+            onChange={(event) => {
+              const next = event.target.value;
+              if (removedPreviewUrl && !next.includes(removedPreviewUrl)) {
+                setRemovedPreviewUrl(null);
+              }
+              setDraft(next);
+            }}
             onSelect={(event) => {
               selectionRef.current = {
                 start: event.currentTarget.selectionStart,

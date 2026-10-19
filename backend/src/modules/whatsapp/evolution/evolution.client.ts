@@ -133,11 +133,13 @@ export class EvolutionClient {
     number: string,
     text: string,
     quoted?: EvolutionQuotedMessage,
+    options?: { linkPreview?: boolean },
   ): Promise<EvolutionSendResult> {
     const raw = await this.request('POST', `/message/sendText/${encodeURIComponent(instanceName)}`, {
       number,
       text,
       ...(quoted ? { quoted } : {}),
+      ...(options?.linkPreview !== undefined ? { linkPreview: options.linkPreview } : {}),
     });
 
     return { externalMessageId: extractMessageId(raw), raw };

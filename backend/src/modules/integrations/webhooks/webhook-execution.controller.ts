@@ -43,6 +43,7 @@ export class WebhookExecutionController {
       webhookId: id,
       secret: extractWebhookSecret(authorization, secretHeader),
       message: dto.message,
+      imageUrl: dto.imageUrl ?? null,
       idempotencyKey,
       ip: request.ip,
     });

@@ -1,13 +1,14 @@
 # Integrações → Webhooks
 
-> Status: **Implementado**. Integrações externas que enviam mensagens de texto para grupos do
-> WhatsApp usando uma instância já configurada no CRM.
+> Status: **Implementado**. Integrações externas que enviam mensagens de texto ou imagem para
+> grupos do WhatsApp usando uma instância já configurada no CRM.
 
 ## Visão geral
 
 O módulo `webhooks` permite que um sistema externo faça `POST` em uma URL estável para enviar uma
-mensagem de texto a um grupo. A instância remetente e o grupo destinatário são definidos no cadastro
-da integração; o chamador externo envia apenas a mensagem.
+mensagem de texto e, opcionalmente, uma imagem a um grupo. A instância remetente e o grupo
+destinatário são definidos no cadastro da integração; o chamador externo envia apenas a mensagem e
+a URL pública da imagem.
 
 Este módulo é **independente** do webhook de entrada da Evolution API
 (`POST /api/webhooks/evolution`), que continua recebendo eventos do WhatsApp sem alterações.
@@ -58,15 +59,28 @@ Também é aceito `x-webhook-secret: <credencial>` em vez de `Authorization`.
 
 ```json
 {
-  "message": "Olá! Mensagem enviada pelo sistema externo."
+  "message": "Olá! Mensagem enviada pelo sistema externo.",
+  "imageUrl": "https://exemplo.com/card.png"
 }
 ```
 
 - `message` é obrigatório, com 1 a 4096 caracteres.
+- `imageUrl` é opcional e deve ser uma URL **HTTPS pública** de imagem, com no máximo 2048
+  caracteres.
+- Com `imageUrl` e mensagem de até **1024 caracteres**, o texto é enviado como legenda da imagem
+  (tipo `IMAGE`). Acima de 1024 caracteres, a imagem é enviada com a legenda curta “Atualização da
+  contribuição” e, em seguida, o texto completo é enviado como mensagem separada. Sem `imageUrl`,
+  continua sendo texto.
+- A imagem é baixada pelo CRM com timeout, limite de tamanho, validação de conteúdo e proteção
+  contra SSRF (hosts privados/loopback/link-local são recusados).
 - Campos extras são rejeitados (`whitelist`/`forbidNonWhitelisted`).
 - A instância e o grupo **nunca** vêm do corpo: são resolvidos pela integração cadastrada.
 - Se a integração estiver inativa, a instância desconectada/inativa, o módulo `webhooks` desabilitado
   ou a credencial inválida, a execução é recusada antes de qualquer envio.
+
+Quando `imageUrl` é usada, a imagem é processada/otimizada e armazenada pelo mesmo pipeline de mídia
+do Atendimento. A mensagem fica no histórico como `IMAGE` com o texto na legenda, sem depender do
+`link preview` da Evolution API.
 
 ### Resposta de sucesso
 
@@ -91,6 +105,10 @@ Quando o evento `messages.upsert` da Evolution chegar depois, a mensagem é reco
 | HTTP | Código                          | Situação                                            |
 | ---- | ------------------------------- | --------------------------------------------------- |
 | 400  | validação / `WEBHOOK_*`         | payload inválido, grupo armazenado inválido         |
+| 400  | `WEBHOOK_IMAGE_URL_INVALID`     | `imageUrl` não é HTTPS ou aponta para host privado  |
+| 400  | `WEBHOOK_IMAGE_INVALID`         | conteúdo baixado não é uma imagem válida            |
+| 413  | `WEBHOOK_IMAGE_TOO_LARGE`       | imagem acima do limite permitido                    |
+| 502  | `WEBHOOK_IMAGE_FETCH_FAILED`    | não foi possível baixar a imagem                    |
 | 401  | `WEBHOOK_UNAUTHORIZED`          | credencial ausente ou incorreta                     |
 | 403  | `MODULE_DISABLED`               | módulo `webhooks` desabilitado para a organização   |
 | 404  | `WEBHOOK_INTEGRATION_NOT_FOUND` | integração inexistente ou excluída                  |
@@ -100,7 +118,20 @@ Quando o evento `messages.upsert` da Evolution chegar depois, a mensagem é reco
 | 502  | `WEBHOOK_PROVIDER_ERROR`        | a Evolution API recusou/falhou o envio              |
 | 503  | `WEBHOOK_PROVIDER_UNAVAILABLE`  | Evolution API não configurada/indisponível          |
 
-### Exemplo cURL
+### Exemplo cURL com imagem
+
+```bash
+curl -X POST 'https://crm.exemplo.com/api/integrations/webhooks/0e6a0a1c-1111-2222-3333-444455556666/execute' \
+  -H 'Authorization: Bearer whk_SUA_CREDENCIAL' \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: pedido-123' \
+  -d '{
+    "message": "Olá! Segue o resumo atualizado.",
+    "imageUrl": "https://contribua.exemplo.com/card.png"
+  }'
+```
+
+### Exemplo cURL somente texto
 
 ```bash
 curl -X POST 'https://crm.exemplo.com/api/integrations/webhooks/0e6a0a1c-1111-2222-3333-444455556666/execute' \

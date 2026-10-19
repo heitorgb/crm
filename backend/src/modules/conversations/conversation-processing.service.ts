@@ -82,6 +82,26 @@ export interface RecordedOutboundMessage {
   conversationId: string;
 }
 
+export interface SendExternalImageInput {
+  tenantId: string;
+  whatsappInstanceId: string;
+  externalContactId: string;
+  contactId: string | null;
+  caption: string;
+  buffer: Buffer;
+  fileName: string;
+  metadata?: Record<string, unknown>;
+  isGroup?: boolean;
+  groupName?: string | null;
+  groupAvatarUrl?: string | null;
+}
+
+export interface SentExternalImage {
+  messageId: string;
+  conversationId: string;
+  externalMessageId: string | null;
+}
+
 @Injectable()
 export class ConversationProcessingService implements OnModuleInit {
   private readonly logger = new Logger(ConversationProcessingService.name);
@@ -293,6 +313,128 @@ export class ConversationProcessingService implements OnModuleInit {
     });
 
     return { messageId: message.id, conversationId: conversation.id };
+  }
+
+  /**
+   * Sends an image to an external destination (used by integration webhooks)
+   * and records the message as an IMAGE with caption only after the provider
+   * confirms the send. The image is optimized/stored with the same media
+   * pipeline used by the attendance flow.
+   */
+  async sendExternalImage(input: SendExternalImageInput): Promise<SentExternalImage> {
+    const conversation = await this.findOrCreateConversation(
+      input.tenantId,
+      input.whatsappInstanceId,
+      input.externalContactId,
+      input.contactId,
+      input.isGroup ?? input.externalContactId.endsWith('@g.us'),
+      input.groupName ?? null,
+      input.groupAvatarUrl ?? null,
+    );
+
+    const instance = await this.prisma.whatsAppInstance.findFirst({
+      where: { id: input.whatsappInstanceId, tenantId: input.tenantId },
+      select: { instanceName: true, status: true },
+    });
+    if (!instance) {
+      throw new WhatsAppInstanceNotConnectedError();
+    }
+    if (instance.status !== WhatsAppInstanceStatus.CONNECTED) {
+      throw new WhatsAppInstanceNotConnectedError();
+    }
+
+    const stored = await this.storeImage(
+      input.tenantId,
+      conversation.id,
+      input.buffer,
+      input.fileName,
+    );
+
+    let sent: Awaited<ReturnType<EvolutionClient['sendMedia']>>;
+    try {
+      sent = await this.evolution.sendMedia(instance.instanceName, {
+        number: input.externalContactId,
+        mediatype: 'image',
+        media: stored.base64,
+        fileName: stored.fileName,
+        mimetype: stored.mimeType,
+        ...(input.caption ? { caption: input.caption } : {}),
+      });
+    } catch (error) {
+      await Promise.allSettled([
+        this.storage.delete(stored.storageKey),
+        ...(stored.thumbnailKey ? [this.storage.delete(stored.thumbnailKey)] : []),
+      ]);
+      throw error;
+    }
+
+    const externalMessageId = sent.externalMessageId ?? null;
+    let messageId: string;
+    let conversationId = conversation.id;
+
+    try {
+      const message = await this.messages.persistOutbound({
+        tenantId: input.tenantId,
+        conversationId: conversation.id,
+        content: input.caption,
+        type: MessageType.IMAGE,
+        externalMessageId,
+        status: MessageStatus.SENT,
+        metadata: {
+          ...(input.metadata ?? {}),
+          ...(externalMessageId ? { externalMessageId } : {}),
+        },
+      });
+      messageId = message.id;
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        const existing = externalMessageId
+          ? await this.prisma.message.findFirst({
+              where: { tenantId: input.tenantId, externalMessageId },
+              select: { id: true, conversationId: true },
+            })
+          : null;
+        if (!existing) {
+          throw error;
+        }
+        messageId = existing.id;
+        conversationId = existing.conversationId;
+      } else {
+        throw error;
+      }
+    }
+
+    const attachmentCount = await this.prisma.messageAttachment.count({ where: { messageId } });
+    if (attachmentCount === 0) {
+      await this.messages.createAttachment({
+        tenantId: input.tenantId,
+        messageId,
+        storageKey: stored.storageKey,
+        thumbnailKey: stored.thumbnailKey,
+        fileName: stored.fileName,
+        mimeType: stored.mimeType,
+        size: stored.size,
+        width: stored.width,
+        height: stored.height,
+      });
+    }
+
+    await this.touchConversation(conversationId);
+    this.realtime.emitToConversation(input.tenantId, conversationId, 'message.created', {
+      conversationId,
+      messageId,
+      direction: 'OUTBOUND',
+    });
+    this.realtime.emitToTenant(input.tenantId, 'message.created', {
+      conversationId,
+      messageId,
+      direction: 'OUTBOUND',
+    });
+    this.realtime.emitToTenant(input.tenantId, 'conversation.updated', {
+      conversationId,
+    });
+
+    return { messageId, conversationId, externalMessageId };
   }
 
   /** Edits a message already delivered to WhatsApp, in place. */

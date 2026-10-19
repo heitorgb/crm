@@ -53,12 +53,19 @@ export function WebhookDetailDialog({
   const executions = useWebhookExecutions(webhook?.id, { page, perPage: PAGE_SIZE });
   const [copied, setCopied] = useState<string | null>(null);
 
-  const payload = JSON.stringify({ message: 'Olá! Mensagem enviada pelo sistema externo.' }, null, 2);
+  const payload = JSON.stringify(
+    {
+      message: 'Olá! Segue o resumo atualizado.',
+      imageUrl: 'https://exemplo.com/card.png',
+    },
+    null,
+    2,
+  );
   const curl = [
     `curl -X POST '${executeUrl}' \\`,
     `  -H 'Authorization: Bearer <credencial>' \\`,
     `  -H 'Content-Type: application/json' \\`,
-    `  -d '{"message":"Olá! Mensagem enviada pelo sistema externo."}'`,
+    `  -d '{"message":"Olá! Segue o resumo atualizado.","imageUrl":"https://exemplo.com/card.png"}'`,
   ].join('\n');
 
   const copy = async (label: string, value: string): Promise<void> => {
@@ -100,7 +107,8 @@ export function WebhookDetailDialog({
             <p className="text-xs text-muted-foreground">
               Autentique com <code>Authorization: Bearer &lt;credencial&gt;</code> ou{' '}
               <code>x-webhook-secret</code>. A instância e o grupo são sempre resolvidos pela
-              integração; o corpo aceita apenas <code>message</code>.
+              integração; o corpo aceita <code>message</code> e, opcionalmente, <code>imageUrl</code>
+              (HTTPS). Com imagem, a legenda usa até 1024 caracteres; textos maiores são enviados em seguida.
             </p>
           </section>
 

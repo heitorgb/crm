@@ -1,5 +1,6 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiRequestBlob } from '@/lib/api-client';
+import type { BulkMediaBatch } from '@/types/bulk-media';
 import {
   attachmentPath,
   attendanceService,
@@ -18,6 +19,7 @@ export const attendanceKeys = {
   participantAvatar: (conversationId: string, jid: string) =>
     ['attendance', 'participant-avatar', conversationId, jid] as const,
   linkPreview: (url: string) => ['attendance', 'link-preview', url] as const,
+  photoBatch: (id: string) => ['attendance', 'photo-batch', id] as const,
   attachment: (
     conversationId: string,
     messageId: string,
@@ -269,5 +271,43 @@ export function useAttachmentBlob(params: {
     enabled: params.enabled ?? true,
     staleTime: Infinity,
     gcTime: Infinity,
+  });
+}
+
+export function useSendPhotoBatch() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: {
+      file: File;
+      caption?: string;
+      conversationIds: string[];
+      idempotencyKey: string;
+    }) => attendanceService.sendPhotoBatch(input),
+    onSuccess: (batch) => {
+      queryClient.setQueryData(attendanceKeys.photoBatch(batch.id), batch);
+      void queryClient.invalidateQueries({ queryKey: attendanceKeys.all });
+    },
+  });
+}
+
+export function usePhotoBatch(id: string | null) {
+  return useQuery({
+    queryKey: attendanceKeys.photoBatch(id ?? ''),
+    queryFn: () => attendanceService.getPhotoBatch(id as string),
+    enabled: Boolean(id),
+    refetchInterval: (query) => {
+      const status = (query.state.data as BulkMediaBatch | undefined)?.status;
+      return status === 'PENDING' || status === 'PROCESSING' ? 1500 : false;
+    },
+  });
+}
+
+export function useRetryPhotoBatch() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => attendanceService.retryPhotoBatch(id),
+    onSuccess: (batch) => {
+      queryClient.setQueryData(attendanceKeys.photoBatch(batch.id), batch);
+    },
   });
 }

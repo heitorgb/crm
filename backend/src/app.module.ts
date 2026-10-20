@@ -28,6 +28,7 @@ import { ContactsModule } from './modules/contacts/contacts.module.js';
 import { TagsModule } from './modules/tags/tags.module.js';
 import { WhatsAppModule } from './modules/whatsapp/whatsapp.module.js';
 import { ConversationsModule } from './modules/conversations/conversations.module.js';
+import { BulkMediaModule } from './modules/bulk-media/bulk-media.module.js';
 import { LinkPreviewsModule } from './modules/link-previews/link-previews.module.js';
 import { WebhooksModule } from './modules/webhooks/webhooks.module.js';
 import { BillingModule } from './modules/billing/billing.module.js';
@@ -69,6 +70,7 @@ import { IntegrationsWebhooksModule } from './modules/integrations/webhooks/inte
     TagsModule,
     WhatsAppModule,
     ConversationsModule,
+    BulkMediaModule,
     LinkPreviewsModule,
     WebhooksModule,
     BillingModule,

@@ -19,4 +19,8 @@ export const JOB_NAMES = {
   CONTACTS_SYNC: 'whatsapp.contacts.sync',
   BILLING_SCAN: 'billing.scan',
   BILLING_REMINDER_SEND: 'billing.reminder.send',
+  BULK_MEDIA_SCAN: 'bulk-media.scan',
+  BULK_MEDIA_SEND: 'bulk-media.send',
+  SCHEDULED_MESSAGE_SCAN: 'scheduled-message.scan',
+  SCHEDULED_MESSAGE_SEND: 'scheduled-message.send',
 } as const;

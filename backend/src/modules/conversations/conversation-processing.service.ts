@@ -8,14 +8,8 @@ import {
   Prisma,
   WhatsAppInstanceStatus,
 } from '@prisma/client';
-import {
-  hasHttpUrl,
-  type LinkPreviewMetadata,
-} from '../../common/link-preview/link-preview.js';
-import {
-  pickDestination,
-  type DestinationInput,
-} from '../../common/whatsapp/destination.js';
+import { hasHttpUrl, type LinkPreviewMetadata } from '../../common/link-preview/link-preview.js';
+import { pickDestination, type DestinationInput } from '../../common/whatsapp/destination.js';
 import type { TenantContext } from '../../common/tenant-context/tenant-context.types.js';
 import { TenantContextService } from '../../common/tenant-context/tenant-context.service.js';
 import type { Env } from '../../config/env.validation.js';
@@ -37,7 +31,11 @@ import {
   type EvolutionQuotedMessage,
   type EvolutionSendResult,
 } from '../whatsapp/evolution/evolution.client.js';
-import { MessageNotEditableError, WhatsAppInstanceNotConnectedError } from './conversations.errors.js';
+import {
+  ConversationNotFoundError,
+  MessageNotEditableError,
+  WhatsAppInstanceNotConnectedError,
+} from './conversations.errors.js';
 import { MessagesService, type MessageView, type QuotedMessageInfo } from './messages.service.js';
 
 const SYSTEM_USER_ID = '00000000-0000-4000-8000-000000000001';
@@ -110,6 +108,36 @@ export interface SentExternalImage {
   messageId: string;
   conversationId: string;
   externalMessageId: string | null;
+}
+
+export interface SendStoredMediaInput {
+  tenantId: string;
+  conversationId: string;
+  storageKey: string;
+  thumbnailKey?: string | null;
+  fileName: string;
+  mimeType: string;
+  size: number;
+  width?: number | null;
+  height?: number | null;
+  caption?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+export interface SentStoredMedia {
+  messageId: string;
+  conversationId: string;
+  externalMessageId: string | null;
+  status: MessageStatus;
+  errorCode?: string;
+}
+
+export interface SentStoredText {
+  messageId: string;
+  conversationId: string;
+  externalMessageId: string | null;
+  status: MessageStatus;
+  errorCode?: string;
 }
 
 @Injectable()
@@ -200,7 +228,7 @@ export class ConversationProcessingService implements OnModuleInit {
 
     const isImage = await this.media.isImage(input.buffer);
     const type = isImage ? MessageType.IMAGE : messageTypeForMime(input.mimeType);
-    const caption = type === MessageType.AUDIO ? null : (input.caption?.trim() || null);
+    const caption = type === MessageType.AUDIO ? null : input.caption?.trim() || null;
 
     const stored = isImage
       ? await this.storeImage(tenantId, 'outbound', input.buffer, input.fileName)
@@ -450,6 +478,225 @@ export class ConversationProcessingService implements OnModuleInit {
     return { messageId, conversationId, externalMessageId };
   }
 
+  /**
+   * Sends a media file that is already optimized/stored (bulk camera batches and
+   * scheduled messages). The message and attachment are persisted before the
+   * provider call, so a failure remains visible in the conversation as FAILED.
+   * The result is returned per recipient instead of thrown, allowing the caller
+   * to log failures and continue with the next recipient.
+   */
+  async sendStoredMediaToConversation(input: SendStoredMediaInput): Promise<SentStoredMedia> {
+    const conversation = await this.prisma.conversation.findFirst({
+      where: { id: input.conversationId, tenantId: input.tenantId, deletedAt: null },
+      include: { instance: true, contact: { select: { phone: true } } },
+    });
+    if (!conversation) {
+      throw new ConversationNotFoundError();
+    }
+    if (conversation.instance.status !== WhatsAppInstanceStatus.CONNECTED) {
+      throw new WhatsAppInstanceNotConnectedError();
+    }
+
+    const type = messageTypeForMime(input.mimeType);
+    const caption = input.caption?.trim() || null;
+    const outbound = await this.messages.persistOutbound({
+      tenantId: input.tenantId,
+      conversationId: conversation.id,
+      content: caption,
+      type,
+      metadata: input.metadata,
+    });
+
+    await this.messages.createAttachment({
+      tenantId: input.tenantId,
+      messageId: outbound.id,
+      storageKey: input.storageKey,
+      thumbnailKey: input.thumbnailKey ?? null,
+      fileName: input.fileName,
+      mimeType: input.mimeType,
+      size: input.size,
+      width: input.width ?? null,
+      height: input.height ?? null,
+    });
+
+    const destination = pickDestination(
+      destinationInput(conversation),
+      conversation.preferredAddress,
+    );
+    const instanceName = conversation.instance.instanceName;
+    const endpoint = 'POST /message/sendMedia';
+
+    try {
+      if (!this.evolution.configured || !destination) {
+        throw new EvolutionUnavailableError('Evolution API is not configured for this instance');
+      }
+
+      const buffer = await this.storage.get(input.storageKey);
+      const sent = await this.evolution.sendMedia(instanceName, {
+        number: destination.address,
+        mediatype: type === MessageType.IMAGE ? 'image' : 'document',
+        media: buffer.toString('base64'),
+        fileName: input.fileName,
+        mimetype: input.mimeType,
+        ...(caption ? { caption } : {}),
+      });
+
+      await this.messages.markOutboundStatus(
+        outbound.id,
+        MessageStatus.SENT,
+        sent.externalMessageId,
+        {
+          destinationType: destination.type,
+        },
+      );
+      this.logger.debug(
+        `whatsapp.send.succeeded ${JSON.stringify(
+          this.sendLogContext({
+            phase: 'initial',
+            messageId: outbound.id,
+            tenantId: input.tenantId,
+            instanceName,
+            endpoint,
+            durationMs: 0,
+            externalMessageId: sent.externalMessageId ?? null,
+          }),
+        )}`,
+      );
+
+      await this.touchConversation(conversation.id);
+      this.emitMessageEvents(input.tenantId, conversation.id, outbound.id);
+
+      return {
+        messageId: outbound.id,
+        conversationId: conversation.id,
+        externalMessageId: sent.externalMessageId ?? null,
+        status: MessageStatus.SENT,
+      };
+    } catch (error) {
+      const failure = classifySendFailure(error);
+      await this.messages.markOutboundFailed(outbound.id, failure.code);
+
+      await this.touchConversation(conversation.id);
+      this.emitMessageEvents(input.tenantId, conversation.id, outbound.id);
+
+      return {
+        messageId: outbound.id,
+        conversationId: conversation.id,
+        externalMessageId: null,
+        status: MessageStatus.FAILED,
+        errorCode: failure.code,
+      };
+    }
+  }
+
+  async sendStoredTextToConversation(input: {
+    tenantId: string;
+    conversationId: string;
+    text: string;
+    metadata?: Record<string, unknown>;
+  }): Promise<SentStoredText> {
+    const conversation = await this.prisma.conversation.findFirst({
+      where: { id: input.conversationId, tenantId: input.tenantId, deletedAt: null },
+      include: { instance: true, contact: { select: { phone: true } } },
+    });
+    if (!conversation) {
+      throw new ConversationNotFoundError();
+    }
+    if (conversation.instance.status !== WhatsAppInstanceStatus.CONNECTED) {
+      throw new WhatsAppInstanceNotConnectedError();
+    }
+
+    const outbound = await this.messages.persistOutbound({
+      tenantId: input.tenantId,
+      conversationId: conversation.id,
+      content: input.text,
+      type: MessageType.TEXT,
+      metadata: input.metadata,
+    });
+
+    const destination = pickDestination(
+      destinationInput(conversation),
+      conversation.preferredAddress,
+    );
+    const instanceName = conversation.instance.instanceName;
+    const endpoint = 'POST /message/sendText';
+    const startedAt = Date.now();
+
+    try {
+      if (!this.evolution.configured || !destination) {
+        throw new EvolutionUnavailableError('Evolution API is not configured for this instance');
+      }
+
+      const sent = await this.evolution.sendText(
+        instanceName,
+        destination.address,
+        input.text,
+        undefined,
+        hasHttpUrl(input.text) ? { linkPreview: true } : undefined,
+      );
+
+      await this.messages.markOutboundStatus(
+        outbound.id,
+        MessageStatus.SENT,
+        sent.externalMessageId,
+        {
+          destinationType: destination.type,
+        },
+      );
+      this.logger.debug(
+        `whatsapp.send.succeeded ${JSON.stringify(
+          this.sendLogContext({
+            phase: 'initial',
+            messageId: outbound.id,
+            tenantId: input.tenantId,
+            instanceName,
+            endpoint,
+            durationMs: Date.now() - startedAt,
+            externalMessageId: sent.externalMessageId ?? null,
+          }),
+        )}`,
+      );
+
+      await this.touchConversation(conversation.id);
+      this.emitMessageEvents(input.tenantId, conversation.id, outbound.id);
+
+      return {
+        messageId: outbound.id,
+        conversationId: conversation.id,
+        externalMessageId: sent.externalMessageId ?? null,
+        status: MessageStatus.SENT,
+      };
+    } catch (error) {
+      const failure = classifySendFailure(error);
+      await this.messages.markOutboundFailed(outbound.id, failure.code);
+
+      await this.touchConversation(conversation.id);
+      this.emitMessageEvents(input.tenantId, conversation.id, outbound.id);
+
+      return {
+        messageId: outbound.id,
+        conversationId: conversation.id,
+        externalMessageId: null,
+        status: MessageStatus.FAILED,
+        errorCode: failure.code,
+      };
+    }
+  }
+
+  private emitMessageEvents(tenantId: string, conversationId: string, messageId: string): void {
+    this.realtime.emitToConversation(tenantId, conversationId, 'message.created', {
+      conversationId,
+      messageId,
+      direction: 'OUTBOUND',
+    });
+    this.realtime.emitToTenant(tenantId, 'message.created', {
+      conversationId,
+      messageId,
+      direction: 'OUTBOUND',
+    });
+    this.realtime.emitToTenant(tenantId, 'conversation.updated', { conversationId });
+  }
+
   /** Edits a message already delivered to WhatsApp, in place. */
   async editText(
     tenantId: string,
@@ -458,7 +705,10 @@ export class ConversationProcessingService implements OnModuleInit {
     content: string,
   ): Promise<void> {
     const remoteJid = conversation.externalContactId;
-    const destination = pickDestination(destinationInput(conversation), conversation.preferredAddress);
+    const destination = pickDestination(
+      destinationInput(conversation),
+      conversation.preferredAddress,
+    );
     if (conversation.instance.status !== WhatsAppInstanceStatus.CONNECTED) {
       throw new WhatsAppInstanceNotConnectedError();
     }
@@ -734,9 +984,14 @@ export class ConversationProcessingService implements OnModuleInit {
           );
         }
 
-        await this.messages.markOutboundStatus(messageId, MessageStatus.SENT, sent.externalMessageId, {
-          destinationType: destination.type,
-        });
+        await this.messages.markOutboundStatus(
+          messageId,
+          MessageStatus.SENT,
+          sent.externalMessageId,
+          {
+            destinationType: destination.type,
+          },
+        );
         this.logger.debug(
           `whatsapp.send.succeeded ${JSON.stringify(
             this.sendLogContext({
@@ -843,9 +1098,14 @@ export class ConversationProcessingService implements OnModuleInit {
                 linkPreview,
               );
 
-      await this.messages.markOutboundStatus(messageId, MessageStatus.SENT, sent.externalMessageId, {
-        destinationType: destination.type,
-      });
+      await this.messages.markOutboundStatus(
+        messageId,
+        MessageStatus.SENT,
+        sent.externalMessageId,
+        {
+          destinationType: destination.type,
+        },
+      );
       this.logger.debug(
         `whatsapp.send.succeeded ${JSON.stringify(
           this.sendLogContext({
@@ -1264,10 +1524,7 @@ function isRetryableOutbound(message: {
 }
 
 /** A fallback resend targets a message the provider accepted but failed. */
-function isFallbackEligible(message: {
-  direction: unknown;
-  status: MessageStatus;
-}): boolean {
+function isFallbackEligible(message: { direction: unknown; status: MessageStatus }): boolean {
   return message.direction === 'OUTBOUND' && message.status === MessageStatus.FAILED;
 }
 

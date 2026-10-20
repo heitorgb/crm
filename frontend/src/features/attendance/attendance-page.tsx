@@ -13,6 +13,7 @@ import { useWhatsAppInstances } from '@/features/whatsapp/queries';
 import { ChatPanel } from './chat-panel';
 import { ContactPanel } from './contact-panel';
 import { ConversationList } from './conversation-list';
+import { PhotoSendFlow } from './photo-send-flow';
 import { buildTimeline, conversationLabel } from './attendance-utils';
 import { isMediaPending } from './media-message-utils';
 import {
@@ -59,6 +60,8 @@ export function AttendancePage() {
   const setStatus = useAttendanceViewStore((state) => state.setStatus);
   const setInstanceId = useAttendanceViewStore((state) => state.setInstanceId);
   const setArchivedView = useAttendanceViewStore((state) => state.setArchivedView);
+  const photoComposerOpen = useAttendanceViewStore((state) => state.photoComposerOpen);
+  const closePhotoComposer = useAttendanceViewStore((state) => state.closePhotoComposer);
   const [panelOpen, setPanelOpen] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
   const [historyRequestedId, setHistoryRequestedId] = useState<string | null>(null);
@@ -358,6 +361,15 @@ export function AttendancePage() {
           />
         </SheetContent>
       </Sheet>
+
+      <PhotoSendFlow
+        open={photoComposerOpen}
+        onOpenChange={(next) => {
+          if (!next) {
+            closePhotoComposer();
+          }
+        }}
+      />
 
       <ConfirmDialog
         open={Boolean(pendingDelete)}

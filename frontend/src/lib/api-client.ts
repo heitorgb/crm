@@ -95,8 +95,12 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   return payload as T;
 }
 
-export async function apiUpload<T>(path: string, formData: FormData): Promise<T> {
-  const response = await apiFetch(path, { method: 'POST', body: formData }, true);
+export async function apiUpload<T>(
+  path: string,
+  formData: FormData,
+  method: 'POST' | 'PATCH' = 'POST',
+): Promise<T> {
+  const response = await apiFetch(path, { method, body: formData }, true);
 
   const payload = (await response.json().catch(() => null)) as
     | { code?: string; message?: string }

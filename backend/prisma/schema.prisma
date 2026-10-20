@@ -675,9 +675,9 @@ model ScheduledMessageRecipient {
   tenant           Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   scheduledMessage ScheduledMessage @relation(fields: [scheduledMessageId], references: [id], onDelete: Cascade)
 
-  @@unique([scheduledMessageId, scheduledFor, recipientKey])
-  @@index([tenantId, status, scheduledFor])
-  @@index([scheduledMessageId, scheduledFor])
+  @@unique([scheduledMessageId, scheduledFor, recipientKey], map: "sched_msg_recipient_run_key")
+  @@index([tenantId, status, scheduledFor], map: "sched_recipient_tenant_status_run_idx")
+  @@index([scheduledMessageId, scheduledFor], map: "sched_msg_recipient_run_idx")
   @@map("scheduled_message_recipients")
 }
 

@@ -71,13 +71,13 @@ CREATE INDEX "scheduled_messages_tenant_id_status_next_run_at_idx" ON "scheduled
 CREATE INDEX "scheduled_messages_tenant_id_created_at_idx" ON "scheduled_messages"("tenant_id", "created_at");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "scheduled_message_recipients_scheduled_message_id_scheduled_for_recipient_key_key" ON "scheduled_message_recipients"("scheduled_message_id", "scheduled_for", "recipient_key");
+CREATE UNIQUE INDEX "sched_msg_recipient_run_key" ON "scheduled_message_recipients"("scheduled_message_id", "scheduled_for", "recipient_key");
 
 -- CreateIndex
-CREATE INDEX "scheduled_message_recipients_tenant_id_status_scheduled_for_idx" ON "scheduled_message_recipients"("tenant_id", "status", "scheduled_for");
+CREATE INDEX "sched_recipient_tenant_status_run_idx" ON "scheduled_message_recipients"("tenant_id", "status", "scheduled_for");
 
 -- CreateIndex
-CREATE INDEX "scheduled_message_recipients_scheduled_message_id_scheduled_for_idx" ON "scheduled_message_recipients"("scheduled_message_id", "scheduled_for");
+CREATE INDEX "sched_msg_recipient_run_idx" ON "scheduled_message_recipients"("scheduled_message_id", "scheduled_for");
 
 -- AddForeignKey
 ALTER TABLE "scheduled_messages" ADD CONSTRAINT "scheduled_messages_tenant_id_fkey" FOREIGN KEY ("tenant_id") REFERENCES "tenants"("id") ON DELETE CASCADE ON UPDATE CASCADE;

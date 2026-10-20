@@ -3,6 +3,7 @@ import type { ConfigService } from '@nestjs/config';
 import type { Env } from '../../../src/config/env.validation.js';
 import type { PrismaService } from '../../../src/infrastructure/prisma/prisma.service.js';
 import { LinkPreviewsService } from '../../../src/modules/link-previews/link-previews.service.js';
+import type { PlatformSettingsService } from '../../../src/modules/platform-settings/platform-settings.service.js';
 
 const mocks = vi.hoisted(() => ({
   fetchHtmlDocument: vi.fn(),
@@ -28,7 +29,15 @@ const CONFIG: Record<string, number> = {
   LINK_PREVIEW_FAILURE_TTL_SECONDS: 21600,
 };
 
-function createService(): { service: LinkPreviewsService; prisma: PrismaMock } {
+interface PlatformSettingsMock {
+  isLinkPreviewsEnabled: ReturnType<typeof vi.fn>;
+}
+
+function createService(): {
+  service: LinkPreviewsService;
+  prisma: PrismaMock;
+  platformSettings: PlatformSettingsMock;
+} {
   const prisma: PrismaMock = {
     linkPreview: {
       findMany: vi.fn().mockResolvedValue([]),
@@ -41,10 +50,19 @@ function createService(): { service: LinkPreviewsService; prisma: PrismaMock } {
   const config = {
     get: (key: string) => CONFIG[key],
   } as unknown as ConfigService<Env, true>;
+  const platformSettings: PlatformSettingsMock = {
+    isLinkPreviewsEnabled: vi.fn().mockResolvedValue(true),
+  };
 
   return {
-    service: new LinkPreviewsService(prisma as unknown as PrismaService, tenantContext, config),
+    service: new LinkPreviewsService(
+      prisma as unknown as PrismaService,
+      tenantContext,
+      config,
+      platformSettings as unknown as PlatformSettingsService,
+    ),
     prisma,
+    platformSettings,
   };
 }
 
@@ -63,6 +81,17 @@ beforeEach(() => {
 });
 
 describe('LinkPreviewsService', () => {
+  it('does not fetch or cache anything when previews are disabled globally', async () => {
+    const { service, prisma, platformSettings } = createService();
+    platformSettings.isLinkPreviewsEnabled.mockResolvedValue(false);
+
+    const previews = await service.resolveMany('tenant-1', ['https://exemplo.com/artigo']);
+
+    expect(previews).toEqual([]);
+    expect(prisma.linkPreview.findMany).not.toHaveBeenCalled();
+    expect(mocks.fetchHtmlDocument).not.toHaveBeenCalled();
+  });
+
   it('fetches and caches complete metadata', async () => {
     const { service, prisma } = createService();
     mocks.fetchHtmlDocument.mockResolvedValue({

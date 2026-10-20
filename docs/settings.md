@@ -83,6 +83,19 @@ criação, edição, exclusão, conexão/reconexão com **QR code** (`connect`, 
 Atendimento para Configurações. Fluxo completo em [`attendance.md`](./attendance.md). Nenhuma
 credencial é exibida após ser salva.
 
+## Configurações da plataforma (admin)
+
+Disponível apenas para administradores da plataforma (`isPlatformAdmin`), em
+**Administração → Configurações da plataforma** (`/admin/settings`):
+
+- **Gerar preview de links nas mensagens** — configuração global, sem sobrescrita por organização.
+  Padrão **desativado**. O backend persiste o valor no banco e o aplica a todos os envios de texto
+  (manual, lembretes, mensagens agendadas e webhooks). Desativado, o envio usa `linkPreview: false`
+  na Evolution e não resolve metadados de preview; ativado, o preview volta a ser permitido conforme
+  o suporte da versão instalada da Evolution.
+- Endpoints: `GET/PATCH /api/admin/settings` com `{ "linkPreviewsEnabled": boolean }`, protegidos por
+  `PlatformAdminGuard`. A alteração não exige reiniciar o CRM.
+
 ## Segurança e isolamento
 
 - Todas as rotas exigem membership ativa; o tenant vem de `RequireContext()` — nunca do cliente.

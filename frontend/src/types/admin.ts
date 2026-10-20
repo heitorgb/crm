@@ -51,3 +51,7 @@ export interface UpdateMemberInput {
   role?: Role;
   active?: boolean;
 }
+
+export interface PlatformSettings {
+  linkPreviewsEnabled: boolean;
+}

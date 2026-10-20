@@ -19,6 +19,11 @@ const AdminTenantsPage = lazy(() =>
     default: module.AdminTenantsPage,
   })),
 );
+const AdminSettingsPage = lazy(() =>
+  import('@/features/admin/admin-settings-page').then((module) => ({
+    default: module.AdminSettingsPage,
+  })),
+);
 const AdminTenantDetailPage = lazy(() =>
   import('@/features/admin/tenant-detail-page').then((module) => ({
     default: module.AdminTenantDetailPage,
@@ -96,6 +101,14 @@ export function AppRoutes() {
             element={
               <PlatformAdminRoute>
                 <AdminTenantsPage />
+              </PlatformAdminRoute>
+            }
+          />
+          <Route
+            path="/admin/settings"
+            element={
+              <PlatformAdminRoute>
+                <AdminSettingsPage />
               </PlatformAdminRoute>
             }
           />

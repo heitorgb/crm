@@ -57,6 +57,8 @@ a fonte de verdade é sempre o backend.
 | PATCH  | `/api/admin/tenants/:id/members/:membershipId`             | Altera papel e/ou ativo.                    |
 | DELETE | `/api/admin/tenants/:id/members/:membershipId`             | Remove o vínculo (não apaga o `User`).      |
 | GET    | `/api/admin/users`                                         | Lista usuários globais (busca/paginação).   |
+| GET    | `/api/admin/settings`                                      | Lê as configurações globais da plataforma.  |
+| PATCH  | `/api/admin/settings`                                      | Atualiza as configurações globais.          |
 
 ### Criar organização (`POST /api/admin/tenants`)
 
@@ -113,6 +115,9 @@ a fonte de verdade é sempre o backend.
 
 - `/admin/tenants` — lista de organizações + busca + "Nova organização" (dialog com dados do owner).
 - `/admin/tenants/:id` — membros: adicionar, alterar papel, ativar/desativar e remover.
+- `/admin/settings` — **Configurações da plataforma**: opção global **Gerar preview de links nas
+  mensagens** (desativada por padrão). A alteração vale para todas as organizações e é aplicada
+  imediatamente pelo backend.
 - Aba **Limites** — limite de instâncias WhatsApp, uso atual, vagas disponíveis e aviso quando a
   organização está acima do limite configurado.
 - Item de navegação **Administração → Organizações** visível apenas quando

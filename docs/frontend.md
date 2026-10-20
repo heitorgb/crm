@@ -135,13 +135,15 @@ frontend/
   (conexão por QR code e webhook) fica em **Configurações → WhatsApp** (`/configuracoes?tab=whatsapp`);
   a rota antiga `/atendimento/whatsapp` redireciona para a nova localização.
 - Administração da plataforma (visível só para `isPlatformAdmin`): `/admin/tenants` (criar/listar
-  organizações) e `/admin/tenants/:id` (gerenciar membros, papéis e ativos). Ver
+  organizações), `/admin/tenants/:id` (gerenciar membros, papéis e ativos) e `/admin/settings`
+  (configurações globais, incluindo o preview de links nas mensagens). Ver
   [`tenant-provisioning.md`](./tenant-provisioning.md).
 - Perfil e configurações: `/perfil` (dados pessoais + senha) e `/configuracoes` (abas Organização,
   Equipe, Aparência, Atendimento, Notificações e WhatsApp). A aba ativa é sincronizada com o
   parâmetro `?tab=` da URL. Ver [`settings.md`](./settings.md).
-- Sidebar: Atendimento (Conversas), Contatos, Financeiro (Cobranças), Administração (Organizações,
-  visível só para `isPlatformAdmin`) e Configurações. As entradas ligadas a módulos são filtradas
+- Sidebar: Atendimento (Conversas), Contatos, Financeiro (Cobranças), Administração (Organizações
+  e Configurações da plataforma, visíveis só para `isPlatformAdmin`) e Configurações. As entradas
+  ligadas a módulos são filtradas
   pela disponibilidade real retornada por `GET /api/modules/enabled` (`visibleNavigation`); rotas de
   módulos desativados redirecionam para `/indisponivel` via `ModuleRoute`. Ver
   [`modules.md`](./modules.md).

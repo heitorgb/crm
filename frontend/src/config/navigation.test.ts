@@ -11,7 +11,7 @@ function titles(entries: NavEntry[]): string[] {
 const allModules = [
   MODULE_KEYS.ATTENDANCE,
   MODULE_KEYS.CONTACTS,
-  MODULE_KEYS.LEADS,
+  MODULE_KEYS.CRM,
   MODULE_KEYS.BILLING_CHARGES,
   MODULE_KEYS.BILLING_COLLECTION,
   MODULE_KEYS.WEBHOOKS,
@@ -33,6 +33,9 @@ describe('visibleNavigation', () => {
 
     expect(titles(entries)).not.toContain('Cobranças');
     expect(titles(entries)).not.toContain('Financeiro');
+    expect(titles(entries)).not.toContain('CRM');
+    expect(titles(entries)).not.toContain('Oportunidades');
+    expect(titles(entries)).not.toContain('Etiquetas');
   });
 
   it('keeps administrative navigation for platform admins regardless of modules', () => {

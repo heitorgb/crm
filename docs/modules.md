@@ -51,7 +51,7 @@ Cada habilitação/desabilitação grava uma linha em `admin_audit_logs`
 | -------------------- | ------------------ | ---------- |
 | `attendance`         | Atendimento        | CRM        |
 | `contacts`           | Contatos           | CRM        |
-| `leads`              | Painel de Leads    | CRM        |
+| `crm`                | CRM                | CRM        |
 | `billing.charges`    | Cobranças          | Financeiro |
 | `billing.collection` | Régua de Cobrança  | Financeiro |
 | `webhooks`           | Webhooks           | Integrações |
@@ -85,6 +85,7 @@ Módulo NestJS `src/modules/modules/`:
 ### Proteção de operações (não apenas da UI)
 
 - `conversations` → `attendance`; `contacts` → `contacts`.
+- `leads` (oportunidades/pipelines) e `tags` (etiquetas) → `crm`.
 - `billing` (cobranças/recorrências) → `billing.charges`.
 - `billing` (settings, lembretes, envio manual) → `billing.collection`.
 - `integrations/webhooks` (cadastro, consulta, histórico e execução externa) → `webhooks`.

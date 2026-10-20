@@ -132,12 +132,19 @@ export function AppRoutes() {
           <Route
             path="/leads"
             element={
-              <ModuleRoute moduleKey={MODULE_KEYS.LEADS}>
+              <ModuleRoute moduleKey={MODULE_KEYS.CRM}>
                 <LeadBoardPage />
               </ModuleRoute>
             }
           />
-          <Route path="/crm/etiquetas" element={<TagsPage />} />
+          <Route
+            path="/crm/etiquetas"
+            element={
+              <ModuleRoute moduleKey={MODULE_KEYS.CRM}>
+                <TagsPage />
+              </ModuleRoute>
+            }
+          />
           <Route path="/clientes/tags" element={<Navigate to="/crm/etiquetas" replace />} />
 
           <Route

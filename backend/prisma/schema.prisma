@@ -776,3 +776,12 @@ model AdminAuditLog {
   @@index([actorUserId, createdAt])
   @@map("admin_audit_logs")
 }
+
+model PlatformSettings {
+  id                  String   @id
+  linkPreviewsEnabled Boolean  @default(false) @map("link_previews_enabled")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  @@map("platform_settings")
+}

@@ -68,6 +68,15 @@ preservando o comportamento das organizações existentes. `AdminAuditLog` regis
 administrativas (`actorUserId`, `tenantId`, `action`, `entity`, `entityId`, `metadata`). Migration
 `20261017090000_modules`, com seed idempotente do catálogo. Ver [`modules.md`](./modules.md).
 
+### Configurações globais da plataforma
+
+`PlatformSettings` — linha singleton (`id = 'global'`) sem `tenantId`, com
+`linkPreviewsEnabled` (`boolean`, default `false`) e timestamps. Controla a geração de preview de
+links em todos os envios de texto do WhatsApp. A migration
+`20261020150000_platform_settings` cria a tabela e insere a linha com a opção desativada; a leitura
+é feita no backend a cada envio, sem cache. Alterações são registradas em `AdminAuditLog`
+(`action = PLATFORM_SETTINGS_UPDATED`).
+
 ### LGPD e compliance (Prompt 09)
 
 `DataSubjectRequest` (trilha de direitos do titular e revisões do art. 20) e campos de conformidade

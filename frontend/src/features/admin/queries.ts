@@ -10,8 +10,27 @@ export const adminKeys = {
   all: ['admin'] as const,
   tenants: (params: ListAdminParams) => ['admin', 'tenants', params] as const,
   tenant: (id: string) => ['admin', 'tenant', id] as const,
+  settings: ['admin', 'settings'] as const,
   users: (params: ListAdminParams) => ['admin', 'users', params] as const,
 };
+
+export function usePlatformSettings() {
+  return useQuery({
+    queryKey: adminKeys.settings,
+    queryFn: () => adminService.getPlatformSettings(),
+  });
+}
+
+export function useUpdatePlatformSettings() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (linkPreviewsEnabled: boolean) =>
+      adminService.updatePlatformSettings(linkPreviewsEnabled),
+    onSuccess: (settings) => {
+      queryClient.setQueryData(adminKeys.settings, settings);
+    },
+  });
+}
 
 export function useAdminTenants(params: ListAdminParams) {
   return useQuery({

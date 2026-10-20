@@ -7,6 +7,7 @@ import type {
   AdminTenantSummary,
   AdminUser,
   CreateTenantInput,
+  PlatformSettings,
   UpdateMemberInput,
 } from '@/types/admin';
 
@@ -17,6 +18,14 @@ export interface ListAdminParams {
 }
 
 export const adminService = {
+  getPlatformSettings: () => apiRequest<PlatformSettings>('/admin/settings'),
+
+  updatePlatformSettings: (linkPreviewsEnabled: boolean) =>
+    apiRequest<PlatformSettings>('/admin/settings', {
+      method: 'PATCH',
+      body: { linkPreviewsEnabled },
+    }),
+
   listTenants: (params: ListAdminParams) =>
     apiRequest<PageResult<AdminTenantSummary>>(
       `/admin/tenants${toQueryString({

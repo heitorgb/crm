@@ -241,11 +241,19 @@ CRM (sem dependências novas). A tela é **full-bleed**: `MainContent` deixa de 
   preview. Na versão instalada (Evolution 2.4.0) o único recurso oficial de preview em
   `/message/sendText` é esse booleano — a Evolution gera o cartão `externalAdReply`; não há
   parâmetros para enviar título/descrição/imagem explícitos. Por isso o preview no WhatsApp do
-  destinatário continua dependendo da geração da Evolution/WhatsApp. Compositor com anexo (imagem/vídeo/áudio/PDF), texto
-  autoexpansível, gravação de áudio e envio por `Enter`, com anexo/emoji/campo/gravação integrados em
-  um único campo arredondado. Colar com **Ctrl+V** uma imagem/vídeo do clipboard (ex.: print de tela) abre a
-  prévia de mídia — igual ao anexo — com campo de legenda e botões **Enviar**/**Cancelar** antes do
-  envio (`MediaPreviewDialog`).
+  destinatário continua dependendo da geração da Evolution/WhatsApp.
+- **Configuração global de preview**: o administrador da plataforma controla em
+  Administração → Configurações da plataforma se os envios podem gerar preview. O padrão é
+  **desativado**. Com a opção desativada, o backend não resolve metadados e envia todo texto com
+  `linkPreview: false` para a Evolution, independentemente do fluxo (manual, lembretes, mensagens
+  agendadas, webhooks) e da organização. Com a opção ativada, o comportamento por mensagem descrito
+  acima volta a valer. A leitura é feita no banco a cada envio, então a mudança vale imediatamente,
+  sem reiniciar o CRM (ver [`settings.md`](./settings.md)).
+- **Compositor com anexo** (imagem/vídeo/áudio/PDF), texto autoexpansível, gravação de áudio e envio
+  por `Enter`, com anexo/emoji/campo/gravação integrados em um único campo arredondado. Colar com
+  **Ctrl+V** uma imagem/vídeo do clipboard (ex.: print de tela) abre a prévia de mídia — igual ao
+  anexo — com campo de legenda e botões **Enviar**/**Cancelar** antes do envio
+  (`MediaPreviewDialog`).
 - **Nome do atendente**: o compositor traz a opção **Exibir nome do atendente** (marcada por padrão),
   alternável a cada mensagem e lembrada por navegador. Quando ligada, o nome do atendente é enviado
   ao cliente como prefixo em negrito (`*Nome:*` seguido de quebra de linha) no texto e nas legendas

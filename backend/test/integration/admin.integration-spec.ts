@@ -192,6 +192,54 @@ describe('Admin provisioning (integration)', () => {
     expect(increased.json().whatsappInstancesUsed).toBe(2);
   });
 
+  it('reads and updates the global link preview setting for platform admins only', async () => {
+    const accessToken = await login(adminEmail);
+    const memberToken = await login(memberEmail);
+
+    const disabled = await app.inject({
+      method: 'PATCH',
+      url: '/api/admin/settings',
+      headers: { authorization: `Bearer ${accessToken}` },
+      payload: { linkPreviewsEnabled: false },
+    });
+    expect(disabled.statusCode).toBe(200);
+    expect(disabled.json()).toEqual({ linkPreviewsEnabled: false });
+
+    const enabled = await app.inject({
+      method: 'PATCH',
+      url: '/api/admin/settings',
+      headers: { authorization: `Bearer ${accessToken}` },
+      payload: { linkPreviewsEnabled: true },
+    });
+    expect(enabled.statusCode).toBe(200);
+    expect(enabled.json()).toEqual({ linkPreviewsEnabled: true });
+
+    const current = await app.inject({
+      method: 'GET',
+      url: '/api/admin/settings',
+      headers: { authorization: `Bearer ${accessToken}` },
+    });
+    expect(current.statusCode).toBe(200);
+    expect(current.json()).toEqual({ linkPreviewsEnabled: true });
+
+    const forbidden = await app.inject({
+      method: 'PATCH',
+      url: '/api/admin/settings',
+      headers: { authorization: `Bearer ${memberToken}` },
+      payload: { linkPreviewsEnabled: false },
+    });
+    expect(forbidden.statusCode).toBe(403);
+    expect(forbidden.json().code).toBe('PLATFORM_ADMIN_REQUIRED');
+
+    const restored = await app.inject({
+      method: 'PATCH',
+      url: '/api/admin/settings',
+      headers: { authorization: `Bearer ${accessToken}` },
+      payload: { linkPreviewsEnabled: false },
+    });
+    expect(restored.statusCode).toBe(200);
+  });
+
   it('rejects negative and decimal WhatsApp instance limits', async () => {
     const accessToken = await login(adminEmail);
     const tenantId = await createTenant(accessToken);

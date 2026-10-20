@@ -37,9 +37,11 @@ describe('visibleNavigation', () => {
   it('keeps administrative navigation for platform admins regardless of modules', () => {
     const asAdmin = visibleNavigation({ platformAdmin: true, enabledModules: [] });
     expect(titles(asAdmin)).toContain('Organizações');
+    expect(titles(asAdmin)).toContain('Configurações da plataforma');
 
     const asUser = visibleNavigation({ platformAdmin: false, enabledModules: allModules });
     expect(titles(asUser)).not.toContain('Organizações');
+    expect(titles(asUser)).not.toContain('Configurações da plataforma');
   });
 
   it('keeps entries visible while the module list is still loading', () => {

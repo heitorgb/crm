@@ -10,6 +10,7 @@ import {
 import { TenantContextService } from '../../common/tenant-context/tenant-context.service.js';
 import type { Env } from '../../config/env.validation.js';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service.js';
+import { PlatformSettingsService } from '../platform-settings/platform-settings.service.js';
 import { parseLinkPreviewHtml } from './link-preview-parser.js';
 import { fetchHtmlDocument, resolvePublicAddresses } from './safe-http.js';
 
@@ -31,6 +32,7 @@ export class LinkPreviewsService {
     private readonly prisma: PrismaService,
     private readonly tenantContext: TenantContextService,
     private readonly config: ConfigService<Env, true>,
+    private readonly platformSettings: PlatformSettingsService,
   ) {}
 
   async resolveForCurrentTenant(rawUrls: string[]): Promise<LinkPreviewMetadata[]> {
@@ -39,6 +41,10 @@ export class LinkPreviewsService {
   }
 
   async resolveMany(tenantId: string, rawUrls: string[]): Promise<LinkPreviewMetadata[]> {
+    if (!(await this.platformSettings.isLinkPreviewsEnabled())) {
+      return [];
+    }
+
     const urls: string[] = [];
     const seen = new Set<string>();
 

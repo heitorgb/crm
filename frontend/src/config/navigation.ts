@@ -1,4 +1,4 @@
-import { Building2, CalendarClock, Contact, Headset, MessagesSquare, Receipt, Settings, Shield, Users, Wallet, Webhook } from 'lucide-react';
+import { Building2, CalendarClock, Contact, Headset, MessagesSquare, Receipt, Settings, Settings2, Shield, Users, Wallet, Webhook } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { MODULE_KEYS } from '@/types/modules';
 
@@ -75,7 +75,10 @@ export const navigation: NavEntry[] = [
     title: 'Administração',
     icon: Shield,
     platformAdminOnly: true,
-    items: [{ title: 'Organizações', to: '/admin/tenants', icon: Building2 }],
+    items: [
+      { title: 'Organizações', to: '/admin/tenants', icon: Building2 },
+      { title: 'Configurações da plataforma', to: '/admin/settings', icon: Settings2 },
+    ],
   },
   { title: 'Configurações', to: '/configuracoes', icon: Settings },
 ];

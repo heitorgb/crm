@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppException } from '../../../common/errors/app.exception.js';
 import type { Env } from '../../../config/env.validation.js';
+import { PlatformSettingsService } from '../../platform-settings/platform-settings.service.js';
 
 export class EvolutionUnavailableError extends AppException {
   constructor(message = 'Evolution API is not configured') {
@@ -88,7 +89,10 @@ export class EvolutionClient {
   private readonly baseUrl?: string;
   private readonly apiKey?: string;
 
-  constructor(config: ConfigService<Env, true>) {
+  constructor(
+    config: ConfigService<Env, true>,
+    private readonly platformSettings: PlatformSettingsService,
+  ) {
     this.baseUrl = trimTrailingSlash(config.get('EVOLUTION_API_BASE_URL') ?? '');
     this.apiKey = config.get('EVOLUTION_API_KEY');
   }
@@ -135,12 +139,19 @@ export class EvolutionClient {
     quoted?: EvolutionQuotedMessage,
     options?: { linkPreview?: boolean },
   ): Promise<EvolutionSendResult> {
-    const raw = await this.request('POST', `/message/sendText/${encodeURIComponent(instanceName)}`, {
-      number,
-      text,
-      ...(quoted ? { quoted } : {}),
-      ...(options?.linkPreview !== undefined ? { linkPreview: options.linkPreview } : {}),
-    });
+    const linkPreviewsEnabled = await this.platformSettings.isLinkPreviewsEnabled();
+    const linkPreview = linkPreviewsEnabled ? options?.linkPreview : false;
+
+    const raw = await this.request(
+      'POST',
+      `/message/sendText/${encodeURIComponent(instanceName)}`,
+      {
+        number,
+        text,
+        ...(quoted ? { quoted } : {}),
+        ...(linkPreview !== undefined ? { linkPreview } : {}),
+      },
+    );
 
     return { externalMessageId: extractMessageId(raw), raw };
   }

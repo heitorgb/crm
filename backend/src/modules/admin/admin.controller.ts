@@ -24,6 +24,8 @@ import { PlatformAdminGuard } from './platform-admin.guard.js';
 import type { TenantContext } from '../../common/tenant-context/tenant-context.types.js';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator.js';
 import { ModulesService } from '../modules/modules.service.js';
+import { PlatformSettingsService } from '../platform-settings/platform-settings.service.js';
+import { UpdatePlatformSettingsDto } from '../platform-settings/dto/platform-settings.dto.js';
 
 @Controller('admin')
 @UseGuards(PlatformAdminGuard)
@@ -31,7 +33,18 @@ export class AdminController {
   constructor(
     private readonly admin: AdminService,
     private readonly modules: ModulesService,
+    private readonly platformSettings: PlatformSettingsService,
   ) {}
+
+  @Get('settings')
+  getSettings() {
+    return this.platformSettings.get();
+  }
+
+  @Patch('settings')
+  updateSettings(@Body() dto: UpdatePlatformSettingsDto, @CurrentTenant() context: TenantContext) {
+    return this.platformSettings.update(dto, context.userId);
+  }
 
   @Get('tenants')
   listTenants(@Query() query: ListTenantsQueryDto) {

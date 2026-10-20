@@ -101,7 +101,7 @@ export function MessageBubble({
         ) : null}
         <div
           className={cn(
-            'flex max-w-[85%] flex-col sm:max-w-[70%]',
+            'flex min-w-0 max-w-[85%] flex-col sm:max-w-[70%]',
             isOutbound ? 'items-end' : 'items-start',
           )}
         >
@@ -250,7 +250,7 @@ export function MessageBubble({
       ) : null}
       <div
         className={cn(
-          'flex max-w-[85%] flex-col sm:max-w-[70%]',
+          'flex min-w-0 max-w-[85%] flex-col sm:max-w-[70%]',
           isOutbound ? 'items-end' : 'items-start',
         )}
       >
@@ -266,7 +266,7 @@ export function MessageBubble({
         ) : null}
         <div
           className={cn(
-            'rounded-lg text-sm shadow-sm',
+            'min-w-0 max-w-full rounded-lg text-sm shadow-sm',
             isMedia ? 'overflow-hidden p-1' : 'px-3 py-1.5',
             isOutbound
               ? 'bg-primary-light text-foreground'
@@ -300,7 +300,7 @@ export function MessageBubble({
             <>
               <LinkifiedText
                 text={message.content ?? `[${message.type.toLowerCase()}]`}
-                className="whitespace-pre-wrap break-words"
+                className="whitespace-pre-wrap [overflow-wrap:anywhere]"
               />
               <MessageLinkPreview message={message} isOutbound={isOutbound} />
             </>
@@ -309,7 +309,7 @@ export function MessageBubble({
             <div className="px-1.5">
               <LinkifiedText
                 text={message.content}
-                className="whitespace-pre-wrap break-words pt-1"
+                className="whitespace-pre-wrap pt-1 [overflow-wrap:anywhere]"
               />
               <MessageLinkPreview message={message} isOutbound={isOutbound} />
             </div>
@@ -407,9 +407,9 @@ function QuoteBlock({ quoted, isOutbound, onNavigate }: QuoteBlockProps) {
   const content = (
     <>
       <span className="text-[11px] font-semibold leading-tight">{quotedAuthorLabel(quoted)}</span>
-      <span className="flex items-center gap-1">
+      <span className="flex min-w-0 items-center gap-1">
         {hasMediaIcon ? <QuotedTypeIcon type={quoted.type} /> : null}
-        <span className="line-clamp-3 whitespace-pre-wrap break-words text-[11px] leading-snug text-muted-foreground">
+        <span className="line-clamp-3 min-w-0 whitespace-pre-wrap text-[11px] leading-snug text-muted-foreground [overflow-wrap:anywhere]">
           {messageSnippet(quoted.content, quoted.type)}
         </span>
       </span>

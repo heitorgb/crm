@@ -140,12 +140,12 @@ export function LinkPreviewCard({ preview, isOutbound }: LinkPreviewCardProps) {
           </p>
         ) : null}
         {preview.title ? (
-          <p className="line-clamp-2 break-words text-xs font-semibold leading-snug text-foreground">
+          <p className="line-clamp-2 text-xs font-semibold leading-snug text-foreground [overflow-wrap:anywhere]">
             {preview.title}
           </p>
         ) : null}
         {preview.description ? (
-          <p className="line-clamp-2 break-words text-[11px] leading-snug text-muted-foreground">
+          <p className="line-clamp-2 text-[11px] leading-snug text-muted-foreground [overflow-wrap:anywhere]">
             {preview.description}
           </p>
         ) : null}

@@ -61,6 +61,14 @@ const ScheduledMessagesPage = lazy(() =>
 const WebhooksPage = lazy(() =>
   import('@/features/webhooks/webhooks-page').then((module) => ({ default: module.WebhooksPage })),
 );
+const LeadBoardPage = lazy(() =>
+  import('@/features/leads/lead-board-page').then((module) => ({
+    default: module.LeadBoardPage,
+  })),
+);
+const TagsPage = lazy(() =>
+  import('@/features/tags/tags-page').then((module) => ({ default: module.TagsPage })),
+);
 
 export function AppRoutes() {
   return (
@@ -120,6 +128,17 @@ export function AppRoutes() {
               </PlatformAdminRoute>
             }
           />
+
+          <Route
+            path="/leads"
+            element={
+              <ModuleRoute moduleKey={MODULE_KEYS.LEADS}>
+                <LeadBoardPage />
+              </ModuleRoute>
+            }
+          />
+          <Route path="/crm/etiquetas" element={<TagsPage />} />
+          <Route path="/clientes/tags" element={<Navigate to="/crm/etiquetas" replace />} />
 
           <Route
             path="/contatos"

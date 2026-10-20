@@ -36,8 +36,8 @@ vindo do cliente é aceito.
 A cobrança referencia **ao menos uma parte**: um `Contact` (o cliente no uso real do CRM, já que
 contatos são importados da agenda do WhatsApp) e/ou um `Customer`. Se o contato estiver ligado a um
 `Customer`, esse vínculo é reaproveitado automaticamente; nenhum `Customer` é criado
-automaticamente. Essa foi a correção do bug em que o seletor de clientes ficava vazio: o formulário
-agora lista os `Contact` existentes em vez de exigir um `Customer` inexistente.
+automaticamente. O seletor pesquisa os `Contact` existentes por nome ou telefone conforme o usuário
+digita, em vez de exigir um `Customer` ou carregar uma lista extensa sem filtro.
 
 **Vencida** não é armazenada: é derivada (`PENDING` + `dueDate < hoje`). A exposição da API retorna
 `status` efetivo (`PENDING`/`OVERDUE`/`PAID`/`CANCELED`), calculado no fuso `BILLING_TIMEZONE`.

@@ -18,6 +18,8 @@ export type MessageType =
   | 'REACTION'
   | 'UNKNOWN';
 
+import type { TagSummary } from './crm';
+
 export interface WhatsAppInstance {
   id: string;
   name: string;
@@ -58,6 +60,7 @@ export interface Conversation {
   customerName: string | null;
   lastMessageAt: string | null;
   lastMessage: ConversationLastMessage | null;
+  tags?: TagSummary[];
   createdAt: string;
   updatedAt: string;
 }

@@ -136,6 +136,7 @@ describe('Modules management (integration)', () => {
       expect.arrayContaining([
         'attendance',
         'contacts',
+        'leads',
         'billing.charges',
         'billing.collection',
         'webhooks',
@@ -246,6 +247,7 @@ describe('Modules management (integration)', () => {
       expect.arrayContaining([
         'attendance',
         'contacts',
+        'leads',
         'billing.charges',
         'billing.collection',
         'webhooks',

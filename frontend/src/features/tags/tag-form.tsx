@@ -37,7 +37,7 @@ export function TagForm({ open, onOpenChange, tag }: TagFormProps) {
     setError(null);
 
     if (name.trim().length === 0) {
-      setError('Informe o nome da tag.');
+      setError('Informe o nome da etiqueta.');
       return;
     }
 
@@ -52,7 +52,7 @@ export function TagForm({ open, onOpenChange, tag }: TagFormProps) {
       onOpenChange(false);
     } catch (requestError) {
       setError(
-        requestError instanceof ApiError ? requestError.message : 'Não foi possível salvar a tag.',
+        requestError instanceof ApiError ? requestError.message : 'Não foi possível salvar a etiqueta.',
       );
     }
   };
@@ -61,11 +61,11 @@ export function TagForm({ open, onOpenChange, tag }: TagFormProps) {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>{isEditing ? 'Editar tag' : 'Nova tag'}</DialogTitle>
+          <DialogTitle>{isEditing ? 'Editar etiqueta' : 'Nova etiqueta'}</DialogTitle>
         </DialogHeader>
 
         <div className="grid gap-4">
-          <FormField id="tag-name" label="Nome" required>
+          <FormField id="tag-name" label="Nome da etiqueta" required>
             <Input id="tag-name" value={name} onChange={(event) => setName(event.target.value)} />
           </FormField>
 

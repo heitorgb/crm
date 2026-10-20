@@ -1,4 +1,4 @@
-import { Building2, CalendarClock, Contact, Headset, MessagesSquare, Receipt, Settings, Settings2, Shield, Users, Wallet, Webhook } from 'lucide-react';
+import { Building2, CalendarClock, Contact, Headset, KanbanSquare, MessagesSquare, Receipt, Settings, Settings2, Shield, Tags, Users, Wallet, Webhook } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { MODULE_KEYS } from '@/types/modules';
 
@@ -24,6 +24,14 @@ export function isNavGroup(entry: NavEntry): entry is NavGroup {
 }
 
 export const navigation: NavEntry[] = [
+  {
+    title: 'CRM',
+    icon: KanbanSquare,
+    items: [
+      { title: 'Oportunidades', to: '/leads', icon: KanbanSquare, moduleKey: MODULE_KEYS.LEADS },
+      { title: 'Etiquetas', to: '/crm/etiquetas', icon: Tags },
+    ],
+  },
   {
     title: 'Atendimento',
     icon: Headset,

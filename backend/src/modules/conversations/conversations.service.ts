@@ -69,6 +69,7 @@ export interface ConversationView {
   customerName: string | null;
   lastMessageAt: Date | null;
   lastMessage: ConversationLastMessageView | null;
+  tags: { id: string; name: string; color: string | null }[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -82,6 +83,7 @@ const CONVERSATION_INCLUDE = {
     orderBy: { occurredAt: 'desc' as const },
     select: { content: true, direction: true, senderName: true, occurredAt: true },
   },
+  tags: { select: { tag: { select: { id: true, name: true, color: true } } } },
 } satisfies Prisma.ConversationInclude;
 
 type PrismaConversation = Prisma.ConversationGetPayload<{ include: typeof CONVERSATION_INCLUDE }>;
@@ -279,6 +281,13 @@ export class ConversationsService {
     if (dto.status !== undefined) {
       data.status = dto.status;
       data.closedAt = dto.status === ConversationStatus.CLOSED ? new Date() : null;
+    }
+    if (dto.tagIds !== undefined) {
+      const tagIds = await this.validateTagIds(tenantId, dto.tagIds);
+      data.tags = {
+        deleteMany: { tenantId },
+        create: tagIds.map((tagId) => ({ tenantId, tagId })),
+      };
     }
 
     await this.prisma.conversation.update({ where: { id }, data });
@@ -772,6 +781,16 @@ export class ConversationsService {
       throw new ConversationNotFoundError();
     }
   }
+
+  private async validateTagIds(tenantId: string, input: string[]): Promise<string[]> {
+    const tagIds = [...new Set(input)];
+    if (tagIds.length === 0) return tagIds;
+    const count = await this.prisma.tag.count({ where: { tenantId, id: { in: tagIds } } });
+    if (count !== tagIds.length) {
+      throw new AppException('CONVERSATION_TAG_NOT_FOUND', 'Etiqueta nÃ£o encontrada', 404);
+    }
+    return tagIds;
+  }
 }
 
 function toConversationView(
@@ -806,6 +825,7 @@ function toConversationView(
           occurredAt: lastMessage.occurredAt,
         }
       : null,
+    tags: conversation.tags.map(({ tag }) => tag),
     createdAt: conversation.createdAt,
     updatedAt: conversation.updatedAt,
   };

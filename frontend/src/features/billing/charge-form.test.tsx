@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { beforeAll, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 
 const state = vi.hoisted(() => ({
   contacts: [] as unknown,
@@ -22,6 +22,8 @@ vi.mock('@/features/contacts/queries', () => ({
 }));
 
 import { ChargeForm } from './charge-form';
+
+afterEach(cleanup);
 
 beforeAll(() => {
   if (!('ResizeObserver' in globalThis)) {
@@ -64,7 +66,8 @@ describe('ChargeForm clients', () => {
     render(<ChargeForm open onOpenChange={() => {}} />);
     openSelect();
 
-    expect(screen.getByText('Ana Souza — 5511999999999')).toBeTruthy();
+    expect(screen.getByText('Ana Souza')).toBeTruthy();
+    expect(screen.getByText('5511999999999')).toBeTruthy();
     expect(screen.getByText('Bruno Lima')).toBeTruthy();
   });
 
@@ -76,7 +79,7 @@ describe('ChargeForm clients', () => {
     render(<ChargeForm open onOpenChange={() => {}} />);
     openSelect();
 
-    expect(screen.getByText('Nenhum cliente cadastrado')).toBeTruthy();
+    expect(screen.getByText('Nenhum contato cadastrado.')).toBeTruthy();
   });
 
   it('shows a clear message when the API fails', () => {
@@ -85,9 +88,10 @@ describe('ChargeForm clients', () => {
     state.contactsError = true;
 
     render(<ChargeForm open onOpenChange={() => {}} />);
+    openSelect();
 
     expect(
-      screen.getByText('Não foi possível carregar os clientes. Verifique sua conexão e tente novamente.'),
+      screen.getByText('Não foi possível carregar os contatos.'),
     ).toBeTruthy();
   });
 

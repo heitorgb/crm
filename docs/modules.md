@@ -51,6 +51,7 @@ Cada habilitação/desabilitação grava uma linha em `admin_audit_logs`
 | -------------------- | ------------------ | ---------- |
 | `attendance`         | Atendimento        | CRM        |
 | `contacts`           | Contatos           | CRM        |
+| `leads`              | Painel de Leads    | CRM        |
 | `billing.charges`    | Cobranças          | Financeiro |
 | `billing.collection` | Régua de Cobrança  | Financeiro |
 | `webhooks`           | Webhooks           | Integrações |

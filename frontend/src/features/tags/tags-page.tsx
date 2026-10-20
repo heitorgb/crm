@@ -56,12 +56,12 @@ export function TagsPage() {
   return (
     <div className="space-y-5">
       <PageHeader
-        title="Tags"
-        description="Organize clientes com etiquetas do seu negócio."
+        title="Etiquetas"
+        description="Crie etiquetas por cor e use-as em conversas, oportunidades e clientes."
         actions={
           <Button onClick={openCreate}>
             <Plus />
-            Nova tag
+            Nova etiqueta
           </Button>
         }
       />
@@ -70,7 +70,7 @@ export function TagsPage() {
         <SearchInput
           value={search}
           onChange={setSearch}
-          placeholder="Buscar tag"
+          placeholder="Buscar etiqueta"
           className="sm:max-w-sm"
         />
       </Card>
@@ -94,12 +94,12 @@ export function TagsPage() {
           <div className="p-4">
             <EmptyState
               icon={Tags}
-              title="Nenhuma tag cadastrada"
-              description="Crie tags para segmentar clientes (ex.: VIP, Inadimplente, Parceiro)."
+              title="Nenhuma etiqueta cadastrada"
+              description="Crie etiquetas para organizar o atendimento e o pipeline comercial."
               action={
                 <Button onClick={openCreate}>
                   <Plus />
-                  Nova tag
+                  Nova etiqueta
                 </Button>
               }
             />
@@ -108,8 +108,10 @@ export function TagsPage() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Tag</TableHead>
+                <TableHead>Etiqueta</TableHead>
                 <TableHead className="hidden sm:table-cell">Clientes</TableHead>
+                <TableHead className="hidden md:table-cell">Conversas</TableHead>
+                <TableHead className="hidden md:table-cell">Oportunidades</TableHead>
                 <TableHead className="text-right">Ações</TableHead>
               </TableRow>
             </TableHeader>
@@ -127,6 +129,8 @@ export function TagsPage() {
                     </span>
                   </TableCell>
                   <TableCell className="hidden sm:table-cell">{tag.customerCount}</TableCell>
+                  <TableCell className="hidden md:table-cell">{tag.conversationCount}</TableCell>
+                  <TableCell className="hidden md:table-cell">{tag.leadCount}</TableCell>
                   <TableCell>
                     <div className="flex items-center justify-end gap-1">
                       <Button
@@ -165,10 +169,10 @@ export function TagsPage() {
         onOpenChange={(open) => {
           if (!open) setPendingDelete(null);
         }}
-        title="Excluir tag"
+        title="Excluir etiqueta"
         description={
           pendingDelete
-            ? `A tag "${pendingDelete.name}" será removida de ${pendingDelete.customerCount} cliente(s).`
+            ? `A etiqueta "${pendingDelete.name}" será removida de ${pendingDelete.usageCount} registro(s).`
             : undefined
         }
         confirmLabel="Excluir"

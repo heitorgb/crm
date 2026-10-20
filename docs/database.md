@@ -27,7 +27,7 @@ Base de identidade, multi-tenancy e núcleo do CRM. Detalhes de CRM em [`crm-cor
 
 ### Núcleo de CRM (Prompt 05)
 
-`Customer`, `Contact`, `Tag`, `CustomerTag` e `QualificationProfile` — todas com `tenantId`, índice
+`Customer`, `Contact`, `Tag`, `CustomerTag`, `ConversationTag`, `LeadTag` e `QualificationProfile` — todas com `tenantId`, índice
 apropriado e isolamento por aplicação. `Customer.document` é `UNIQUE (tenantId, document)`.
 `QualificationProfile` possui índice único parcial para garantir **um único perfil padrão ativo por
 tenant** (ver migration `20260921205850_crm_core`). Retenção de dado pessoal: sem job de expurgo
@@ -35,7 +35,13 @@ nesta fase (Prompt 09), conforme a seção de LGPD abaixo.
 
 ### Vendas e qualificação (Prompt 06)
 
-`Lead`, `LeadTag`, `Pipeline`, `PipelineStage`, `Deal`, `Task`, `Activity`,
+O painel comercial atual usa `LeadPipeline`, `LeadStage` e `Lead`, sempre vinculando a oportunidade
+ao `Contact` que centraliza a identidade do WhatsApp. Ver [`leads.md`](./leads.md).
+
+O catálogo `Tag` é compartilhado por clientes, conversas e oportunidades por meio das tabelas N:N
+`CustomerTag`, `ConversationTag` e `LeadTag`.
+
+Historicamente existiram `LeadTag`, `Pipeline`, `PipelineStage`, `Deal`, `Task` e `Activity`,
 `LeadQualificationSession` e `LeadAnalysis` — todas com `tenantId` e índices para as consultas reais.
 Destaques: `Lead` único por `(tenantId, phone)`; `PipelineStage` único por `(pipelineId, position)`;
 `Activity` guarda `userId` sem FK para preservar auditoria. Detalhes em [`sales.md`](./sales.md).

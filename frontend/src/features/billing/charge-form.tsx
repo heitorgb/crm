@@ -11,16 +11,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
-import { useContacts } from '@/features/contacts/queries';
-import { useDebouncedValue } from '@/lib/use-debounced-value';
+import { ContactPicker } from '@/features/contacts/contact-picker';
 import type { BillingCharge } from '@/types/billing';
 import {
   centsToInput,
@@ -38,14 +30,6 @@ interface ChargeFormProps {
 
 export function ChargeForm({ open, onOpenChange, charge }: ChargeFormProps) {
   const isEditing = Boolean(charge);
-  const [contactSearch, setContactSearch] = useState('');
-  const debouncedSearch = useDebouncedValue(contactSearch, 300);
-  const contacts = useContacts({
-    perPage: 100,
-    search: debouncedSearch || undefined,
-    sort: 'name',
-    order: 'asc',
-  });
   const createCharge = useCreateCharge();
   const updateCharge = useUpdateCharge();
 
@@ -63,8 +47,6 @@ export function ChargeForm({ open, onOpenChange, charge }: ChargeFormProps) {
   const canRepeat = !isEditing;
   const legacyPartyName = charge?.contactName ?? charge?.customerName ?? null;
   const needsContact = !isEditing || (!charge?.contactId && !charge?.customerId);
-
-  const contactOptions = buildContactOptions(contacts.data?.data ?? [], charge);
 
   const handleSubmit = async (): Promise<void> => {
     setError(null);
@@ -134,46 +116,19 @@ export function ChargeForm({ open, onOpenChange, charge }: ChargeFormProps) {
             required={needsContact}
             description="Selecione um contato cadastrado. Nenhum cliente é criado automaticamente."
           >
-            <Input
-              value={contactSearch}
-              onChange={(event) => setContactSearch(event.target.value)}
-              placeholder="Buscar cliente por nome ou telefone"
-              aria-label="Buscar cliente"
+            <ContactPicker
+              id="charge-contact"
+              value={contactId}
+              onValueChange={setContactId}
+              selectedContact={
+                charge?.contactId && charge.contactName
+                  ? { id: charge.contactId, name: charge.contactName, phone: charge.contactPhone }
+                  : null
+              }
+              placeholder="Selecione um cliente"
+              searchPlaceholder="Buscar cliente por nome ou telefone"
             />
-            <Select value={contactId} onValueChange={setContactId}>
-              <SelectTrigger id="charge-contact">
-                <SelectValue placeholder="Selecione um cliente" />
-              </SelectTrigger>
-              <SelectContent>
-                {contacts.isPending ? (
-                  <SelectItem value="__loading" disabled>
-                    Carregando clientes…
-                  </SelectItem>
-                ) : contacts.isError ? (
-                  <SelectItem value="__error" disabled>
-                    Erro ao carregar clientes
-                  </SelectItem>
-                ) : contactOptions.length === 0 ? (
-                  <SelectItem value="__empty" disabled>
-                    Nenhum cliente cadastrado
-                  </SelectItem>
-                ) : (
-                  contactOptions.map((contact) => (
-                    <SelectItem key={contact.id} value={contact.id}>
-                      {contact.name}
-                      {contact.phone ? ` — ${contact.phone}` : ''}
-                    </SelectItem>
-                  ))
-                )}
-              </SelectContent>
-            </Select>
           </FormField>
-
-          {contacts.isError ? (
-            <p className="text-xs font-medium text-danger">
-              Não foi possível carregar os clientes. Verifique sua conexão e tente novamente.
-            </p>
-          ) : null}
 
           {isEditing && !charge?.contactId && legacyPartyName ? (
             <p className="text-xs text-muted-foreground">
@@ -247,23 +202,6 @@ export function ChargeForm({ open, onOpenChange, charge }: ChargeFormProps) {
       </DialogContent>
     </Dialog>
   );
-}
-
-function buildContactOptions(
-  list: { id: string; name: string; phone: string | null }[],
-  charge: BillingCharge | null | undefined,
-): { id: string; name: string; phone: string | null }[] {
-  if (
-    charge?.contactId &&
-    charge.contactName &&
-    !list.some((item) => item.id === charge.contactId)
-  ) {
-    return [
-      { id: charge.contactId, name: charge.contactName, phone: charge.contactPhone },
-      ...list,
-    ];
-  }
-  return list;
 }
 
 function toDateOnly(date: Date): string {

@@ -1,6 +1,7 @@
 export const MODULE_KEYS = {
   ATTENDANCE: 'attendance',
   CONTACTS: 'contacts',
+  LEADS: 'leads',
   BILLING_CHARGES: 'billing.charges',
   BILLING_COLLECTION: 'billing.collection',
   WEBHOOKS: 'webhooks',

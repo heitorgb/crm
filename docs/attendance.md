@@ -30,6 +30,8 @@ Lead no WhatsApp
 - `Conversation`: `tenantId`, `whatsappInstanceId`, `externalContactId?` (JID/número, chave de
   dedupe por instância), `leadId?`, `customerId?`, `contactId?`, `status`, `subject?`, `isGroup`,
   `groupName?` (assunto do grupo), `avatarUrl?` (foto do grupo), `lastMessageAt?`, `closedAt?`.
+- `ConversationTag`: vínculo N:N entre conversa e o catálogo compartilhado de etiquetas, sempre
+  validado no tenant atual.
 - `Message`: `conversationId`, `direction`, `type`, `content?`, `externalMessageId?`
   (`UNIQUE (tenantId, externalMessageId)` = idempotência), `status`, `senderId?` (JID do
   participante em grupos **ou** `userId` do atendente em `OUTBOUND`), `senderName?` (pushName em
@@ -466,6 +468,8 @@ responde `409 CONVERSATION_NOT_HUMAN_OWNED`. O bot só responde enquanto a conve
   Se nenhuma fonte disponibilizar a foto, permanecem as iniciais. Não há migration nova.
 - O chat ocupa a largura disponível e altura baseada na janela; o painel de detalhes começa
   recolhido. Os balões limitam a largura no contêiner externo e acomodam textos longos e mídias.
+- As etiquetas da conversa podem ser alteradas diretamente pelo cabeçalho ou pelo menu de ações da
+  lista, sem depender da abertura do painel de detalhes.
 - Não há dependências ou migrations novas. Testes: `npm test` e
   `npm run test:e2e -- test/integration/whatsapp.integration-spec.ts` no backend com PostgreSQL e
   Redis configurados. Execução local: `npm run start:dev` no backend e `npm run dev` no frontend.

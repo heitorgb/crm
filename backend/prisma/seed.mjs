@@ -43,6 +43,33 @@ async function main() {
     create: { tenantId: tenant.id, userId: user.id, role: SEED.role, active: true },
   });
 
+  const pipeline = await prisma.leadPipeline.upsert({
+    where: { tenantId_name: { tenantId: tenant.id, name: 'Pipeline comercial' } },
+    update: { active: true },
+    create: {
+      tenantId: tenant.id,
+      name: 'Pipeline comercial',
+      description: 'Fluxo comercial padrão',
+    },
+  });
+
+  const stages = [
+    ['Novo lead', '#3b82f6', 'OPEN'],
+    ['Entrou em contato', '#06b6d4', 'OPEN'],
+    ['Qualificado', '#8b5cf6', 'OPEN'],
+    ['Proposta enviada', '#f59e0b', 'OPEN'],
+    ['Pagamento', '#f97316', 'OPEN'],
+    ['Venda ganha', '#22c55e', 'WON'],
+    ['Perdido', '#ef4444', 'LOST'],
+  ];
+  for (const [index, [name, color, kind]] of stages.entries()) {
+    await prisma.leadStage.upsert({
+      where: { pipelineId_position: { pipelineId: pipeline.id, position: index + 1 } },
+      update: { name, color, kind },
+      create: { tenantId: tenant.id, pipelineId: pipeline.id, name, color, kind, position: index + 1 },
+    });
+  }
+
   console.log('\nSeed concluído. Acesse com:');
   console.log(`  Tenant: ${SEED.tenantName}`);
   console.log(`  E-mail: ${SEED.email}`);

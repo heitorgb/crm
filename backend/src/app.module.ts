@@ -34,6 +34,7 @@ import { LinkPreviewsModule } from './modules/link-previews/link-previews.module
 import { WebhooksModule } from './modules/webhooks/webhooks.module.js';
 import { BillingModule } from './modules/billing/billing.module.js';
 import { IntegrationsWebhooksModule } from './modules/integrations/webhooks/integrations-webhooks.module.js';
+import { LeadsModule } from './modules/leads/leads.module.js';
 
 @Module({
   imports: [
@@ -77,6 +78,7 @@ import { IntegrationsWebhooksModule } from './modules/integrations/webhooks/inte
     WebhooksModule,
     BillingModule,
     IntegrationsWebhooksModule,
+    LeadsModule,
   ],
   providers: [{ provide: APP_FILTER, useClass: AllExceptionsFilter }],
 })

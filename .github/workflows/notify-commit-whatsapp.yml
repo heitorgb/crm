@@ -1,0 +1,402 @@
+name: Notificar commits no WhatsApp
+
+on:
+  push:
+    branches:
+      - '**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: notify-commit-whatsapp-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  notify:
+    name: Enviar commits ao CRM
+    runs-on: ubuntu-latest
+    if: ${{ !github.event.deleted && !endsWith(github.actor, '[bot]') }}
+    steps:
+      - name: Notificar commits
+        env:
+          CRM_WEBHOOK_URL: ${{ secrets.CRM_WEBHOOK_URL }}
+          CRM_WEBHOOK_TOKEN: ${{ secrets.CRM_WEBHOOK_TOKEN }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const crypto = require('node:crypto');
+          const { setTimeout: sleep } = require('node:timers/promises');
+
+          const MAX_MESSAGE_LENGTH = 4096;
+          const MAX_ATTEMPTS = 3;
+          const REQUEST_TIMEOUT_MS = 15000;
+          const RETRY_DELAYS_MS = [2000, 5000];
+          const ZERO_SHA = /^0{40,64}$/;
+          const VALID_SHA = /^[0-9a-f]{7,64}$/i;
+          const FATAL_CODES = new Set([
+            'WEBHOOK_UNAUTHORIZED',
+            'MODULE_DISABLED',
+            'WEBHOOK_INTEGRATION_NOT_FOUND',
+            'WEBHOOK_INTEGRATION_INACTIVE',
+            'WEBHOOK_INSTANCE_UNAVAILABLE',
+            'WEBHOOK_GROUP_INVALID',
+          ]);
+
+          function normalizeMultiline(value) {
+            return String(value ?? '')
+              .replace(/\r\n?/g, '\n')
+              .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
+              .trim();
+          }
+
+          function normalizeSingleLine(value) {
+            return normalizeMultiline(value).replace(/\s+/g, ' ').trim();
+          }
+
+          function truncateUtf16(text, maxLength) {
+            let result = '';
+            for (const character of text) {
+              if (result.length + character.length > maxLength) {
+                break;
+              }
+              result += character;
+            }
+            return result;
+          }
+
+          function formatDate(value) {
+            if (!value) {
+              return null;
+            }
+            const date = new Date(value);
+            if (Number.isNaN(date.getTime())) {
+              return null;
+            }
+            const parts = new Intl.DateTimeFormat('pt-BR', {
+              timeZone: 'America/Sao_Paulo',
+              day: '2-digit',
+              month: '2-digit',
+              year: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit',
+              hourCycle: 'h23',
+            }).formatToParts(date);
+            const part = (type) => parts.find((item) => item.type === type)?.value;
+            return `${part('day')}/${part('month')}/${part('year')} ${part('hour')}:${part('minute')}`;
+          }
+
+          function buildMessage(fields, body) {
+            const sections = [
+              '🚀 *ATUALIZAÇÃO DO CRM*',
+              `📦 *Repositório:* ${fields.repository}`,
+              `🌿 *Branch:* ${fields.branch}`,
+              `👤 *Autor:* ${fields.author}`,
+            ];
+            if (fields.pusher) {
+              sections.push(`📤 *Push por:* ${fields.pusher}`);
+            }
+            sections.push(`📝 *Commit:*\n${body}`);
+            if (fields.shortSha) {
+              sections.push(`🔖 *Hash:* ${fields.shortSha}`);
+            }
+            if (fields.date) {
+              sections.push(`🕒 *Data:* ${fields.date}`);
+            }
+            if (fields.commitUrl) {
+              sections.push(`🔗 *Ver alterações:*\n${fields.commitUrl}`);
+            }
+            return sections.join('\n\n');
+          }
+
+          function buildMessageWithinLimit(fields, rawBody) {
+            const body = rawBody || 'Mensagem não informada.';
+            const full = buildMessage(fields, body);
+            if (full.length <= MAX_MESSAGE_LENGTH) {
+              return full;
+            }
+
+            const suffix = '\n\n… (mensagem truncada)';
+            const template = buildMessage(fields, '');
+            const budget = MAX_MESSAGE_LENGTH - template.length - suffix.length;
+            let truncatedBody = '';
+            for (const character of body) {
+              if (truncatedBody.length + character.length > budget) {
+                break;
+              }
+              truncatedBody += character;
+            }
+
+            const candidate = buildMessage(fields, `${truncatedBody.trimEnd()}${suffix}`);
+            if (candidate.length <= MAX_MESSAGE_LENGTH) {
+              return candidate;
+            }
+            return truncateUtf16(candidate, MAX_MESSAGE_LENGTH);
+          }
+
+          function requireWebhookConfig() {
+            const url = process.env.CRM_WEBHOOK_URL?.trim();
+            const token = process.env.CRM_WEBHOOK_TOKEN?.trim();
+            if (!url || !token) {
+              throw new Error(
+                'Cadastre os secrets CRM_WEBHOOK_URL e CRM_WEBHOOK_TOKEN no repositório.',
+              );
+            }
+            let parsed;
+            try {
+              parsed = new URL(url);
+            } catch {
+              throw new Error('CRM_WEBHOOK_URL não contém uma URL válida.');
+            }
+            if (parsed.protocol !== 'https:') {
+              throw new Error('CRM_WEBHOOK_URL deve usar HTTPS.');
+            }
+            return { url, token };
+          }
+
+          function idempotencyKeyFor(repository, branch, sha) {
+            const digest = crypto
+              .createHash('sha256')
+              .update(`${repository}\n${branch}\n${sha}`)
+              .digest('hex');
+            return `github-crm-commit:${digest}`;
+          }
+
+          function parseRetryAfter(response) {
+            const value = response.headers.get('retry-after');
+            if (!value) {
+              return null;
+            }
+            const seconds = Number(value);
+            if (Number.isFinite(seconds) && seconds >= 0) {
+              return Math.min(seconds * 1000, 30000);
+            }
+            const date = Date.parse(value);
+            if (!Number.isNaN(date)) {
+              return Math.min(Math.max(date - Date.now(), 0), 30000);
+            }
+            return null;
+          }
+
+          async function sendOnce(url, token, payload, idempotencyKey) {
+            const response = await fetch(url, {
+              method: 'POST',
+              headers: {
+                Authorization: `Bearer ${token}`,
+                'Content-Type': 'application/json',
+                Accept: 'application/json',
+                'Idempotency-Key': idempotencyKey,
+              },
+              body: JSON.stringify(payload),
+              signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+            });
+            const text = await response.text();
+            let data = null;
+            if (text) {
+              try {
+                data = JSON.parse(text);
+              } catch {
+                data = null;
+              }
+            }
+            return {
+              status: response.status,
+              data,
+              retryAfterMs: parseRetryAfter(response),
+            };
+          }
+
+          function isRetryable(status, code) {
+            if (status === 408 || status === 429) {
+              return true;
+            }
+            if (status === 409 && code === 'WEBHOOK_EXECUTION_IN_PROGRESS') {
+              return true;
+            }
+            if (status >= 500 && status <= 599) {
+              return code !== 'WEBHOOK_EXECUTION_FAILED';
+            }
+            return false;
+          }
+
+          function describeFailure(result) {
+            if (!result.status) {
+              return result.message ?? 'falha de rede';
+            }
+            const code = result.code ? ` ${result.code}` : '';
+            const message = result.message ? ` - ${truncateUtf16(result.message, 300)}` : '';
+            return `HTTP ${result.status}${code}${message}`;
+          }
+
+          async function sendWithRetry(url, token, payload, idempotencyKey) {
+            let last = {
+              ok: false,
+              status: 0,
+              code: null,
+              message: 'falha de rede',
+              fatal: false,
+            };
+
+            for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+              try {
+                const response = await sendOnce(url, token, payload, idempotencyKey);
+                const code = typeof response.data?.code === 'string' ? response.data.code : null;
+                const message =
+                  typeof response.data?.message === 'string' ? response.data.message : null;
+
+                if (response.status >= 200 && response.status < 300) {
+                  return { ok: true, status: response.status, code, message, fatal: false };
+                }
+
+                last = {
+                  ok: false,
+                  status: response.status,
+                  code,
+                  message,
+                  fatal:
+                    FATAL_CODES.has(code) ||
+                    response.status === 401 ||
+                    response.status === 403 ||
+                    response.status === 404,
+                };
+
+                if (attempt >= MAX_ATTEMPTS || !isRetryable(response.status, code)) {
+                  return last;
+                }
+
+                const delay =
+                  response.retryAfterMs ?? RETRY_DELAYS_MS[attempt - 1] ?? RETRY_DELAYS_MS.at(-1);
+                console.log(
+                  `Tentativa ${attempt}/${MAX_ATTEMPTS} falhou (HTTP ${response.status}${code ? ` ${code}` : ''}); nova tentativa em ${Math.round(delay / 1000)}s.`,
+                );
+                await sleep(delay);
+              } catch (error) {
+                const timedOut =
+                  error?.name === 'TimeoutError' || error?.name === 'AbortError';
+                last = {
+                  ok: false,
+                  status: 0,
+                  code: null,
+                  message: timedOut ? 'timeout na requisição' : 'falha de rede',
+                  fatal: false,
+                };
+
+                if (attempt >= MAX_ATTEMPTS) {
+                  return last;
+                }
+
+                const delay = RETRY_DELAYS_MS[attempt - 1] ?? RETRY_DELAYS_MS.at(-1);
+                console.log(
+                  `Tentativa ${attempt}/${MAX_ATTEMPTS} falhou (${last.message}); nova tentativa em ${Math.round(delay / 1000)}s.`,
+                );
+                await sleep(delay);
+              }
+            }
+
+            return last;
+          }
+
+          async function main() {
+            if (!process.env.GITHUB_EVENT_PATH) {
+              throw new Error('GITHUB_EVENT_PATH não foi informado.');
+            }
+
+            const event = JSON.parse(
+              fs.readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'),
+            );
+            const repository = normalizeSingleLine(event.repository?.full_name);
+            const branch = normalizeSingleLine(
+              String(event.ref ?? '').replace(/^refs\/heads\//, ''),
+            );
+            const commits = Array.isArray(event.commits) ? event.commits : [];
+
+            if (event.deleted === true) {
+              console.log('Push de exclusão de branch ignorado.');
+              return;
+            }
+            if (!repository || !branch) {
+              console.error('Push sem repositório ou branch identificável; nada a notificar.');
+              return;
+            }
+            if (commits.length === 0) {
+              console.log('Push sem commits novos; nada a notificar.');
+              return;
+            }
+            if (ZERO_SHA.test(String(event.before ?? '')) || ZERO_SHA.test(String(event.after ?? ''))) {
+              console.log('Criação ou exclusão de referência ignorada.');
+              return;
+            }
+
+            const { url, token } = requireWebhookConfig();
+            const pusher = normalizeSingleLine(event.pusher?.name);
+            const notSent = [];
+            let sentCount = 0;
+
+            for (let index = 0; index < commits.length; index += 1) {
+              const commit = commits[index] ?? {};
+              const sha = normalizeSingleLine(commit.id);
+              const position = `[${index + 1}/${commits.length}]`;
+
+              if (commit.distinct === false) {
+                console.log(`${position} Commit já conhecido no push; ignorado.`);
+                continue;
+              }
+              if (!VALID_SHA.test(sha)) {
+                console.error(`${position} Commit sem hash válido; ignorado.`);
+                notSent.push(`#${index + 1}`);
+                continue;
+              }
+
+              const shortSha = sha.slice(0, 7);
+              const author =
+                normalizeSingleLine(commit.author?.name) || 'Não informado';
+              const authorForComparison = normalizeSingleLine(commit.author?.name);
+              const pushAuthor =
+                pusher && pusher !== authorForComparison
+                  ? truncateUtf16(pusher, 100)
+                  : null;
+              const rawBody = normalizeMultiline(commit.message);
+              const fields = {
+                repository: truncateUtf16(repository, 140),
+                branch: truncateUtf16(branch, 200),
+                author: truncateUtf16(author, 100),
+                pusher: pushAuthor,
+                shortSha,
+                date: formatDate(commit.timestamp ?? commit.author?.date),
+                commitUrl: `https://github.com/${repository}/commit/${sha}`,
+              };
+              const message = buildMessageWithinLimit(fields, rawBody);
+              const idempotencyKey = idempotencyKeyFor(repository, branch, sha);
+
+              console.log(`${position} Notificando commit ${shortSha} (${fields.branch})...`);
+              const result = await sendWithRetry(url, token, { message }, idempotencyKey);
+
+              if (result.ok) {
+                sentCount += 1;
+                console.log(`${position} Commit ${shortSha} notificado (HTTP ${result.status}).`);
+                continue;
+              }
+
+              notSent.push(shortSha);
+              console.error(`${position} Falha ao notificar ${shortSha}: ${describeFailure(result)}`);
+              if (result.fatal) {
+                console.error('Erro de configuração ou integração do webhook; interrompendo.');
+                break;
+              }
+            }
+
+            if (sentCount > 0) {
+              console.log(`${sentCount} commit(s) notificado(s) com sucesso.`);
+            }
+            if (notSent.length > 0) {
+              console.error(`${notSent.length} commit(s) não notificado(s): ${notSent.join(', ')}`);
+              process.exitCode = 1;
+            }
+          }
+
+          main().catch((error) => {
+            console.error(error instanceof Error ? error.message : 'Erro desconhecido.');
+            process.exitCode = 1;
+          });
+          NODE

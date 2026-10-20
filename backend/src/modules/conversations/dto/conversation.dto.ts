@@ -1,6 +1,8 @@
 import { ConversationStatus } from '@prisma/client';
 import { Transform } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  IsArray,
   IsBoolean,
   IsEnum,
   IsOptional,
@@ -78,6 +80,12 @@ export class UpdateConversationDto {
   @IsOptional()
   @IsUUID()
   contactId?: string | null;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @IsUUID(undefined, { each: true })
+  tagIds?: string[];
 }
 
 export class SendConversationMessageDto {

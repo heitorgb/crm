@@ -33,6 +33,8 @@ interface PrismaMock {
     delete: ReturnType<typeof vi.fn>;
     count: ReturnType<typeof vi.fn>;
   };
+  leadPipeline: { create: ReturnType<typeof vi.fn> };
+  leadStage: { createMany: ReturnType<typeof vi.fn> };
 }
 
 function tenantDetail() {
@@ -81,6 +83,8 @@ function createService() {
       delete: vi.fn(),
       count: vi.fn(),
     },
+    leadPipeline: { create: vi.fn() },
+    leadStage: { createMany: vi.fn() },
   };
 
   prisma.$transaction.mockImplementation((arg: unknown) =>
@@ -103,6 +107,8 @@ describe('AdminService', () => {
   it('creates a tenant with an owner membership', async () => {
     const { service, prisma, passwords } = createService();
     prisma.tenant.create.mockResolvedValue({ id: 'tenant-1', name: 'Acme' });
+    prisma.leadPipeline.create.mockResolvedValue({ id: 'pipeline-1' });
+    prisma.leadStage.createMany.mockResolvedValue({ count: 7 });
     prisma.user.upsert.mockResolvedValue({ id: 'user-1' });
     prisma.tenantUser.create.mockResolvedValue({});
     prisma.tenant.findUnique.mockResolvedValue(tenantDetail());
@@ -116,6 +122,12 @@ describe('AdminService', () => {
 
     expect(passwords.hash).toHaveBeenCalledWith('senha12345');
     expect(prisma.tenant.create).toHaveBeenCalledWith({ data: { name: 'Acme' } });
+    expect(prisma.leadPipeline.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ tenantId: 'tenant-1' }) }),
+    );
+    expect(prisma.leadStage.createMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.arrayContaining([expect.objectContaining({ name: 'Novo lead' })]) }),
+    );
     expect(prisma.user.upsert).toHaveBeenCalledWith(
       expect.objectContaining({ where: { email: 'owner@x.com' } }),
     );

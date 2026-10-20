@@ -7,6 +7,7 @@ import {
   Pin,
   PinOff,
   Smartphone,
+  Tags,
   Trash2,
 } from 'lucide-react';
 import { EmptyState } from '@/components/common/empty-state';
@@ -62,6 +63,7 @@ interface ConversationListProps {
   archivePendingId: string | null;
   onDelete: (conversation: Conversation) => void;
   deletePendingId: string | null;
+  onEditTags: (conversation: Conversation) => void;
 }
 
 export function ConversationList({
@@ -86,12 +88,23 @@ export function ConversationList({
   archivePendingId,
   onDelete,
   deletePendingId,
+  onEditTags,
 }: ConversationListProps) {
+  const activeConversation = conversations.find((item) => item.id === activeId) ?? null;
+
   return (
     <div className="flex h-full min-h-0 w-full flex-col border-r border-border bg-card">
       <div className="hidden h-14 items-center border-b border-border px-4 lg:flex">
         <h2 className="text-sm font-semibold text-foreground">Conversas</h2>
-        <span className="ml-auto text-xs text-muted-foreground">{conversations.length}</span>
+        <div className="ml-auto flex items-center gap-2">
+          {activeConversation ? (
+            <Button variant="ghost" size="sm" onClick={() => onEditTags(activeConversation)}>
+              <Tags />
+              Etiquetas
+            </Button>
+          ) : null}
+          <span className="text-xs text-muted-foreground">{conversations.length}</span>
+        </div>
       </div>
 
       <div className="space-y-2 border-b border-border p-2.5 sm:p-3">
@@ -246,6 +259,11 @@ export function ConversationList({
                       <span className="max-w-[9rem] truncate rounded-sm bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
                         {item.instanceName}
                       </span>
+                      {(item.tags ?? []).slice(0, 2).map((tag) => (
+                        <span key={tag.id} className="inline-flex max-w-[7rem] items-center gap-1 truncate rounded-full border border-border px-1.5 py-0.5 text-[10px]" style={{ backgroundColor: tag.color ? `${tag.color}18` : undefined }}>
+                          <span className="size-1.5 shrink-0 rounded-full" style={{ backgroundColor: tag.color ?? '#94a3b8' }} />{tag.name}
+                        </span>
+                      ))}
                     </div>
                   </div>
                 </button>
@@ -282,6 +300,10 @@ export function ConversationList({
                       >
                         {archived ? <ArchiveRestore /> : <Archive />}
                         {archived ? 'Desarquivar' : 'Arquivar'}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onSelect={() => onEditTags(item)}>
+                        <Tags />
+                        Etiquetas
                       </DropdownMenuItem>
                       <DropdownMenuSeparator />
                       <DropdownMenuItem

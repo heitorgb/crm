@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Download, FileText } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
@@ -11,15 +11,30 @@ import { useAttachmentBlob } from './queries';
 import { AudioPlayer } from './audio-player';
 
 function useObjectUrl(blob: Blob | undefined): string | null {
-  const url = useMemo(() => (blob ? URL.createObjectURL(blob) : null), [blob]);
+  const [url, setUrl] = useState<string | null>(null);
 
   useEffect(() => {
+    let active = true;
+
+    if (!blob) {
+      queueMicrotask(() => {
+        if (active) setUrl(null);
+      });
+      return () => {
+        active = false;
+      };
+    }
+
+    const nextUrl = URL.createObjectURL(blob);
+    queueMicrotask(() => {
+      if (active) setUrl(nextUrl);
+    });
+
     return () => {
-      if (url) {
-        URL.revokeObjectURL(url);
-      }
+      active = false;
+      URL.revokeObjectURL(nextUrl);
     };
-  }, [url]);
+  }, [blob]);
 
   return url;
 }

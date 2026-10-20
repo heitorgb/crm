@@ -11,11 +11,18 @@ export interface TagView {
   name: string;
   color: string | null;
   customerCount: number;
+  conversationCount: number;
+  leadCount: number;
+  usageCount: number;
   createdAt: Date;
   updatedAt: Date;
 }
 
-type PrismaTag = Prisma.TagGetPayload<{ include: { _count: { select: { customers: true } } } }>;
+const TAG_COUNT = {
+  _count: { select: { customers: true, conversations: true, leads: true } },
+} satisfies Prisma.TagInclude;
+
+type PrismaTag = Prisma.TagGetPayload<{ include: typeof TAG_COUNT }>;
 
 @Injectable()
 export class TagsService {
@@ -39,7 +46,7 @@ export class TagsService {
         orderBy: { [query.sort]: query.order },
         skip: skipOf(query.page, query.perPage),
         take: query.perPage,
-        include: { _count: { select: { customers: true } } },
+        include: TAG_COUNT,
       }),
     ]);
 
@@ -50,7 +57,7 @@ export class TagsService {
     const { tenantId } = this.tenantContext.requireContext();
     const tag = await this.prisma.tag.findFirst({
       where: { id, tenantId },
-      include: { _count: { select: { customers: true } } },
+      include: TAG_COUNT,
     });
 
     if (!tag) {
@@ -70,7 +77,7 @@ export class TagsService {
           name: dto.name.trim(),
           color: dto.color ?? null,
         },
-        include: { _count: { select: { customers: true } } },
+        include: TAG_COUNT,
       });
 
       return toTagView(tag);
@@ -91,7 +98,7 @@ export class TagsService {
       const tag = await this.prisma.tag.update({
         where: { id },
         data,
-        include: { _count: { select: { customers: true } } },
+        include: TAG_COUNT,
       });
 
       return toTagView(tag);
@@ -124,6 +131,9 @@ function toTagView(tag: PrismaTag): TagView {
     name: tag.name,
     color: tag.color,
     customerCount: tag._count.customers,
+    conversationCount: tag._count.conversations,
+    leadCount: tag._count.leads,
+    usageCount: tag._count.customers + tag._count.conversations + tag._count.leads,
     createdAt: tag.createdAt,
     updatedAt: tag.updatedAt,
   };

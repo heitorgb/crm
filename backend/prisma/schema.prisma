@@ -130,6 +130,18 @@ enum WebhookExecutionStatus {
   FAILED
 }
 
+enum LeadStatus {
+  OPEN
+  WON
+  LOST
+}
+
+enum LeadStageKind {
+  OPEN
+  WON
+  LOST
+}
+
 model Tenant {
   id                    String   @id @default(uuid()) @db.Uuid
   name                  String
@@ -137,30 +149,35 @@ model Tenant {
   createdAt             DateTime @default(now()) @map("created_at")
   updatedAt             DateTime @updatedAt @map("updated_at")
 
-  members            TenantUser[]
-  refreshTokens      RefreshToken[]
-  customers          Customer[]
-  contacts           Contact[]
-  tags               Tag[]
-  customerTags       CustomerTag[]
-  whatsappInstances  WhatsAppInstance[]
-  whatsappAvatars    WhatsAppAvatar[]
-  conversations      Conversation[]
-  messages           Message[]
-  messageAttachments MessageAttachment[]
-  webhookEvents      WebhookEvent[]
-  billingCharges     BillingCharge[]
-  billingRecurrences BillingRecurrence[]
-  billingSettings    BillingSettings?
-  billingReminders   BillingReminder[]
-  bulkMediaBatches   BulkMediaBatch[]
-  bulkMediaRecipients BulkMediaRecipient[]
-  scheduledMessages  ScheduledMessage[]
+  members                    TenantUser[]
+  refreshTokens              RefreshToken[]
+  customers                  Customer[]
+  contacts                   Contact[]
+  tags                       Tag[]
+  customerTags               CustomerTag[]
+  conversationTags           ConversationTag[]
+  leadTags                   LeadTag[]
+  whatsappInstances          WhatsAppInstance[]
+  whatsappAvatars            WhatsAppAvatar[]
+  conversations              Conversation[]
+  messages                   Message[]
+  messageAttachments         MessageAttachment[]
+  webhookEvents              WebhookEvent[]
+  billingCharges             BillingCharge[]
+  billingRecurrences         BillingRecurrence[]
+  billingSettings            BillingSettings?
+  billingReminders           BillingReminder[]
+  bulkMediaBatches           BulkMediaBatch[]
+  bulkMediaRecipients        BulkMediaRecipient[]
+  scheduledMessages          ScheduledMessage[]
   scheduledMessageRecipients ScheduledMessageRecipient[]
-  modules            TenantModule[]
-  webhookIntegrations WebhookIntegration[]
-  webhookExecutions   WebhookExecution[]
-  linkPreviews        LinkPreview[]
+  modules                    TenantModule[]
+  webhookIntegrations        WebhookIntegration[]
+  webhookExecutions          WebhookExecution[]
+  linkPreviews               LinkPreview[]
+  leadPipelines              LeadPipeline[]
+  leadStages                 LeadStage[]
+  leads                      Lead[]
 
   @@map("tenants")
 }
@@ -189,8 +206,9 @@ model TenantUser {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant     Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user       User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ownedLeads Lead[] @relation("LeadOwner")
 
   @@unique([tenantId, userId])
   @@index([userId])
@@ -227,10 +245,10 @@ model Customer {
   createdAt DateTime       @default(now()) @map("created_at")
   updatedAt DateTime       @updatedAt @map("updated_at")
 
-  tenant        Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  contacts      Contact[]
-  tags          CustomerTag[]
-  conversations Conversation[]
+  tenant             Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  contacts           Contact[]
+  tags               CustomerTag[]
+  conversations      Conversation[]
   billingCharges     BillingCharge[]
   billingRecurrences BillingRecurrence[]
 
@@ -254,16 +272,87 @@ model Contact {
   createdAt  DateTime @default(now()) @map("created_at")
   updatedAt  DateTime @updatedAt @map("updated_at")
 
-  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  customer      Customer?      @relation(fields: [customerId], references: [id], onDelete: SetNull)
-  conversations Conversation[]
+  tenant             Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer           Customer?           @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  conversations      Conversation[]
   billingCharges     BillingCharge[]
   billingRecurrences BillingRecurrence[]
+  leads              Lead[]
 
   @@unique([tenantId, phone])
   @@index([tenantId, customerId])
   @@index([tenantId, createdAt])
   @@map("contacts")
+}
+
+model LeadPipeline {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
+  name        String
+  description String?
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  tenant Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  stages LeadStage[]
+  leads  Lead[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId, active])
+  @@map("lead_pipelines")
+}
+
+model LeadStage {
+  id         String        @id @default(uuid()) @db.Uuid
+  tenantId   String        @map("tenant_id") @db.Uuid
+  pipelineId String        @map("pipeline_id") @db.Uuid
+  name       String
+  color      String?
+  position   Int
+  kind       LeadStageKind @default(OPEN)
+  createdAt  DateTime      @default(now()) @map("created_at")
+  updatedAt  DateTime      @updatedAt @map("updated_at")
+
+  tenant   Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  pipeline LeadPipeline @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+  leads    Lead[]
+
+  @@unique([pipelineId, position])
+  @@index([tenantId, pipelineId])
+  @@map("lead_stages")
+}
+
+model Lead {
+  id             String     @id @default(uuid()) @db.Uuid
+  tenantId       String     @map("tenant_id") @db.Uuid
+  pipelineId     String     @map("pipeline_id") @db.Uuid
+  stageId        String     @map("stage_id") @db.Uuid
+  contactId      String     @map("contact_id") @db.Uuid
+  ownerId        String?    @map("owner_id") @db.Uuid
+  title          String
+  source         String?
+  valueCents     Int        @default(0) @map("value_cents")
+  status         LeadStatus @default(OPEN)
+  notes          String?
+  nextFollowUpAt DateTime?  @map("next_follow_up_at")
+  closedAt       DateTime?  @map("closed_at")
+  createdAt      DateTime   @default(now()) @map("created_at")
+  updatedAt      DateTime   @updatedAt @map("updated_at")
+
+  tenant   Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  pipeline LeadPipeline @relation(fields: [pipelineId], references: [id], onDelete: Restrict)
+  stage    LeadStage    @relation(fields: [stageId], references: [id], onDelete: Restrict)
+  contact  Contact      @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  owner    TenantUser?  @relation("LeadOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  tags     LeadTag[]
+
+  @@index([tenantId, pipelineId, stageId])
+  @@index([tenantId, status])
+  @@index([tenantId, contactId])
+  @@index([tenantId, ownerId])
+  @@index([tenantId, nextFollowUpAt])
+  @@map("leads")
 }
 
 model Tag {
@@ -274,12 +363,29 @@ model Tag {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  tenant    Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  customers CustomerTag[]
+  tenant        Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customers     CustomerTag[]
+  conversations ConversationTag[]
+  leads         LeadTag[]
 
   @@unique([tenantId, name])
   @@index([tenantId, createdAt])
   @@map("tags")
+}
+
+model LeadTag {
+  leadId    String   @map("lead_id") @db.Uuid
+  tagId     String   @map("tag_id") @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+
+  lead   Lead   @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  tag    Tag    @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@id([leadId, tagId])
+  @@index([tenantId, tagId])
+  @@map("lead_tags")
 }
 
 model CustomerTag {
@@ -298,22 +404,22 @@ model CustomerTag {
 }
 
 model WhatsAppInstance {
-  id                   String                @id @default(uuid()) @db.Uuid
-  tenantId             String                @map("tenant_id") @db.Uuid
+  id                   String                 @id @default(uuid()) @db.Uuid
+  tenantId             String                 @map("tenant_id") @db.Uuid
   name                 String
-  instanceName         String                @unique @map("instance_name")
-  externalInstanceId   String?               @map("external_instance_id")
+  instanceName         String                 @unique @map("instance_name")
+  externalInstanceId   String?                @map("external_instance_id")
   phone                String?
   status               WhatsAppInstanceStatus @default(DISCONNECTED)
-  credentialsEncrypted String?               @map("credentials_encrypted")
-  active               Boolean               @default(true)
-  createdAt            DateTime              @default(now()) @map("created_at")
-  updatedAt            DateTime              @updatedAt @map("updated_at")
+  credentialsEncrypted String?                @map("credentials_encrypted")
+  active               Boolean                @default(true)
+  createdAt            DateTime               @default(now()) @map("created_at")
+  updatedAt            DateTime               @updatedAt @map("updated_at")
 
-  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  conversations Conversation[]
-  avatars       WhatsAppAvatar[]
-  billingSettings BillingSettings[]
+  tenant              Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  conversations       Conversation[]
+  avatars             WhatsAppAvatar[]
+  billingSettings     BillingSettings[]
   webhookIntegrations WebhookIntegration[]
 
   @@index([tenantId, status])
@@ -344,6 +450,8 @@ model Conversation {
   createdAt          DateTime           @default(now()) @map("created_at")
   updatedAt          DateTime           @updatedAt @map("updated_at")
 
+  tags ConversationTag[]
+
   tenant   Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   instance WhatsAppInstance @relation(fields: [whatsappInstanceId], references: [id], onDelete: Cascade)
   customer Customer?        @relation(fields: [customerId], references: [id], onDelete: SetNull)
@@ -356,6 +464,21 @@ model Conversation {
   @@index([tenantId, isPinned, lastMessageAt])
   @@index([tenantId, isArchived, isPinned, lastMessageAt])
   @@map("conversations")
+}
+
+model ConversationTag {
+  conversationId String   @map("conversation_id") @db.Uuid
+  tagId          String   @map("tag_id") @db.Uuid
+  tenantId       String   @map("tenant_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  tag          Tag          @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@id([conversationId, tagId])
+  @@index([tenantId, tagId])
+  @@map("conversation_tags")
 }
 
 model Message {
@@ -565,22 +688,22 @@ model BillingReminder {
 }
 
 model BulkMediaBatch {
-  id               String               @id @default(uuid()) @db.Uuid
-  tenantId         String               @map("tenant_id") @db.Uuid
-  createdByUserId  String?              @map("created_by_user_id") @db.Uuid
-  idempotencyKey   String               @map("idempotency_key")
-  caption          String?
-  storageKey       String               @map("storage_key")
-  thumbnailKey     String?              @map("thumbnail_key")
-  fileName         String               @map("file_name")
-  mimeType         String               @map("mime_type")
-  size             Int
-  status           BulkMediaBatchStatus @default(PENDING)
-  totalCount       Int                  @default(0) @map("total_count")
-  successCount     Int                  @default(0) @map("success_count")
-  failureCount     Int                  @default(0) @map("failure_count")
-  createdAt        DateTime             @default(now()) @map("created_at")
-  updatedAt        DateTime             @updatedAt @map("updated_at")
+  id              String               @id @default(uuid()) @db.Uuid
+  tenantId        String               @map("tenant_id") @db.Uuid
+  createdByUserId String?              @map("created_by_user_id") @db.Uuid
+  idempotencyKey  String               @map("idempotency_key")
+  caption         String?
+  storageKey      String               @map("storage_key")
+  thumbnailKey    String?              @map("thumbnail_key")
+  fileName        String               @map("file_name")
+  mimeType        String               @map("mime_type")
+  size            Int
+  status          BulkMediaBatchStatus @default(PENDING)
+  totalCount      Int                  @default(0) @map("total_count")
+  successCount    Int                  @default(0) @map("success_count")
+  failureCount    Int                  @default(0) @map("failure_count")
+  createdAt       DateTime             @default(now()) @map("created_at")
+  updatedAt       DateTime             @updatedAt @map("updated_at")
 
   tenant     Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   recipients BulkMediaRecipient[]
@@ -592,23 +715,23 @@ model BulkMediaBatch {
 }
 
 model BulkMediaRecipient {
-  id                 String                  @id @default(uuid()) @db.Uuid
-  tenantId           String                  @map("tenant_id") @db.Uuid
-  batchId            String                  @map("batch_id") @db.Uuid
-  conversationId     String                  @map("conversation_id") @db.Uuid
-  contactId          String?                 @map("contact_id") @db.Uuid
+  id                 String                   @id @default(uuid()) @db.Uuid
+  tenantId           String                   @map("tenant_id") @db.Uuid
+  batchId            String                   @map("batch_id") @db.Uuid
+  conversationId     String                   @map("conversation_id") @db.Uuid
+  contactId          String?                  @map("contact_id") @db.Uuid
   name               String
   destination        String
-  whatsappInstanceId String?                 @map("whatsapp_instance_id") @db.Uuid
+  whatsappInstanceId String?                  @map("whatsapp_instance_id") @db.Uuid
   status             BulkMediaRecipientStatus @default(PENDING)
-  attempts           Int                     @default(0)
-  errorCode          String?                 @map("error_code")
-  errorMessage       String?                 @map("error_message")
-  messageId          String?                 @map("message_id") @db.Uuid
-  externalMessageId  String?                 @map("external_message_id")
-  processedAt        DateTime?               @map("processed_at")
-  createdAt          DateTime                @default(now()) @map("created_at")
-  updatedAt          DateTime                @updatedAt @map("updated_at")
+  attempts           Int                      @default(0)
+  errorCode          String?                  @map("error_code")
+  errorMessage       String?                  @map("error_message")
+  messageId          String?                  @map("message_id") @db.Uuid
+  externalMessageId  String?                  @map("external_message_id")
+  processedAt        DateTime?                @map("processed_at")
+  createdAt          DateTime                 @default(now()) @map("created_at")
+  updatedAt          DateTime                 @updatedAt @map("updated_at")
 
   tenant Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   batch  BulkMediaBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
@@ -643,7 +766,7 @@ model ScheduledMessage {
   createdAt              DateTime                   @default(now()) @map("created_at")
   updatedAt              DateTime                   @updatedAt @map("updated_at")
 
-  tenant     Tenant                     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant     Tenant                      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   recipients ScheduledMessageRecipient[]
 
   @@index([tenantId, status, nextRunAt])
@@ -652,26 +775,26 @@ model ScheduledMessage {
 }
 
 model ScheduledMessageRecipient {
-  id                 String                       @id @default(uuid()) @db.Uuid
-  tenantId           String                       @map("tenant_id") @db.Uuid
-  scheduledMessageId String                       @map("scheduled_message_id") @db.Uuid
-  scheduledFor       DateTime                     @map("scheduled_for")
-  recipientKey       String                       @map("recipient_key")
-  conversationId     String?                      @map("conversation_id") @db.Uuid
-  contactId          String?                      @map("contact_id") @db.Uuid
-  recipientName      String                       @map("recipient_name")
+  id                 String                          @id @default(uuid()) @db.Uuid
+  tenantId           String                          @map("tenant_id") @db.Uuid
+  scheduledMessageId String                          @map("scheduled_message_id") @db.Uuid
+  scheduledFor       DateTime                        @map("scheduled_for")
+  recipientKey       String                          @map("recipient_key")
+  conversationId     String?                         @map("conversation_id") @db.Uuid
+  contactId          String?                         @map("contact_id") @db.Uuid
+  recipientName      String                          @map("recipient_name")
   destination        String
-  whatsappInstanceId String?                      @map("whatsapp_instance_id") @db.Uuid
+  whatsappInstanceId String?                         @map("whatsapp_instance_id") @db.Uuid
   status             ScheduledMessageRecipientStatus @default(PENDING)
-  attempts           Int                          @default(0)
-  nextAttemptAt      DateTime?                    @map("next_attempt_at")
-  externalMessageId  String?                      @map("external_message_id")
-  messageId          String?                      @map("message_id") @db.Uuid
-  errorCode          String?                      @map("error_code")
-  errorMessage       String?                      @map("error_message")
-  processedAt        DateTime?                    @map("processed_at")
-  createdAt          DateTime                     @default(now()) @map("created_at")
-  updatedAt          DateTime                     @updatedAt @map("updated_at")
+  attempts           Int                             @default(0)
+  nextAttemptAt      DateTime?                       @map("next_attempt_at")
+  externalMessageId  String?                         @map("external_message_id")
+  messageId          String?                         @map("message_id") @db.Uuid
+  errorCode          String?                         @map("error_code")
+  errorMessage       String?                         @map("error_message")
+  processedAt        DateTime?                       @map("processed_at")
+  createdAt          DateTime                        @default(now()) @map("created_at")
+  updatedAt          DateTime                        @updatedAt @map("updated_at")
 
   tenant           Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   scheduledMessage ScheduledMessage @relation(fields: [scheduledMessageId], references: [id], onDelete: Cascade)
@@ -731,8 +854,8 @@ model WebhookIntegration {
   createdAt          DateTime  @default(now()) @map("created_at")
   updatedAt          DateTime  @updatedAt @map("updated_at")
 
-  tenant     Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  instance   WhatsAppInstance @relation(fields: [whatsappInstanceId], references: [id], onDelete: Cascade)
+  tenant     Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  instance   WhatsAppInstance   @relation(fields: [whatsappInstanceId], references: [id], onDelete: Cascade)
   executions WebhookExecution[]
 
   @@index([tenantId, deletedAt])
@@ -753,7 +876,7 @@ model WebhookExecution {
   errorMessage      String?                @map("error_message")
   createdAt         DateTime               @default(now()) @map("created_at")
 
-  tenant  Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant  Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   webhook WebhookIntegration @relation(fields: [webhookId], references: [id], onDelete: Cascade)
 
   @@unique([webhookId, idempotencyKey])

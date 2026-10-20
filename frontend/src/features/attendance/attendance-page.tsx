@@ -13,6 +13,7 @@ import { useWhatsAppInstances } from '@/features/whatsapp/queries';
 import { ChatPanel } from './chat-panel';
 import { ContactPanel } from './contact-panel';
 import { ConversationList } from './conversation-list';
+import { ConversationTagsDialog } from './conversation-tags-dialog';
 import { PhotoSendFlow } from './photo-send-flow';
 import { buildTimeline, conversationLabel } from './attendance-utils';
 import { isMediaPending } from './media-message-utils';
@@ -67,6 +68,7 @@ export function AttendancePage() {
   const [historyRequestedId, setHistoryRequestedId] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<Conversation | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [tagConversation, setTagConversation] = useState<Conversation | null>(null);
 
   const selectedId = searchParams.get('conversation');
 
@@ -265,6 +267,7 @@ export function AttendancePage() {
             archivePendingId={setArchived.isPending ? (setArchived.variables?.id ?? null) : null}
             onDelete={handleDeleteRequest}
             deletePendingId={deleteConversation.isPending ? (deleteConversation.variables ?? null) : null}
+            onEditTags={setTagConversation}
           />
         </div>
 
@@ -370,6 +373,17 @@ export function AttendancePage() {
           }
         }}
       />
+
+      {tagConversation ? (
+        <ConversationTagsDialog
+          key={tagConversation.id}
+          conversation={tagConversation}
+          open
+          onOpenChange={(open) => {
+            if (!open) setTagConversation(null);
+          }}
+        />
+      ) : null}
 
       <ConfirmDialog
         open={Boolean(pendingDelete)}

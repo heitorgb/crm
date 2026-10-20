@@ -61,6 +61,18 @@ export function useConversation(id: string | undefined) {
   });
 }
 
+export function useUpdateConversationTags() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, tagIds }: { id: string; tagIds: string[] }) =>
+      attendanceService.updateTags(id, tagIds),
+    onSuccess: (conversation) => {
+      queryClient.setQueryData(attendanceKeys.conversation(conversation.id), conversation);
+      void queryClient.invalidateQueries({ queryKey: attendanceKeys.all });
+    },
+  });
+}
+
 export function useUnreadCount() {
   return useQuery({
     queryKey: attendanceKeys.unreadCount,

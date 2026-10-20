@@ -170,6 +170,48 @@ describe('Tags (integration)', () => {
       expect(detail.json().customerCount).toBe(1);
     });
 
+    it('assigns tags to conversations and rejects tags from another tenant', async () => {
+      const tagA = await createTag(ownerA, { name: 'Atendimento prioritÃ¡rio', color: '#F97316' });
+      const tagB = await createTag(ownerB, { name: 'Somente B' });
+      const instance = await prisma.whatsAppInstance.create({
+        data: {
+          tenantId: ownerA.tenantId,
+          name: 'Comercial',
+          instanceName: `tag-test-${crypto.randomUUID()}`,
+        },
+      });
+      const conversation = await prisma.conversation.create({
+        data: { tenantId: ownerA.tenantId, whatsappInstanceId: instance.id },
+      });
+
+      const assigned = await app.inject({
+        method: 'PATCH',
+        url: `/api/conversations/${conversation.id}`,
+        headers: authHeaders(ownerA),
+        payload: { tagIds: [tagA.json().id] },
+      });
+      expect(assigned.statusCode).toBe(200);
+      expect(assigned.json().tags).toEqual([
+        { id: tagA.json().id, name: 'Atendimento prioritÃ¡rio', color: '#F97316' },
+      ]);
+
+      const detail = await app.inject({
+        method: 'GET',
+        url: `/api/tags/${tagA.json().id}`,
+        headers: authHeaders(ownerA),
+      });
+      expect(detail.json()).toMatchObject({ conversationCount: 1, usageCount: 1 });
+
+      const foreign = await app.inject({
+        method: 'PATCH',
+        url: `/api/conversations/${conversation.id}`,
+        headers: authHeaders(ownerA),
+        payload: { tagIds: [tagB.json().id] },
+      });
+      expect(foreign.statusCode).toBe(404);
+      expect(foreign.json().code).toBe('CONVERSATION_TAG_NOT_FOUND');
+    });
+
     it('never reads or mutates another tenant tag', async () => {
       const tagB = await createTag(ownerB, { name: 'Só do B' });
       const tagBId = tagB.json().id as string;

@@ -1,7 +1,5 @@
-import { useState } from 'react';
 import { Camera, Menu } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
-import { SearchInput } from '@/components/common/search-input';
 import { TenantSelector, type TenantOption } from '@/components/common/tenant-selector';
 import { Button } from '@/components/ui/button';
 import { useSwitchTenant } from '@/features/auth/queries';
@@ -16,7 +14,6 @@ interface HeaderProps {
 }
 
 export function Header({ onOpenMobileSidebar }: HeaderProps) {
-  const [search, setSearch] = useState('');
   const { pathname } = useLocation();
   const session = useAuthStore((state) => state.session);
   const memberships = useAuthStore((state) => state.memberships);
@@ -72,13 +69,6 @@ export function Header({ onOpenMobileSidebar }: HeaderProps) {
         >
           <Menu />
         </Button>
-
-        <SearchInput
-          value={search}
-          onChange={setSearch}
-          placeholder="Buscar contatos e conversas…"
-          className="hidden w-full max-w-xs md:block"
-        />
 
         <div className="ml-auto flex items-center gap-1.5">
           {session ? (

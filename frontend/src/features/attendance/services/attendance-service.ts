@@ -49,6 +49,9 @@ export const attendanceService = {
 
   getConversation: (id: string) => apiRequest<Conversation>(`/conversations/${id}`),
 
+  updateTags: (id: string, tagIds: string[]) =>
+    apiRequest<Conversation>(`/conversations/${id}`, { method: 'PATCH', body: { tagIds } }),
+
   unreadCount: () => apiRequest<{ total: number }>('/conversations/unread-count'),
 
   markRead: (id: string) =>

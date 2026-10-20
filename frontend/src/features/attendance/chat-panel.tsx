@@ -52,8 +52,8 @@ interface ChatPanelProps {
   hasOlderMessages: boolean;
   loadingOlderMessages: boolean;
   onLoadOlderMessages: () => void;
-  onBack: () => void;
-  onToggleInfo: () => void;
+  onBack?: () => void;
+  onToggleInfo?: () => void;
   closePending: boolean;
   onClose: () => void;
   reopenPending: boolean;
@@ -226,17 +226,19 @@ export function ChatPanel({
   };
 
   return (
-    <div className="relative flex min-w-0 flex-1 flex-col">
+    <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
       <div className="flex items-center gap-2 border-b border-border bg-card px-2 py-2 sm:px-4 sm:py-3">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="md:hidden"
-          onClick={onBack}
-          aria-label="Voltar para conversas"
-        >
-          <ArrowLeft />
-        </Button>
+        {onBack ? (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="md:hidden"
+            onClick={onBack}
+            aria-label="Voltar para conversas"
+          >
+            <ArrowLeft />
+          </Button>
+        ) : null}
         <SenderAvatar
           conversationId={conversation.id}
           jid={isGroup ? null : conversation.externalContactId}
@@ -258,9 +260,11 @@ export function ChatPanel({
         >
           {conversationStatusLabel[conversation.status]}
         </StatusBadge>
-        <Button variant="ghost" size="icon" onClick={onToggleInfo} aria-label="Informações">
-          <Info />
-        </Button>
+        {onToggleInfo ? (
+          <Button variant="ghost" size="icon" onClick={onToggleInfo} aria-label="Informações">
+            <Info />
+          </Button>
+        ) : null}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" size="icon" aria-label="Mais ações">
@@ -300,7 +304,7 @@ export function ChatPanel({
       <div
         ref={scrollRef}
         onScroll={handleScroll}
-        className="chat-wallpaper relative flex-1 overflow-y-auto scrollbar-thin px-3 py-4 sm:px-6"
+        className="chat-wallpaper relative min-h-0 flex-1 overflow-y-auto scrollbar-thin px-3 py-4 sm:px-6"
       >
         {messagesPending ? (
           <div className="space-y-3">

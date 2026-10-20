@@ -8,6 +8,9 @@ export interface TagSummary {
 
 export interface Tag extends TagSummary {
   customerCount: number;
+  conversationCount: number;
+  leadCount: number;
+  usageCount: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -86,4 +89,68 @@ export interface ContactInput {
 export interface TagInput {
   name: string;
   color?: string | null;
+}
+
+export type LeadStatus = 'OPEN' | 'WON' | 'LOST';
+export type LeadStageKind = LeadStatus;
+
+export interface LeadPipeline {
+  id: string;
+  name: string;
+  description: string | null;
+  active: boolean;
+  stages: LeadStage[];
+}
+
+export interface LeadStage {
+  id: string;
+  pipelineId: string;
+  name: string;
+  color: string | null;
+  position: number;
+  kind: LeadStageKind;
+}
+
+export interface LeadCard {
+  id: string;
+  pipelineId: string;
+  stageId: string;
+  contactId: string;
+  ownerId: string | null;
+  ownerName: string | null;
+  title: string;
+  source: string | null;
+  valueCents: number;
+  status: LeadStatus;
+  notes: string | null;
+  nextFollowUpAt: string | null;
+  closedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  contact: Pick<Contact, 'id' | 'name' | 'phone' | 'email' | 'avatarUrl'>;
+  tags: TagSummary[];
+}
+
+export interface LeadBoardStage extends LeadStage {
+  leadCount: number;
+  valueCents: number;
+  leads: LeadCard[];
+}
+
+export interface LeadBoard {
+  pipeline: Omit<LeadPipeline, 'stages'>;
+  stages: LeadBoardStage[];
+}
+
+export interface LeadInput {
+  pipelineId: string;
+  stageId: string;
+  contactId: string;
+  ownerId?: string | null;
+  title: string;
+  source?: string | null;
+  valueCents?: number;
+  notes?: string | null;
+  nextFollowUpAt?: string | null;
+  tagIds?: string[];
 }

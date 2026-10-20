@@ -32,12 +32,16 @@ Campos: `name` (obrigatório), `email?`, `phone?`, `position?`, `avatarUrl?`, `i
 timestamps. `avatarUrl` é preenchido pela importação automática da agenda do WhatsApp.
 Índices: `(tenantId, customerId)` e `(tenantId, createdAt)`.
 
-### `Tag` e `CustomerTag`
+### Etiquetas compartilhadas
 
 - `Tag`: `name` (obrigatório) e `color?` (hex). `UNIQUE (tenantId, name)`.
 - `CustomerTag`: associação N:N (`PK (customerId, tagId)`) com `tenantId` denormalizado para o
   escopo de tenant e índice `(tenantId, tagId)`. A associação só é aceita se cliente e tag
   pertencerem ao mesmo tenant (validado no service).
+- `ConversationTag` e `LeadTag`: associações N:N que reutilizam o mesmo catálogo em conversas e
+  oportunidades. Ambos carregam `tenantId`; a API valida todas as etiquetas antes de substituir
+  os vínculos.
+- A listagem retorna contagens de clientes, conversas, oportunidades e o total de usos.
 
 ### `QualificationProfile`
 

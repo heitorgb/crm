@@ -35,6 +35,8 @@ export function useUpdateTag() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: tagKeys.all });
       void queryClient.invalidateQueries({ queryKey: customerKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ['attendance'] });
+      void queryClient.invalidateQueries({ queryKey: ['leads'] });
     },
   });
 }
@@ -47,6 +49,8 @@ export function useDeleteTag() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: tagKeys.all });
       void queryClient.invalidateQueries({ queryKey: customerKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ['attendance'] });
+      void queryClient.invalidateQueries({ queryKey: ['leads'] });
     },
   });
 }

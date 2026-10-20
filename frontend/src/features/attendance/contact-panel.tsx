@@ -10,6 +10,8 @@ import {
   conversationStatusTone,
 } from './attendance-utils';
 import { SenderAvatar } from './sender-avatar';
+import { TagPicker } from '@/features/tags/tag-picker';
+import { useUpdateConversationTags } from './queries';
 
 interface ContactPanelProps {
   conversation: Conversation | null;
@@ -22,6 +24,7 @@ export function ContactPanel({
   onRefreshGroup,
   refreshingGroup,
 }: ContactPanelProps) {
+  const updateTags = useUpdateConversationTags();
   if (!conversation) {
     return (
       <div className="flex h-full items-center justify-center p-6 text-center text-sm text-muted-foreground">
@@ -72,6 +75,15 @@ export function ContactPanel({
           {conversation.subject ? (
             <InfoRow label="Assunto">{conversation.subject}</InfoRow>
           ) : null}
+        </div>
+
+        <div className="space-y-2 border-t border-border p-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Etiquetas</p>
+          <TagPicker
+            value={(conversation.tags ?? []).map((tag) => tag.id)}
+            onValueChange={(tagIds) => void updateTags.mutateAsync({ id: conversation.id, tagIds })}
+            disabled={updateTags.isPending}
+          />
         </div>
 
         <div className="space-y-2 border-t border-border p-4">

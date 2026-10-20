@@ -2,7 +2,7 @@
 
 > Status: **Fundação (Prompt 04) + CRM Core (Prompt 05) + Vendas (Prompt 06) + Atendimento (Prompt 07)**.
 > Design system, layout e tema, e as telas de Clientes/Contatos/Tags/Bot de Qualificação, Vendas
-> (Leads, Kanban, Negócios, Pipelines, Tarefas) e Atendimento (Conversas com realtime, Tickets,
+> (Painel de Leads em Kanban) e Atendimento (Conversas com realtime, Tickets,
 > Resumo de Leads) conectadas à API via TanStack Query. Relatórios segue como placeholder.
 
 ## Stack
@@ -123,14 +123,17 @@ frontend/
 
 ## Rotas
 
+- CRM: `/leads` (oportunidades) e `/crm/etiquetas` (gerenciador compartilhado com nome e cor).
+
 - `/login` (público), `/dashboard` (protegido).
 - CRM Core (conectado à API): `/clientes/clientes`, `/clientes/clientes/:id`, `/clientes/contatos`,
-  `/clientes/tags` e `/settings/qualification-bot`.
+  `/crm/etiquetas` e `/settings/qualification-bot`.
 - Vendas (conectado à API): `/vendas/leads`, `/vendas/funil` (Kanban com drag and drop persistido),
   `/vendas/negocios`, `/tarefas` e `/settings/pipelines` (CRUD de pipelines/etapas).
 - Atendimento (conectado à API + Socket.IO): `/atendimento/conversas` (layout estilo WhatsApp Web em
   tela cheia — lista, chat e painel de contato, com rolagem independente, alternância lista/chat no
-  mobile e painel de contato em `Sheet` abaixo de `xl`) e `/mensagens-agendadas` (campanhas e
+  mobile, edição de etiquetas pela própria lista e painel de contato em `Sheet` abaixo de `xl`) e
+  `/mensagens-agendadas` (campanhas e
   lembretes com recorrência, anexo, prévia e histórico). O gerenciamento de instâncias WhatsApp
   (conexão por QR code e webhook) fica em **Configurações → WhatsApp** (`/configuracoes?tab=whatsapp`);
   a rota antiga `/atendimento/whatsapp` redireciona para a nova localização.

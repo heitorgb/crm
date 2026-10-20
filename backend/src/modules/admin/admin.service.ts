@@ -158,6 +158,24 @@ export class AdminService {
 
     const tenant = await this.prisma.$transaction(async (tx) => {
       const created = await tx.tenant.create({ data: { name: dto.name.trim() } });
+      const pipeline = await tx.leadPipeline.create({
+        data: {
+          tenantId: created.id,
+          name: 'Pipeline comercial',
+          description: 'Fluxo comercial padrão',
+        },
+      });
+      await tx.leadStage.createMany({
+        data: [
+          { tenantId: created.id, pipelineId: pipeline.id, name: 'Novo lead', color: '#3b82f6', position: 1 },
+          { tenantId: created.id, pipelineId: pipeline.id, name: 'Entrou em contato', color: '#06b6d4', position: 2 },
+          { tenantId: created.id, pipelineId: pipeline.id, name: 'Qualificado', color: '#8b5cf6', position: 3 },
+          { tenantId: created.id, pipelineId: pipeline.id, name: 'Proposta enviada', color: '#f59e0b', position: 4 },
+          { tenantId: created.id, pipelineId: pipeline.id, name: 'Pagamento', color: '#f97316', position: 5 },
+          { tenantId: created.id, pipelineId: pipeline.id, name: 'Venda ganha', color: '#22c55e', position: 6, kind: 'WON' },
+          { tenantId: created.id, pipelineId: pipeline.id, name: 'Perdido', color: '#ef4444', position: 7, kind: 'LOST' },
+        ],
+      });
 
       const user = await tx.user.upsert({
         where: { email },

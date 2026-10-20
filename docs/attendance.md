@@ -161,6 +161,20 @@ CRM (sem dependências novas). A tela é **full-bleed**: `MainContent` deixa de 
   (com remetente em grupos e rótulo "Mídia" quando não há texto), horário relativo (Hoje/Ontem/data)
   e indicadores de status/grupo/instância. Estados de carregamento (skeleton), erro (com retry) e
   lista vazia (convite para conectar o WhatsApp).
+- **Layout mobile**: abaixo de `lg`, o cabeçalho do atendimento mostra o avatar do usuário à
+  esquerda e, à direita, os botões de câmera e menu. O título "Conversas"/contador e os filtros de
+  instância/status saem da tela inicial; a busca fica logo abaixo do cabeçalho e as abas logo abaixo
+  da busca. Tema e filtros ficam dentro do menu hambúrguer (com a navegação), continuam valendo após
+  fechar o menu e são compartilhados pela store `attendance-view-store`. No desktop o layout e os
+  filtros permanecem como antes.
+- **Foto pela câmera**: o botão de câmera abre um `<input type="file" accept="image/*"
+  capture="environment">` (com fallback para a galeria). A imagem é comprimida no navegador (até
+  1600 px, JPEG) e o backend revalida/otimiza com `sharp`. Depois da prévia com legenda, o operador
+  seleciona uma ou mais conversas (busca, checkbox e contador) e dispara um batch assíncrono
+  (`POST /api/conversations/bulk-media`). O processamento usa a fila
+  (`bulk-media.send`), envia com intervalo (`BULK_MEDIA_INTERVAL_MS`, padrão 1,5 s) e registra
+  status por destinatário; a tela acompanha por polling, permite reenviar falhas e usa
+  `idempotencyKey` para evitar duplicidade. Detalhes em [`media.md`](./media.md).
 - **Fixar conversas**: cada item expõe um menu de ações que **fixa** ou **desafixa** a conversa
   (exclusivo do CRM — nada é enviado à Evolution). O estado persiste em
   `Conversation.isPinned` (`POST /api/conversations/:id/pin` e `/unpin`, idempotentes e escopados

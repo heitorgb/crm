@@ -23,6 +23,7 @@ Contatos (histórico de conversas por contato)
 - [docs/authentication.md](./docs/authentication.md) — autenticação/autorização.
 - [docs/como-executar.md](./docs/como-executar.md) — guia passo a passo para executar (infra, backend, frontend, Evolution).
 - [docs/media.md](./docs/media.md) — envio/recebimento de imagens no Chat (otimização e storage).
+- [docs/scheduled-messages.md](./docs/scheduled-messages.md) — campanhas e lembretes agendados.
 - [docs/development.md](./docs/development.md) — como rodar, testar e validar.
 - [docs/frontend.md](./docs/frontend.md) — frontend e design system.
 - [docs/deploy.md](./docs/deploy.md) — deploy contínuo (GitHub Actions + Docker Compose).

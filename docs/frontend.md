@@ -130,7 +130,8 @@ frontend/
   `/vendas/negocios`, `/tarefas` e `/settings/pipelines` (CRUD de pipelines/etapas).
 - Atendimento (conectado à API + Socket.IO): `/atendimento/conversas` (layout estilo WhatsApp Web em
   tela cheia — lista, chat e painel de contato, com rolagem independente, alternância lista/chat no
-  mobile e painel de contato em `Sheet` abaixo de `xl`). O gerenciamento de instâncias WhatsApp
+  mobile e painel de contato em `Sheet` abaixo de `xl`) e `/mensagens-agendadas` (campanhas e
+  lembretes com recorrência, anexo, prévia e histórico). O gerenciamento de instâncias WhatsApp
   (conexão por QR code e webhook) fica em **Configurações → WhatsApp** (`/configuracoes?tab=whatsapp`);
   a rota antiga `/atendimento/whatsapp` redireciona para a nova localização.
 - Administração da plataforma (visível só para `isPlatformAdmin`): `/admin/tenants` (criar/listar

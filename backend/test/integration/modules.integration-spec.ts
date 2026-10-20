@@ -136,7 +136,7 @@ describe('Modules management (integration)', () => {
       expect.arrayContaining([
         'attendance',
         'contacts',
-        'leads',
+        'crm',
         'billing.charges',
         'billing.collection',
         'webhooks',
@@ -227,6 +227,40 @@ describe('Modules management (integration)', () => {
     expect(allowed.statusCode).toBe(200);
   });
 
+  it('blocks CRM routes (opportunities and tags) when the crm module is disabled', async () => {
+    await setModule(orgB.tenantId, 'crm', false);
+
+    const leadsBlocked = await app.inject({
+      method: 'GET',
+      url: '/api/leads/pipelines',
+      headers: authHeaders(orgB),
+    });
+    expect(leadsBlocked.statusCode).toBe(403);
+    expect(leadsBlocked.json().details).toMatchObject({ module: 'crm' });
+
+    const tagsBlocked = await app.inject({
+      method: 'GET',
+      url: '/api/tags',
+      headers: authHeaders(orgB),
+    });
+    expect(tagsBlocked.statusCode).toBe(403);
+    expect(tagsBlocked.json().details).toMatchObject({ module: 'crm' });
+
+    const leadsAllowed = await app.inject({
+      method: 'GET',
+      url: '/api/leads/pipelines',
+      headers: authHeaders(orgA),
+    });
+    expect(leadsAllowed.statusCode).toBe(200);
+
+    const tagsAllowed = await app.inject({
+      method: 'GET',
+      url: '/api/tags',
+      headers: authHeaders(orgA),
+    });
+    expect(tagsAllowed.statusCode).toBe(200);
+  });
+
   it('exposes the enabled modules for the authenticated organization', async () => {
     await setModule(orgA.tenantId, 'contacts', false);
 
@@ -247,7 +281,7 @@ describe('Modules management (integration)', () => {
       expect.arrayContaining([
         'attendance',
         'contacts',
-        'leads',
+        'crm',
         'billing.charges',
         'billing.collection',
         'webhooks',

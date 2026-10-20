@@ -28,8 +28,8 @@ export const navigation: NavEntry[] = [
     title: 'CRM',
     icon: KanbanSquare,
     items: [
-      { title: 'Oportunidades', to: '/leads', icon: KanbanSquare, moduleKey: MODULE_KEYS.LEADS },
-      { title: 'Etiquetas', to: '/crm/etiquetas', icon: Tags },
+      { title: 'Oportunidades', to: '/leads', icon: KanbanSquare, moduleKey: MODULE_KEYS.CRM },
+      { title: 'Etiquetas', to: '/crm/etiquetas', icon: Tags, moduleKey: MODULE_KEYS.CRM },
     ],
   },
   {

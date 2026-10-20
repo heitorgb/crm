@@ -87,17 +87,60 @@ jobs:
             return `${part('day')}/${part('month')}/${part('year')} ${part('hour')}:${part('minute')}`;
           }
 
-          function buildMessage(fields, body) {
-            const sections = [
-              '🚀 *ATUALIZAÇÃO DO CRM*',
+          function splitCommitMessage(value) {
+            const normalized = normalizeMultiline(value);
+            if (!normalized) {
+              return { title: '', body: '' };
+            }
+
+            const newlineIndex = normalized.indexOf('\n');
+            const title =
+              newlineIndex === -1
+                ? normalizeSingleLine(normalized)
+                : normalizeSingleLine(normalized.slice(0, newlineIndex));
+            let body = newlineIndex === -1 ? '' : normalized.slice(newlineIndex + 1);
+            body = body
+              .split('\n')
+              .map((line) => line.replace(/[ \t]+$/g, ''))
+              .join('\n')
+              .replace(/\n{3,}/g, '\n\n')
+              .replace(/^\n+/, '')
+              .replace(/\n+$/, '');
+
+            if (title && body) {
+              const [firstLine, ...remainingLines] = body.split('\n');
+              if (normalizeSingleLine(firstLine) === title) {
+                body = remainingLines
+                  .join('\n')
+                  .replace(/^\n+/, '')
+                  .replace(/\n+$/, '');
+              }
+            }
+
+            return { title, body };
+          }
+
+          function formatCommitText(title, body) {
+            if (!title) {
+              return body || 'Mensagem não informada.';
+            }
+            const headline = `*${title}*`;
+            return body ? `${headline}\n\n${body}` : headline;
+          }
+
+          function buildMessage(fields, commitText) {
+            const sections = ['🚀 *ATUALIZAÇÃO DO CRM*', '📝 *COMMIT REALIZADO*'];
+            if (commitText) {
+              sections.push(commitText);
+            }
+            sections.push(
               `📦 *Repositório:* ${fields.repository}`,
               `🌿 *Branch:* ${fields.branch}`,
               `👤 *Autor:* ${fields.author}`,
-            ];
+            );
             if (fields.pusher) {
               sections.push(`📤 *Push por:* ${fields.pusher}`);
             }
-            sections.push(`📝 *Commit:*\n${body}`);
             if (fields.shortSha) {
               sections.push(`🔖 *Hash:* ${fields.shortSha}`);
             }
@@ -110,16 +153,22 @@ jobs:
             return sections.join('\n\n');
           }
 
-          function buildMessageWithinLimit(fields, rawBody) {
-            const body = rawBody || 'Mensagem não informada.';
-            const full = buildMessage(fields, body);
+          function buildMessageWithinLimit(fields, rawMessage) {
+            const { title, body } = splitCommitMessage(rawMessage);
+            const full = buildMessage(fields, formatCommitText(title, body));
             if (full.length <= MAX_MESSAGE_LENGTH) {
               return full;
             }
 
             const suffix = '\n\n… (mensagem truncada)';
-            const template = buildMessage(fields, '');
-            const budget = MAX_MESSAGE_LENGTH - template.length - suffix.length;
+            const template = buildMessage(fields, formatCommitText(title, ''));
+            const separatorLength = title && body ? 2 : 0;
+            const budget =
+              MAX_MESSAGE_LENGTH - template.length - separatorLength - suffix.length;
+            if (budget <= 0) {
+              return truncateUtf16(template, MAX_MESSAGE_LENGTH);
+            }
+
             let truncatedBody = '';
             for (const character of body) {
               if (truncatedBody.length + character.length > budget) {
@@ -128,7 +177,10 @@ jobs:
               truncatedBody += character;
             }
 
-            const candidate = buildMessage(fields, `${truncatedBody.trimEnd()}${suffix}`);
+            const candidate = buildMessage(
+              fields,
+              formatCommitText(title, `${truncatedBody.trimEnd()}${suffix}`),
+            );
             if (candidate.length <= MAX_MESSAGE_LENGTH) {
               return candidate;
             }
@@ -356,7 +408,7 @@ jobs:
                 pusher && pusher !== authorForComparison
                   ? truncateUtf16(pusher, 100)
                   : null;
-              const rawBody = normalizeMultiline(commit.message);
+              const rawMessage = commit.message;
               const fields = {
                 repository: truncateUtf16(repository, 140),
                 branch: truncateUtf16(branch, 200),
@@ -366,7 +418,7 @@ jobs:
                 date: formatDate(commit.timestamp ?? commit.author?.date),
                 commitUrl: `https://github.com/${repository}/commit/${sha}`,
               };
-              const message = buildMessageWithinLimit(fields, rawBody);
+              const message = buildMessageWithinLimit(fields, rawMessage);
               const idempotencyKey = idempotencyKeyFor(repository, branch, sha);
 
               console.log(`${position} Notificando commit ${shortSha} (${fields.branch})...`);

@@ -26,7 +26,7 @@ import {
 import { LeadsService } from './leads.service.js';
 
 @Controller('leads')
-@RequireModule(MODULE_KEYS.LEADS)
+@RequireModule(MODULE_KEYS.CRM)
 export class LeadsController {
   constructor(private readonly leads: LeadsService) {}
 

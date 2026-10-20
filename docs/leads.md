@@ -38,7 +38,7 @@ Financeiro.
 
 ## API
 
-Todas as rotas exigem autenticação, membership ativa e o módulo `leads` habilitado.
+Todas as rotas exigem autenticação, membership ativa e o módulo `crm` habilitado.
 
 | Método | Rota | Uso |
 | --- | --- | --- |

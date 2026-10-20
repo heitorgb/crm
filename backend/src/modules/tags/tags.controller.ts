@@ -11,10 +11,13 @@ import {
   Query,
 } from '@nestjs/common';
 import { Roles } from '../auth/decorators/auth.decorators.js';
+import { MODULE_KEYS } from '../modules/modules.constants.js';
+import { RequireModule } from '../modules/require-module.decorator.js';
 import { CreateTagDto, ListTagsQueryDto, UpdateTagDto } from './dto/tag.dto.js';
 import { TagsService } from './tags.service.js';
 
 @Controller('tags')
+@RequireModule(MODULE_KEYS.CRM)
 export class TagsController {
   constructor(private readonly tags: TagsService) {}
 

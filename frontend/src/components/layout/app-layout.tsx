@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { useSessionSync } from '@/features/auth/queries';
 import { useMessageNotifications } from '@/features/notifications/use-message-notifications';
@@ -12,6 +13,7 @@ import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 export function AppLayout() {
   const collapsed = useUiStore((state) => state.sidebarCollapsed);
   const mobileSidebarOpen = useUiStore((state) => state.mobileSidebarOpen);
+  const sidebarPosition = useUiStore((state) => state.sidebarPosition);
   const setMobileSidebarOpen = useUiStore((state) => state.setMobileSidebarOpen);
   const { pathname } = useLocation();
   const isAttendance = pathname.startsWith('/atendimento/conversas');
@@ -19,22 +21,39 @@ export function AppLayout() {
   useSessionSync();
   useMessageNotifications();
 
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+      return;
+    }
+
+    const desktop = window.matchMedia('(min-width: 1024px)');
+    const handleChange = (event: MediaQueryListEvent): void => {
+      if (event.matches) {
+        setMobileSidebarOpen(false);
+      }
+    };
+
+    desktop.addEventListener('change', handleChange);
+    return () => desktop.removeEventListener('change', handleChange);
+  }, [setMobileSidebarOpen]);
+
   return (
     <div className="flex h-screen overflow-hidden bg-background">
       <Sidebar
         collapsed={collapsed}
         className={cn(
-          'hidden transition-[width] duration-200 lg:flex',
-          collapsed ? 'w-[68px]' : 'w-[248px]',
+          'hidden shrink-0 transition-[width] duration-200 lg:flex',
+          collapsed ? 'w-20' : 'w-[248px]',
         )}
       />
 
       <Sheet open={mobileSidebarOpen} onOpenChange={setMobileSidebarOpen}>
-        <SheetContent side="left" className="w-[248px] p-0">
+        <SheetContent side={sidebarPosition} className="w-[248px] p-0">
           <SheetTitle className="sr-only">Navegação principal</SheetTitle>
           <Sidebar
             collapsed={false}
             onNavigate={() => setMobileSidebarOpen(false)}
+            showCollapseToggle={false}
             footer={isAttendance ? <AttendanceMobileOptions /> : undefined}
           />
         </SheetContent>

@@ -1,4 +1,4 @@
-import { Monitor, Moon, Sun } from 'lucide-react';
+import { Archive, Inbox, Monitor, Moon, Sun } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Select,
@@ -85,18 +85,30 @@ export function AttendanceMobileOptions() {
             <SelectItem value="CLOSED">Encerradas</SelectItem>
           </SelectContent>
         </Select>
-        <Select
-          value={archivedView ? 'archived' : 'inbox'}
-          onValueChange={(value) => setArchivedView(value === 'archived')}
-        >
-          <SelectTrigger aria-label="Filtrar por caixa">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="inbox">Caixa de entrada</SelectItem>
-            <SelectItem value="archived">Arquivadas</SelectItem>
-          </SelectContent>
-        </Select>
+        <div className="grid grid-cols-2 gap-1" role="group" aria-label="Filtrar por caixa">
+          <Button
+            type="button"
+            variant={archivedView ? 'ghost' : 'secondary'}
+            size="sm"
+            className="h-auto flex-col gap-1 py-2 text-xs"
+            onClick={() => setArchivedView(false)}
+            aria-pressed={!archivedView}
+          >
+            <Inbox className="size-4" />
+            Caixa de entrada
+          </Button>
+          <Button
+            type="button"
+            variant={archivedView ? 'secondary' : 'ghost'}
+            size="sm"
+            className="h-auto flex-col gap-1 py-2 text-xs"
+            onClick={() => setArchivedView(true)}
+            aria-pressed={archivedView}
+          >
+            <Archive className="size-4" />
+            Arquivadas
+          </Button>
+        </div>
         <div className="flex items-center gap-2 pt-1">
           <Button
             type="button"

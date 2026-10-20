@@ -80,6 +80,50 @@ enum BillingReminderOrigin {
   MANUAL
 }
 
+enum BulkMediaBatchStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  PARTIAL
+  FAILED
+}
+
+enum BulkMediaRecipientStatus {
+  PENDING
+  PROCESSING
+  SENT
+  FAILED
+  SKIPPED
+}
+
+enum ScheduledMessageType {
+  CAMPAIGN
+  REMINDER
+}
+
+enum ScheduledMessageStatus {
+  SCHEDULED
+  PROCESSING
+  SENT
+  FAILED
+  CANCELED
+}
+
+enum ScheduledMessageRecurrence {
+  ONCE
+  DAILY
+  WEEKLY
+  MONTHLY
+}
+
+enum ScheduledMessageRecipientStatus {
+  PENDING
+  PROCESSING
+  SENT
+  FAILED
+  SKIPPED
+}
+
 enum WebhookExecutionStatus {
   PROCESSING
   SUCCESS
@@ -87,10 +131,11 @@ enum WebhookExecutionStatus {
 }
 
 model Tenant {
-  id        String   @id @default(uuid()) @db.Uuid
-  name      String
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  id                    String   @id @default(uuid()) @db.Uuid
+  name                  String
+  whatsappInstanceLimit Int      @default(3) @map("whatsapp_instance_limit")
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
 
   members            TenantUser[]
   refreshTokens      RefreshToken[]
@@ -108,6 +153,10 @@ model Tenant {
   billingRecurrences BillingRecurrence[]
   billingSettings    BillingSettings?
   billingReminders   BillingReminder[]
+  bulkMediaBatches   BulkMediaBatch[]
+  bulkMediaRecipients BulkMediaRecipient[]
+  scheduledMessages  ScheduledMessage[]
+  scheduledMessageRecipients ScheduledMessageRecipient[]
   modules            TenantModule[]
   webhookIntegrations WebhookIntegration[]
   webhookExecutions   WebhookExecution[]
@@ -513,6 +562,124 @@ model BillingReminder {
   @@index([tenantId, status])
   @@index([tenantId, createdAt])
   @@map("billing_reminders")
+}
+
+model BulkMediaBatch {
+  id               String               @id @default(uuid()) @db.Uuid
+  tenantId         String               @map("tenant_id") @db.Uuid
+  createdByUserId  String?              @map("created_by_user_id") @db.Uuid
+  idempotencyKey   String               @map("idempotency_key")
+  caption          String?
+  storageKey       String               @map("storage_key")
+  thumbnailKey     String?              @map("thumbnail_key")
+  fileName         String               @map("file_name")
+  mimeType         String               @map("mime_type")
+  size             Int
+  status           BulkMediaBatchStatus @default(PENDING)
+  totalCount       Int                  @default(0) @map("total_count")
+  successCount     Int                  @default(0) @map("success_count")
+  failureCount     Int                  @default(0) @map("failure_count")
+  createdAt        DateTime             @default(now()) @map("created_at")
+  updatedAt        DateTime             @updatedAt @map("updated_at")
+
+  tenant     Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  recipients BulkMediaRecipient[]
+
+  @@unique([tenantId, idempotencyKey])
+  @@index([tenantId, createdAt])
+  @@index([tenantId, status])
+  @@map("bulk_media_batches")
+}
+
+model BulkMediaRecipient {
+  id                 String                  @id @default(uuid()) @db.Uuid
+  tenantId           String                  @map("tenant_id") @db.Uuid
+  batchId            String                  @map("batch_id") @db.Uuid
+  conversationId     String                  @map("conversation_id") @db.Uuid
+  contactId          String?                 @map("contact_id") @db.Uuid
+  name               String
+  destination        String
+  whatsappInstanceId String?                 @map("whatsapp_instance_id") @db.Uuid
+  status             BulkMediaRecipientStatus @default(PENDING)
+  attempts           Int                     @default(0)
+  errorCode          String?                 @map("error_code")
+  errorMessage       String?                 @map("error_message")
+  messageId          String?                 @map("message_id") @db.Uuid
+  externalMessageId  String?                 @map("external_message_id")
+  processedAt        DateTime?               @map("processed_at")
+  createdAt          DateTime                @default(now()) @map("created_at")
+  updatedAt          DateTime                @updatedAt @map("updated_at")
+
+  tenant Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  batch  BulkMediaBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  @@unique([batchId, conversationId])
+  @@index([tenantId, status])
+  @@index([batchId, status])
+  @@map("bulk_media_recipients")
+}
+
+model ScheduledMessage {
+  id                     String                     @id @default(uuid()) @db.Uuid
+  tenantId               String                     @map("tenant_id") @db.Uuid
+  createdByUserId        String?                    @map("created_by_user_id") @db.Uuid
+  type                   ScheduledMessageType
+  title                  String
+  content                String
+  valor                  String?
+  attachmentStorageKey   String?                    @map("attachment_storage_key")
+  attachmentThumbnailKey String?                    @map("attachment_thumbnail_key")
+  attachmentFileName     String?                    @map("attachment_file_name")
+  attachmentMimeType     String?                    @map("attachment_mime_type")
+  attachmentSize         Int?                       @map("attachment_size")
+  recurrence             ScheduledMessageRecurrence @default(ONCE)
+  timeZone               String                     @default("America/Sao_Paulo") @map("time_zone")
+  scheduledAt            DateTime                   @map("scheduled_at")
+  nextRunAt              DateTime?                  @map("next_run_at")
+  lastRunAt              DateTime?                  @map("last_run_at")
+  recipientCount         Int                        @default(0) @map("recipient_count")
+  status                 ScheduledMessageStatus     @default(SCHEDULED)
+  canceledAt             DateTime?                  @map("canceled_at")
+  createdAt              DateTime                   @default(now()) @map("created_at")
+  updatedAt              DateTime                   @updatedAt @map("updated_at")
+
+  tenant     Tenant                     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  recipients ScheduledMessageRecipient[]
+
+  @@index([tenantId, status, nextRunAt])
+  @@index([tenantId, createdAt])
+  @@map("scheduled_messages")
+}
+
+model ScheduledMessageRecipient {
+  id                 String                       @id @default(uuid()) @db.Uuid
+  tenantId           String                       @map("tenant_id") @db.Uuid
+  scheduledMessageId String                       @map("scheduled_message_id") @db.Uuid
+  scheduledFor       DateTime                     @map("scheduled_for")
+  recipientKey       String                       @map("recipient_key")
+  conversationId     String?                      @map("conversation_id") @db.Uuid
+  contactId          String?                      @map("contact_id") @db.Uuid
+  recipientName      String                       @map("recipient_name")
+  destination        String
+  whatsappInstanceId String?                      @map("whatsapp_instance_id") @db.Uuid
+  status             ScheduledMessageRecipientStatus @default(PENDING)
+  attempts           Int                          @default(0)
+  nextAttemptAt      DateTime?                    @map("next_attempt_at")
+  externalMessageId  String?                      @map("external_message_id")
+  messageId          String?                      @map("message_id") @db.Uuid
+  errorCode          String?                      @map("error_code")
+  errorMessage       String?                      @map("error_message")
+  processedAt        DateTime?                    @map("processed_at")
+  createdAt          DateTime                     @default(now()) @map("created_at")
+  updatedAt          DateTime                     @updatedAt @map("updated_at")
+
+  tenant           Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  scheduledMessage ScheduledMessage @relation(fields: [scheduledMessageId], references: [id], onDelete: Cascade)
+
+  @@unique([scheduledMessageId, scheduledFor, recipientKey], map: "sched_msg_recipient_run_key")
+  @@index([tenantId, status, scheduledFor], map: "sched_recipient_tenant_status_run_idx")
+  @@index([scheduledMessageId, scheduledFor], map: "sched_msg_recipient_run_idx")
+  @@map("scheduled_message_recipients")
 }
 
 model Module {

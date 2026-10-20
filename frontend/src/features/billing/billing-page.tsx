@@ -1,8 +1,10 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
   AlertTriangle,
   BadgeCheck,
   BellRing,
+  CalendarClock,
   History,
   Pencil,
   Plus,
@@ -115,6 +117,12 @@ export function BillingPage() {
         description="Controle manual de cobranças e lembretes por WhatsApp."
         actions={
           <>
+            <Button variant="outline" asChild>
+              <Link to="/mensagens-agendadas">
+                <CalendarClock />
+                Mensagens agendadas
+              </Link>
+            </Button>
             {canManageCollection ? (
               <Button variant="outline" onClick={() => setSettingsOpen(true)}>
                 <BellRing />

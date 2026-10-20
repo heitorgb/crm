@@ -429,6 +429,138 @@ describe('WhatsApp attendance (integration)', () => {
       expect(response.json()).not.toHaveProperty('credentialsEncrypted');
     });
 
+    it('reports the quota for the current organization only', async () => {
+      const initial = await app.inject({
+        method: 'GET',
+        url: '/api/whatsapp/instances/quota',
+        headers: authHeaders(ownerA),
+      });
+      expect(initial.statusCode).toBe(200);
+      expect(initial.json()).toEqual({ used: 0, canCreate: true });
+
+      await createInstance(ownerA, `quota-${randomUUID()}`, 'DISCONNECTED');
+
+      const afterCreate = await app.inject({
+        method: 'GET',
+        url: '/api/whatsapp/instances/quota',
+        headers: authHeaders(ownerA),
+      });
+      expect(afterCreate.json()).toEqual({ used: 1, canCreate: true });
+
+      const otherTenant = await app.inject({
+        method: 'GET',
+        url: '/api/whatsapp/instances/quota',
+        headers: authHeaders(ownerB),
+      });
+      expect(otherTenant.json()).toEqual({ used: 0, canCreate: true });
+    });
+
+    it('enforces the default instance limit, including disconnected instances', async () => {
+      await createInstance(ownerA, `limit-a-${randomUUID()}`, 'CONNECTED');
+      await createInstance(ownerA, `limit-b-${randomUUID()}`, 'DISCONNECTED');
+      await createInstance(ownerA, `limit-c-${randomUUID()}`, 'DISCONNECTED');
+
+      const blocked = await app.inject({
+        method: 'POST',
+        url: '/api/whatsapp/instances',
+        headers: authHeaders(ownerA),
+        payload: { name: 'Above limit', instanceName: `limit-d-${randomUUID()}` },
+      });
+
+      expect(blocked.statusCode).toBe(409);
+      expect(blocked.json().code).toBe('WHATSAPP_INSTANCE_LIMIT_REACHED');
+      await expect(
+        prisma.whatsAppInstance.count({ where: { tenantId: ownerA.tenantId } }),
+      ).resolves.toBe(3);
+    });
+
+    it('frees a slot when an instance is deleted', async () => {
+      await prisma.tenant.update({
+        where: { id: ownerA.tenantId },
+        data: { whatsappInstanceLimit: 1 },
+      });
+      const firstId = await createInstance(ownerA, `single-${randomUUID()}`);
+
+      const blocked = await app.inject({
+        method: 'POST',
+        url: '/api/whatsapp/instances',
+        headers: authHeaders(ownerA),
+        payload: { name: 'Second', instanceName: `second-${randomUUID()}` },
+      });
+      expect(blocked.statusCode).toBe(409);
+
+      const removed = await app.inject({
+        method: 'DELETE',
+        url: `/api/whatsapp/instances/${firstId}`,
+        headers: authHeaders(ownerA),
+      });
+      expect(removed.statusCode).toBe(204);
+
+      const created = await app.inject({
+        method: 'POST',
+        url: '/api/whatsapp/instances',
+        headers: authHeaders(ownerA),
+        payload: { name: 'Second', instanceName: `second-${randomUUID()}` },
+      });
+      expect(created.statusCode).toBe(201);
+    });
+
+    it('keeps existing instances when the limit is reduced below usage', async () => {
+      for (let index = 0; index < 3; index += 1) {
+        await createInstance(ownerA, `reduced-${index}-${randomUUID()}`);
+      }
+
+      await prisma.tenant.update({
+        where: { id: ownerA.tenantId },
+        data: { whatsappInstanceLimit: 1 },
+      });
+
+      await expect(
+        prisma.whatsAppInstance.count({ where: { tenantId: ownerA.tenantId } }),
+      ).resolves.toBe(3);
+
+      const blocked = await app.inject({
+        method: 'POST',
+        url: '/api/whatsapp/instances',
+        headers: authHeaders(ownerA),
+        payload: { name: 'Above reduced limit', instanceName: `reduced-4-${randomUUID()}` },
+      });
+      expect(blocked.statusCode).toBe(409);
+      expect(blocked.json().code).toBe('WHATSAPP_INSTANCE_LIMIT_REACHED');
+    });
+
+    it('does not exceed the limit under concurrent creations', async () => {
+      await prisma.tenant.update({
+        where: { id: ownerA.tenantId },
+        data: { whatsappInstanceLimit: 3 },
+      });
+
+      const responses = await Promise.all(
+        Array.from({ length: 10 }, (_, index) =>
+          app.inject({
+            method: 'POST',
+            url: '/api/whatsapp/instances',
+            headers: authHeaders(ownerA),
+            payload: {
+              name: `Concurrent ${index}`,
+              instanceName: `concurrent-${index}-${randomUUID()}`,
+            },
+          }),
+        ),
+      );
+
+      const created = responses.filter((response) => response.statusCode === 201);
+      const blocked = responses.filter((response) => response.statusCode === 409);
+      expect(created).toHaveLength(3);
+      expect(blocked).toHaveLength(7);
+      for (const response of blocked) {
+        expect(response.json().code).toBe('WHATSAPP_INSTANCE_LIMIT_REACHED');
+      }
+      await expect(
+        prisma.whatsAppInstance.count({ where: { tenantId: ownerA.tenantId } }),
+      ).resolves.toBe(3);
+    });
+
     it('rejects duplicated instance names and enforces authorization', async () => {
       const instanceName = `dup-${randomUUID()}`;
       await createInstance(ownerA, instanceName);

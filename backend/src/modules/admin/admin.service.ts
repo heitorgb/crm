@@ -17,6 +17,7 @@ import type {
   ListTenantsQueryDto,
   ListUsersQueryDto,
   UpdateMemberDto,
+  UpdateTenantWhatsAppLimitDto,
 } from './dto/admin.dto.js';
 
 export interface TenantSummaryView {
@@ -39,6 +40,8 @@ export interface TenantMemberView {
 
 export interface TenantDetailView extends TenantSummaryView {
   members: TenantMemberView[];
+  whatsappInstanceLimit: number;
+  whatsappInstancesUsed: number;
 }
 
 export interface AdminUserView {
@@ -106,7 +109,7 @@ export class AdminService {
     const tenant = await this.prisma.tenant.findUnique({
       where: { id },
       include: {
-        _count: { select: { members: true } },
+        _count: { select: { members: true, whatsappInstances: true } },
         members: {
           orderBy: [{ role: 'asc' }, { createdAt: 'asc' }],
           select: {
@@ -125,7 +128,28 @@ export class AdminService {
       throw new TenantNotFoundError();
     }
 
-    return { ...toTenantSummary(tenant), members: tenant.members.map(toMember) };
+    return {
+      ...toTenantSummary(tenant),
+      members: tenant.members.map(toMember),
+      whatsappInstanceLimit: tenant.whatsappInstanceLimit,
+      whatsappInstancesUsed: tenant._count.whatsappInstances,
+    };
+  }
+
+  async updateWhatsAppInstanceLimit(
+    id: string,
+    dto: UpdateTenantWhatsAppLimitDto,
+  ): Promise<TenantDetailView> {
+    const result = await this.prisma.tenant.updateMany({
+      where: { id },
+      data: { whatsappInstanceLimit: dto.whatsappInstanceLimit },
+    });
+
+    if (result.count === 0) {
+      throw new TenantNotFoundError();
+    }
+
+    return this.getTenant(id);
   }
 
   async createTenantWithOwner(dto: CreateTenantDto): Promise<TenantDetailView> {

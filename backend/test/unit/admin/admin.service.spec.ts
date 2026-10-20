@@ -5,6 +5,7 @@ import {
   MembershipAlreadyExistsError,
   MembershipNotFoundError,
   PasswordRequiredError,
+  TenantNotFoundError,
 } from '../../../src/modules/admin/admin.errors.js';
 import { AdminService } from '../../../src/modules/admin/admin.service.js';
 
@@ -13,6 +14,7 @@ interface PrismaMock {
   tenant: {
     findUnique: ReturnType<typeof vi.fn>;
     create: ReturnType<typeof vi.fn>;
+    updateMany: ReturnType<typeof vi.fn>;
     count: ReturnType<typeof vi.fn>;
     findMany: ReturnType<typeof vi.fn>;
   };
@@ -37,9 +39,10 @@ function tenantDetail() {
   return {
     id: 'tenant-1',
     name: 'Acme',
+    whatsappInstanceLimit: 3,
     createdAt: new Date(),
     updatedAt: new Date(),
-    _count: { members: 1 },
+    _count: { members: 1, whatsappInstances: 2 },
     members: [
       {
         id: 'member-1',
@@ -59,6 +62,7 @@ function createService() {
     tenant: {
       findUnique: vi.fn(),
       create: vi.fn(),
+      updateMany: vi.fn(),
       count: vi.fn(),
       findMany: vi.fn(),
     },
@@ -186,6 +190,32 @@ describe('AdminService', () => {
     expect(prisma.tenantUser.update).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: 'member-1' }, data: { role: 'USER' } }),
     );
+  });
+
+  it('updates the WhatsApp instance limit and returns the current usage', async () => {
+    const { service, prisma } = createService();
+    prisma.tenant.updateMany.mockResolvedValue({ count: 1 });
+    prisma.tenant.findUnique.mockResolvedValue(tenantDetail());
+
+    const result = await service.updateWhatsAppInstanceLimit('tenant-1', {
+      whatsappInstanceLimit: 8,
+    });
+
+    expect(prisma.tenant.updateMany).toHaveBeenCalledWith({
+      where: { id: 'tenant-1' },
+      data: { whatsappInstanceLimit: 8 },
+    });
+    expect(result.whatsappInstanceLimit).toBe(3);
+    expect(result.whatsappInstancesUsed).toBe(2);
+  });
+
+  it('reports not found when updating the WhatsApp limit of an unknown tenant', async () => {
+    const { service, prisma } = createService();
+    prisma.tenant.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(
+      service.updateWhatsAppInstanceLimit('missing', { whatsappInstanceLimit: 0 }),
+    ).rejects.toBeInstanceOf(TenantNotFoundError);
   });
 
   it('reports not found when updating an unknown membership', async () => {

@@ -6,12 +6,14 @@ import { EmptyState } from '@/components/common/empty-state';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { Skeleton } from '@/components/ui/skeleton';
+import { useAttendanceViewStore } from '@/stores/attendance-view-store';
 import { cn } from '@/lib/utils';
-import type { Conversation, ConversationStatus } from '@/types/attendance';
+import type { Conversation } from '@/types/attendance';
 import { useWhatsAppInstances } from '@/features/whatsapp/queries';
 import { ChatPanel } from './chat-panel';
 import { ContactPanel } from './contact-panel';
 import { ConversationList } from './conversation-list';
+import { PhotoSendFlow } from './photo-send-flow';
 import { buildTimeline, conversationLabel } from './attendance-utils';
 import { isMediaPending } from './media-message-utils';
 import {
@@ -50,10 +52,16 @@ export function AttendancePage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const isDesktop = useMinWidth('(min-width: 1280px)');
 
-  const [search, setSearch] = useState('');
-  const [status, setStatus] = useState<ConversationStatus | 'ALL'>('ALL');
-  const [instanceId, setInstanceId] = useState<string>('ALL');
-  const [archivedView, setArchivedView] = useState(false);
+  const search = useAttendanceViewStore((state) => state.search);
+  const status = useAttendanceViewStore((state) => state.status);
+  const instanceId = useAttendanceViewStore((state) => state.instanceId);
+  const archivedView = useAttendanceViewStore((state) => state.archivedView);
+  const setSearch = useAttendanceViewStore((state) => state.setSearch);
+  const setStatus = useAttendanceViewStore((state) => state.setStatus);
+  const setInstanceId = useAttendanceViewStore((state) => state.setInstanceId);
+  const setArchivedView = useAttendanceViewStore((state) => state.setArchivedView);
+  const photoComposerOpen = useAttendanceViewStore((state) => state.photoComposerOpen);
+  const closePhotoComposer = useAttendanceViewStore((state) => state.closePhotoComposer);
   const [panelOpen, setPanelOpen] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
   const [historyRequestedId, setHistoryRequestedId] = useState<string | null>(null);
@@ -120,6 +128,17 @@ export function AttendancePage() {
   const handleDeselect = (): void => {
     setSearchParams({}, { replace: true });
   };
+
+  const filterSignature = `${status}|${instanceId}|${archivedView}`;
+  const previousFiltersRef = useRef(filterSignature);
+
+  useEffect(() => {
+    if (previousFiltersRef.current === filterSignature) {
+      return;
+    }
+    previousFiltersRef.current = filterSignature;
+    setSearchParams({}, { replace: true });
+  }, [filterSignature, setSearchParams]);
 
   const handleArchivedChange = (value: boolean): void => {
     setArchivedView(value);
@@ -342,6 +361,15 @@ export function AttendancePage() {
           />
         </SheetContent>
       </Sheet>
+
+      <PhotoSendFlow
+        open={photoComposerOpen}
+        onOpenChange={(next) => {
+          if (!next) {
+            closePhotoComposer();
+          }
+        }}
+      />
 
       <ConfirmDialog
         open={Boolean(pendingDelete)}

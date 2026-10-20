@@ -5,6 +5,7 @@ import type { EncryptionService } from '../../../src/infrastructure/crypto/encry
 import type { PrismaService } from '../../../src/infrastructure/prisma/prisma.service.js';
 import type { EvolutionClient } from '../../../src/modules/whatsapp/evolution/evolution.client.js';
 import type { WhatsAppContactSyncService } from '../../../src/modules/whatsapp/whatsapp-contact-sync.service.js';
+import { WhatsAppInstanceLimitReachedError } from '../../../src/modules/whatsapp/whatsapp.errors.js';
 import { WhatsAppInstancesService } from '../../../src/modules/whatsapp/whatsapp-instances.service.js';
 
 interface EvolutionMock {
@@ -15,10 +16,17 @@ interface EvolutionMock {
 interface Harness {
   service: WhatsAppInstancesService;
   prisma: {
+    $transaction: ReturnType<typeof vi.fn>;
+    $queryRaw: ReturnType<typeof vi.fn>;
+    tenant: {
+      findUnique: ReturnType<typeof vi.fn>;
+    };
     whatsAppInstance: {
       findMany: ReturnType<typeof vi.fn>;
       findUnique: ReturnType<typeof vi.fn>;
       update: ReturnType<typeof vi.fn>;
+      count: ReturnType<typeof vi.fn>;
+      create: ReturnType<typeof vi.fn>;
     };
   };
   evolution: EvolutionMock;
@@ -29,12 +37,24 @@ function createHarness(
   evolutionConfigured = true,
 ): Harness {
   const prisma = {
+    $transaction: vi.fn(),
+    $queryRaw: vi.fn(),
+    tenant: {
+      findUnique: vi.fn(),
+    },
     whatsAppInstance: {
       findMany: vi.fn().mockResolvedValue([]),
       findUnique: vi.fn().mockResolvedValue(null),
       update: vi.fn().mockResolvedValue({}),
+      count: vi.fn().mockResolvedValue(0),
+      create: vi.fn(),
     },
   };
+  prisma.$transaction.mockImplementation((arg: unknown) =>
+    typeof arg === 'function'
+      ? (arg as (client: typeof prisma) => unknown)(prisma)
+      : Promise.all(arg as Promise<unknown>[]),
+  );
   const evolution: EvolutionMock = {
     configured: evolutionConfigured,
     setWebhook: vi.fn().mockResolvedValue({}),
@@ -46,9 +66,13 @@ function createHarness(
 
   const contactSync = { enqueue: vi.fn().mockResolvedValue(undefined) };
 
+  const tenantContext = {
+    requireContext: vi.fn(() => ({ tenantId: 't1' })),
+  };
+
   const service = new WhatsAppInstancesService(
     prisma as unknown as PrismaService,
-    {} as unknown as TenantContextService,
+    tenantContext as unknown as TenantContextService,
     { available: false } as unknown as EncryptionService,
     evolution as unknown as EvolutionClient,
     contactSync as unknown as WhatsAppContactSyncService,
@@ -182,5 +206,71 @@ describe('WhatsAppInstancesService.applyProviderConnectionState', () => {
 
     prisma.whatsAppInstance.findUnique.mockResolvedValue(null);
     expect(await service.applyProviderConnectionState('missing', 'close')).toBeNull();
+  });
+});
+
+describe('WhatsAppInstancesService.create limit', () => {
+  it('creates an instance when there is an available slot', async () => {
+    const { service, prisma } = createHarness({});
+    prisma.$queryRaw.mockResolvedValue([{ whatsappInstanceLimit: 3 }]);
+    prisma.whatsAppInstance.count.mockResolvedValue(2);
+    prisma.whatsAppInstance.create.mockResolvedValue({
+      id: 'i1',
+      name: 'Atendimento',
+      instanceName: 'inst-1',
+      externalInstanceId: null,
+      phone: null,
+      status: 'DISCONNECTED',
+      active: true,
+      credentialsEncrypted: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    const result = await service.create({ name: 'Atendimento', instanceName: 'inst-1' });
+
+    expect(result.id).toBe('i1');
+    expect(prisma.whatsAppInstance.count).toHaveBeenCalledWith({ where: { tenantId: 't1' } });
+    expect(prisma.whatsAppInstance.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects creation when the limit has been reached', async () => {
+    const { service, prisma } = createHarness({});
+    prisma.$queryRaw.mockResolvedValue([{ whatsappInstanceLimit: 3 }]);
+    prisma.whatsAppInstance.count.mockResolvedValue(3);
+
+    await expect(
+      service.create({ name: 'Atendimento', instanceName: 'inst-4' }),
+    ).rejects.toBeInstanceOf(WhatsAppInstanceLimitReachedError);
+    expect(prisma.whatsAppInstance.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects creation when the organization limit is zero', async () => {
+    const { service, prisma } = createHarness({});
+    prisma.$queryRaw.mockResolvedValue([{ whatsappInstanceLimit: 0 }]);
+    prisma.whatsAppInstance.count.mockResolvedValue(0);
+
+    await expect(
+      service.create({ name: 'Atendimento', instanceName: 'inst-1' }),
+    ).rejects.toBeInstanceOf(WhatsAppInstanceLimitReachedError);
+    expect(prisma.whatsAppInstance.create).not.toHaveBeenCalled();
+  });
+});
+
+describe('WhatsAppInstancesService.getQuota', () => {
+  it('returns the limit, usage and remaining slots', async () => {
+    const { service, prisma } = createHarness({});
+    prisma.tenant.findUnique.mockResolvedValue({ whatsappInstanceLimit: 5 });
+    prisma.whatsAppInstance.count.mockResolvedValue(2);
+
+    await expect(service.getQuota()).resolves.toEqual({ used: 2, canCreate: true });
+  });
+
+  it('reports that creation is blocked when usage is above the limit', async () => {
+    const { service, prisma } = createHarness({});
+    prisma.tenant.findUnique.mockResolvedValue({ whatsappInstanceLimit: 1 });
+    prisma.whatsAppInstance.count.mockResolvedValue(3);
+
+    await expect(service.getQuota()).resolves.toEqual({ used: 3, canCreate: false });
   });
 });

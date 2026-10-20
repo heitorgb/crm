@@ -82,6 +82,24 @@ MEDIA_THUMBNAIL_DIMENSION=256
 - `POST /message/sendMedia/{instance}` — envio (base64).
 - `POST /chat/getBase64FromMediaMessage/{instance}` — busca da mídia recebida.
 
+## Envio de foto pela câmera (em massa)
+
+O cabeçalho do atendimento no mobile expõe um botão de câmera. O fluxo usa
+`<input type="file" accept="image/*" capture="environment">` (com fallback para a galeria), comprime
+a imagem no navegador (canvas, lado maior de 1600 px, JPEG) e mostra a prévia com legenda. Em
+seguida o operador seleciona conversas (contatos/grupos) e dispara o batch.
+
+- `POST /api/conversations/bulk-media` (multipart: `file`, `caption?`, `conversationIds` JSON,
+  `idempotencyKey`) cria `BulkMediaBatch` + `BulkMediaRecipient` e enfileira `bulk-media.send`.
+- A imagem é otimizada/armazenada **uma vez** em `tenant/{tenantId}/bulk-media/{batchId}/...` e
+  reutilizada pelos destinatários; o backend revalida com `sharp`.
+- O worker envia em sequência com intervalo (`BULK_MEDIA_INTERVAL_MS`, padrão 1,5 s), marca
+  `SENT/FAILED` por destinatário e publica os eventos normalmente na conversa.
+- `GET /api/conversations/bulk-media/:id` devolve o progresso; `POST .../retry` reenvia apenas as
+  falhas. O botão de envio fica desabilitado durante a operação e a chave de idempotência evita
+  duplicidade.
+- Limites: `BULK_MEDIA_MAX_RECIPIENTS` (100) e `MEDIA_MAX_BYTES`.
+
 ## Futuro
 
 - Backends `s3`/`minio` (a interface `StorageService` já prevê).

@@ -7,6 +7,14 @@ import { EmptyState } from '@/components/common/empty-state';
 import { StatusBadge, type StatusTone } from '@/components/common/status-badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ConnectDialog } from '@/features/whatsapp/connect-dialog';
@@ -16,6 +24,7 @@ import {
   useDeleteWhatsAppInstance,
   useDisconnectWhatsAppInstance,
   useWhatsAppInstances,
+  useWhatsAppQuota,
   whatsappKeys,
 } from '@/features/whatsapp/queries';
 import { useRealtime } from '@/providers/use-realtime';
@@ -25,6 +34,7 @@ import type {
   WhatsAppConnectionTicket,
   WhatsAppInstance,
   WhatsAppInstanceStatus,
+  WhatsAppQuota,
 } from '@/types/whatsapp';
 
 const statusTone: Record<WhatsAppInstanceStatus, StatusTone> = {
@@ -43,6 +53,7 @@ const statusLabel: Record<WhatsAppInstanceStatus, string> = {
 
 export function WhatsAppTab() {
   const query = useWhatsAppInstances({ perPage: 100 });
+  const quota = useWhatsAppQuota();
   const queryClient = useQueryClient();
   const { socket } = useRealtime();
   const connect = useConnectWhatsAppInstance();
@@ -71,6 +82,7 @@ export function WhatsAppTab() {
     ticket: WhatsAppConnectionTicket;
   } | null>(null);
   const [pendingDelete, setPendingDelete] = useState<WhatsAppInstance | null>(null);
+  const [limitReached, setLimitReached] = useState<WhatsAppQuota | null>(null);
   const [feedback, setFeedback] = useState<{ tone: 'success' | 'danger'; message: string } | null>(
     null,
   );
@@ -81,6 +93,19 @@ export function WhatsAppTab() {
     setEditing(null);
     setFormNonce((value) => value + 1);
     setFormOpen(true);
+  };
+
+  const handleNewInstance = async (): Promise<void> => {
+    setFeedback(null);
+    const result = await quota.refetch();
+    const current = result.data ?? quota.data;
+
+    if (current && !current.canCreate) {
+      setLimitReached(current);
+      return;
+    }
+
+    openCreate();
   };
 
   const openEdit = (instance: WhatsAppInstance): void => {
@@ -138,8 +163,13 @@ export function WhatsAppTab() {
           <CardDescription>
             Instâncias, conexão por QR code e webhook da Evolution API.
           </CardDescription>
+          {quota.data && quota.data.used > 0 ? (
+            <p className="text-xs text-muted-foreground">
+              Instâncias cadastradas: {quota.data.used}
+            </p>
+          ) : null}
         </div>
-        <Button onClick={openCreate}>
+        <Button onClick={() => void handleNewInstance()}>
           <Plus />
           Nova instância
         </Button>
@@ -177,7 +207,7 @@ export function WhatsAppTab() {
             title="Nenhuma instância WhatsApp"
             description="Cadastre uma instância e conecte o número por QR code para começar a atender."
             action={
-              <Button onClick={openCreate}>
+              <Button onClick={() => void handleNewInstance()}>
                 <Plus />
                 Nova instância
               </Button>
@@ -294,6 +324,29 @@ export function WhatsAppTab() {
         onOpenChange={setFormOpen}
         instance={editing}
       />
+
+      <Dialog
+        open={Boolean(limitReached)}
+        onOpenChange={(open) => {
+          if (!open) setLimitReached(null);
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Não é possível adicionar outra instância</DialogTitle>
+            <DialogDescription>
+              {limitReached?.used === 0
+                ? 'No momento, não é possível cadastrar uma nova instância WhatsApp. Entre em contato com o suporte.'
+                : limitReached?.used === 1
+                  ? 'Sua organização já possui uma instância WhatsApp cadastrada. Para cadastrar uma nova, exclua a instância existente.'
+                  : 'Sua organização já possui instâncias WhatsApp cadastradas. Para cadastrar uma nova, exclua uma instância existente.'}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button onClick={() => setLimitReached(null)}>Entendi</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <ConnectDialog
         open={Boolean(connectState)}

@@ -7,6 +7,7 @@ import type {
   ConversationStatus,
   LinkPreview,
 } from '@/types/attendance';
+import type { BulkMediaBatch } from '@/types/bulk-media';
 
 export function attachmentPath(
   conversationId: string,
@@ -137,4 +138,29 @@ export const attendanceService = {
     }
     return apiUpload<{ ok: true }>(`/conversations/${id}/messages/media`, formData);
   },
+
+  sendPhotoBatch: (input: {
+    file: File;
+    caption?: string;
+    conversationIds: string[];
+    idempotencyKey: string;
+  }) => {
+    const formData = new FormData();
+    formData.append('file', input.file);
+    if (input.caption && input.caption.trim().length > 0) {
+      formData.append('caption', input.caption.trim());
+    }
+    formData.append('conversationIds', JSON.stringify(input.conversationIds));
+    formData.append('idempotencyKey', input.idempotencyKey);
+    return apiUpload<BulkMediaBatch>('/conversations/bulk-media', formData);
+  },
+
+  getPhotoBatch: (id: string) =>
+    apiRequest<BulkMediaBatch>(`/conversations/bulk-media/${id}`),
+
+  retryPhotoBatch: (id: string) =>
+    apiRequest<BulkMediaBatch>(`/conversations/bulk-media/${id}/retry`, {
+      method: 'POST',
+      body: {},
+    }),
 };

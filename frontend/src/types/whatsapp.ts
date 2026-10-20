@@ -13,6 +13,11 @@ export interface WhatsAppInstance {
   updatedAt: string;
 }
 
+export interface WhatsAppQuota {
+  used: number;
+  canCreate: boolean;
+}
+
 export interface WhatsAppConnectionTicket {
   status: WhatsAppInstanceStatus;
   qrCodeBase64: string | null;

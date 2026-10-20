@@ -9,6 +9,6 @@ export async function registerHttpPlugins(app: NestFastifyApplication): Promise<
   await app.register(fastifyHelmet);
   await app.register(fastifyCookie);
   await app.register(fastifyMultipart, {
-    limits: { fileSize: MULTIPART_MAX_BYTES, files: 1, fields: 5 },
+    limits: { fileSize: MULTIPART_MAX_BYTES, files: 1, fields: 20 },
   });
 }

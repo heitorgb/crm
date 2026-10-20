@@ -27,6 +27,11 @@ export class WhatsAppInstancesController {
     return this.instances.list(query);
   }
 
+  @Get('quota')
+  quota() {
+    return this.instances.getQuota();
+  }
+
   @Get(':id')
   findOne(@Param('id', ParseUUIDPipe) id: string) {
     return this.instances.findOne(id);

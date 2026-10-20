@@ -1,6 +1,7 @@
-import { Outlet } from 'react-router-dom';
+import { Outlet, useLocation } from 'react-router-dom';
 import { useSessionSync } from '@/features/auth/queries';
 import { useMessageNotifications } from '@/features/notifications/use-message-notifications';
+import { AttendanceMobileOptions } from '@/features/attendance/attendance-mobile-options';
 import { useUiStore } from '@/stores/ui-store';
 import { cn } from '@/lib/utils';
 import { Header } from './header';
@@ -12,6 +13,8 @@ export function AppLayout() {
   const collapsed = useUiStore((state) => state.sidebarCollapsed);
   const mobileSidebarOpen = useUiStore((state) => state.mobileSidebarOpen);
   const setMobileSidebarOpen = useUiStore((state) => state.setMobileSidebarOpen);
+  const { pathname } = useLocation();
+  const isAttendance = pathname.startsWith('/atendimento/conversas');
 
   useSessionSync();
   useMessageNotifications();
@@ -29,7 +32,11 @@ export function AppLayout() {
       <Sheet open={mobileSidebarOpen} onOpenChange={setMobileSidebarOpen}>
         <SheetContent side="left" className="w-[248px] p-0">
           <SheetTitle className="sr-only">Navegação principal</SheetTitle>
-          <Sidebar collapsed={false} onNavigate={() => setMobileSidebarOpen(false)} />
+          <Sidebar
+            collapsed={false}
+            onNavigate={() => setMobileSidebarOpen(false)}
+            footer={isAttendance ? <AttendanceMobileOptions /> : undefined}
+          />
         </SheetContent>
       </Sheet>
 

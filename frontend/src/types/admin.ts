@@ -20,6 +20,8 @@ export interface AdminTenantMember {
 
 export interface AdminTenantDetail extends AdminTenantSummary {
   members: AdminTenantMember[];
+  whatsappInstanceLimit: number;
+  whatsappInstancesUsed: number;
 }
 
 export interface AdminUser {

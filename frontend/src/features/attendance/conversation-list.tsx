@@ -89,12 +89,13 @@ export function ConversationList({
 }: ConversationListProps) {
   return (
     <div className="flex h-full min-h-0 w-full flex-col border-r border-border bg-card">
-      <div className="flex h-14 items-center border-b border-border px-4">
+      <div className="hidden h-14 items-center border-b border-border px-4 lg:flex">
         <h2 className="text-sm font-semibold text-foreground">Conversas</h2>
         <span className="ml-auto text-xs text-muted-foreground">{conversations.length}</span>
       </div>
 
-      <div className="space-y-2 border-b border-border p-3">
+      <div className="space-y-2 border-b border-border p-2.5 sm:p-3">
+        <SearchInput value={search} onChange={onSearchChange} placeholder="Buscar conversa" />
         <Tabs
           value={archived ? 'archived' : 'inbox'}
           onValueChange={(value) => onArchivedChange(value === 'archived')}
@@ -108,8 +109,7 @@ export function ConversationList({
             </TabsTrigger>
           </TabsList>
         </Tabs>
-        <SearchInput value={search} onChange={onSearchChange} placeholder="Buscar conversa" />
-        <div className="flex gap-2">
+        <div className="hidden gap-2 lg:flex">
           <Select value={instanceId} onValueChange={onInstanceChange}>
             <SelectTrigger aria-label="Filtrar por WhatsApp" className="flex-1">
               <SelectValue />

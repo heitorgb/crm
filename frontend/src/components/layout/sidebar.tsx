@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { ChevronDown, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import {
@@ -17,9 +17,10 @@ interface SidebarProps {
   collapsed: boolean;
   onNavigate?: () => void;
   className?: string;
+  footer?: ReactNode;
 }
 
-export function Sidebar({ collapsed, onNavigate, className }: SidebarProps) {
+export function Sidebar({ collapsed, onNavigate, className, footer }: SidebarProps) {
   const toggleSidebar = useUiStore((state) => state.toggleSidebar);
   const platformAdmin = useAuthStore((state) => state.platformAdmin);
   const enabledModules = useEnabledModules().data;
@@ -56,6 +57,8 @@ export function Sidebar({ collapsed, onNavigate, className }: SidebarProps) {
           ),
         )}
       </nav>
+
+      {footer ? <div className="border-t border-sidebar-border p-2">{footer}</div> : null}
 
       <div className="border-t border-sidebar-border p-2">
         <button

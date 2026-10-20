@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import { NavLink, useLocation } from 'react-router-dom';
+import { NavLink, useLocation, useMatch } from 'react-router-dom';
 import { ChevronDown, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import {
   isNavGroup,
@@ -18,9 +18,16 @@ interface SidebarProps {
   onNavigate?: () => void;
   className?: string;
   footer?: ReactNode;
+  showCollapseToggle?: boolean;
 }
 
-export function Sidebar({ collapsed, onNavigate, className, footer }: SidebarProps) {
+export function Sidebar({
+  collapsed,
+  onNavigate,
+  className,
+  footer,
+  showCollapseToggle = true,
+}: SidebarProps) {
   const toggleSidebar = useUiStore((state) => state.toggleSidebar);
   const platformAdmin = useAuthStore((state) => state.platformAdmin);
   const enabledModules = useEnabledModules().data;
@@ -60,19 +67,27 @@ export function Sidebar({ collapsed, onNavigate, className, footer }: SidebarPro
 
       {footer ? <div className="border-t border-sidebar-border p-2">{footer}</div> : null}
 
-      <div className="border-t border-sidebar-border p-2">
-        <button
-          type="button"
-          onClick={toggleSidebar}
-          className={cn(
-            'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground',
-            collapsed && 'justify-center',
-          )}
-        >
-          {collapsed ? <PanelLeftOpen className="size-4" /> : <PanelLeftClose className="size-4" />}
-          {!collapsed ? <span>Recolher</span> : null}
-        </button>
-      </div>
+      {showCollapseToggle ? (
+        <div className="border-t border-sidebar-border p-2">
+          <button
+            type="button"
+            onClick={toggleSidebar}
+            aria-label={collapsed ? 'Expandir menu' : 'Recolher menu'}
+            aria-expanded={!collapsed}
+            className={cn(
+              'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground',
+              collapsed && 'justify-center px-0',
+            )}
+          >
+            {collapsed ? (
+              <PanelLeftOpen className="size-5 shrink-0" />
+            ) : (
+              <PanelLeftClose className="size-4 shrink-0" />
+            )}
+            {!collapsed ? <span>Recolher</span> : null}
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -111,9 +126,11 @@ function SidebarGroup({
         )}
         aria-expanded={open}
       >
-        <group.icon className="size-4" />
-        <span className="flex-1 text-left">{group.title}</span>
-        <ChevronDown className={cn('size-3.5 transition-transform', !open && '-rotate-90')} />
+        <group.icon className="size-4 shrink-0" />
+        <span className="min-w-0 flex-1 truncate text-left">{group.title}</span>
+        <ChevronDown
+          className={cn('size-3.5 shrink-0 transition-transform', !open && '-rotate-90')}
+        />
       </button>
       {open ? (
         <div className="mt-0.5 space-y-0.5 pl-2">
@@ -135,22 +152,22 @@ function SidebarLink({
   collapsed?: boolean;
   onNavigate?: () => void;
 }) {
+  const isActive = useMatch({ path: item.to, end: true }) !== null;
+
   const link = (
     <NavLink
       to={item.to}
       end
       onClick={onNavigate}
-      className={({ isActive }) =>
-        cn(
-          'flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium transition-colors',
-          collapsed && 'justify-center px-0',
-          isActive
-            ? 'bg-sidebar-accent text-primary'
-            : 'text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-foreground',
-        )
-      }
+      className={cn(
+        'flex w-full min-w-0 items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium transition-colors',
+        collapsed && 'justify-center px-0',
+        isActive
+          ? 'bg-sidebar-accent text-primary'
+          : 'text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-foreground',
+      )}
     >
-      <item.icon className="size-4 shrink-0" />
+      <item.icon className={cn('shrink-0', collapsed ? 'size-5' : 'size-4')} />
       {!collapsed ? <span className="truncate">{item.title}</span> : null}
     </NavLink>
   );

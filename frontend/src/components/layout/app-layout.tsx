@@ -24,8 +24,8 @@ export function AppLayout() {
       <Sidebar
         collapsed={collapsed}
         className={cn(
-          'hidden transition-[width] duration-200 lg:flex',
-          collapsed ? 'w-[68px]' : 'w-[248px]',
+          'hidden shrink-0 transition-[width] duration-200 lg:flex',
+          collapsed ? 'w-20' : 'w-[248px]',
         )}
       />
 
@@ -35,6 +35,7 @@ export function AppLayout() {
           <Sidebar
             collapsed={false}
             onNavigate={() => setMobileSidebarOpen(false)}
+            showCollapseToggle={false}
             footer={isAttendance ? <AttendanceMobileOptions /> : undefined}
           />
         </SheetContent>

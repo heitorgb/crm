@@ -3,6 +3,7 @@ import { toQueryString } from '@/lib/query-params';
 import type { PageResult } from '@/types/crm';
 import type {
   WhatsAppConnectionTicket,
+  WhatsAppQuota,
   WhatsAppInstance,
   WhatsAppInstanceInput,
   WhatsAppInstanceStatus,
@@ -29,6 +30,8 @@ export const whatsappService = {
         active: params.active,
       })}`,
     ),
+
+  quota: () => apiRequest<WhatsAppQuota>('/whatsapp/instances/quota'),
 
   create: (input: WhatsAppInstanceInput) =>
     apiRequest<WhatsAppInstance>('/whatsapp/instances', { method: 'POST', body: input }),

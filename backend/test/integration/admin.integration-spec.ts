@@ -135,6 +135,8 @@ describe('Admin provisioning (integration)', () => {
     expect(created.statusCode).toBe(201);
     const body = created.json();
     expect(body.id).toEqual(expect.any(String));
+    expect(body.whatsappInstanceLimit).toBe(3);
+    expect(body.whatsappInstancesUsed).toBe(0);
     expect(body.members).toHaveLength(1);
     expect(body.members[0]).toMatchObject({
       email: ownerEmail.toLowerCase(),
@@ -155,6 +157,54 @@ describe('Admin provisioning (integration)', () => {
     });
     expect(ownerLogin.statusCode).toBe(200);
     expect(ownerLogin.json().tenant.id).toBe(body.id);
+  });
+
+  it('updates the WhatsApp instance limit per organization', async () => {
+    const accessToken = await login(adminEmail);
+    const tenantId = await createTenant(accessToken);
+
+    await prisma.whatsAppInstance.createMany({
+      data: [
+        { tenantId, name: 'Instance 1', instanceName: `limit-${suffix}-1` },
+        { tenantId, name: 'Instance 2', instanceName: `limit-${suffix}-2` },
+      ],
+    });
+
+    const updated = await app.inject({
+      method: 'PATCH',
+      url: `/api/admin/tenants/${tenantId}/whatsapp-limit`,
+      headers: { authorization: `Bearer ${accessToken}` },
+      payload: { whatsappInstanceLimit: 0 },
+    });
+
+    expect(updated.statusCode).toBe(200);
+    expect(updated.json().whatsappInstanceLimit).toBe(0);
+    expect(updated.json().whatsappInstancesUsed).toBe(2);
+
+    const increased = await app.inject({
+      method: 'PATCH',
+      url: `/api/admin/tenants/${tenantId}/whatsapp-limit`,
+      headers: { authorization: `Bearer ${accessToken}` },
+      payload: { whatsappInstanceLimit: 8 },
+    });
+    expect(increased.statusCode).toBe(200);
+    expect(increased.json().whatsappInstanceLimit).toBe(8);
+    expect(increased.json().whatsappInstancesUsed).toBe(2);
+  });
+
+  it('rejects negative and decimal WhatsApp instance limits', async () => {
+    const accessToken = await login(adminEmail);
+    const tenantId = await createTenant(accessToken);
+
+    for (const invalid of [-1, 1.5]) {
+      const response = await app.inject({
+        method: 'PATCH',
+        url: `/api/admin/tenants/${tenantId}/whatsapp-limit`,
+        headers: { authorization: `Bearer ${accessToken}` },
+        payload: { whatsappInstanceLimit: invalid },
+      });
+      expect(response.statusCode).toBe(400);
+    }
   });
 
   it('adds a member and rejects duplicates', async () => {

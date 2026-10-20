@@ -2,9 +2,12 @@ import {
   IsBoolean,
   IsEmail,
   IsIn,
+  IsInt,
   IsOptional,
   IsString,
+  Max,
   MaxLength,
+  Min,
   MinLength,
 } from 'class-validator';
 import type { Role } from '@prisma/client';
@@ -66,6 +69,13 @@ export class UpdateMemberDto {
 export class UpdateTenantModuleDto {
   @IsBoolean()
   enabled!: boolean;
+}
+
+export class UpdateTenantWhatsAppLimitDto {
+  @IsInt()
+  @Min(0)
+  @Max(2_147_483_647)
+  whatsappInstanceLimit!: number;
 }
 
 export class ListTenantsQueryDto extends PaginationQueryDto {}

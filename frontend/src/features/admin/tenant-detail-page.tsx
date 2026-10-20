@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { ArrowLeft, Package, Plus, RefreshCw, Trash2, Users } from 'lucide-react';
+import { ArrowLeft, Gauge, Package, Plus, RefreshCw, Trash2, Users } from 'lucide-react';
 import { ConfirmDialog } from '@/components/common/confirm-dialog';
 import { PageHeader } from '@/components/common/page-header';
 import { StatusBadge } from '@/components/common/status-badge';
@@ -22,6 +22,7 @@ import { formatDate } from '@/lib/format';
 import type { Role } from '@/types/auth';
 import type { AdminTenantMember } from '@/types/admin';
 import { ModulesTab } from '@/features/modules/modules-tab';
+import { WhatsAppLimitTab } from './whatsapp-limit-tab';
 import { MemberForm } from './member-form';
 import { useAdminTenant, useRemoveMember, useUpdateMember } from './queries';
 
@@ -112,6 +113,10 @@ export function AdminTenantDetailPage() {
             <Package />
             Módulos
           </TabsTrigger>
+          <TabsTrigger value="limits">
+            <Gauge />
+            Limites
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="users">
@@ -200,6 +205,10 @@ export function AdminTenantDetailPage() {
 
         <TabsContent value="modules">
           {id ? <ModulesTab tenantId={id} /> : null}
+        </TabsContent>
+
+        <TabsContent value="limits">
+          {id ? <WhatsAppLimitTab tenantId={id} /> : null}
         </TabsContent>
       </Tabs>
 

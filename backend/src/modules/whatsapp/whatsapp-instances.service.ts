@@ -16,6 +16,7 @@ import type {
   WhatsAppCredentialsDto,
 } from './dto/whatsapp-instance.dto.js';
 import {
+  WhatsAppInstanceLimitReachedError,
   WhatsAppInstanceNameConflictError,
   WhatsAppInstanceNotFoundError,
 } from './whatsapp.errors.js';
@@ -31,6 +32,11 @@ export interface WhatsAppInstanceView {
   hasCredentials: boolean;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface WhatsAppQuotaView {
+  used: number;
+  canCreate: boolean;
 }
 
 export interface WhatsAppConnectionTicket {
@@ -171,6 +177,24 @@ export class WhatsAppInstancesService implements OnModuleInit {
     return buildPage(instances.map(toView), total, query.page, query.perPage);
   }
 
+  async getQuota(): Promise<WhatsAppQuotaView> {
+    const { tenantId } = this.tenantContext.requireContext();
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { whatsappInstanceLimit: true },
+    });
+
+    if (!tenant) {
+      throw new AppException('TENANT_NOT_FOUND', 'Tenant not found', 404);
+    }
+
+    const used = await this.prisma.whatsAppInstance.count({ where: { tenantId } });
+    return {
+      used,
+      canCreate: used < tenant.whatsappInstanceLimit,
+    };
+  }
+
   async findOne(id: string): Promise<WhatsAppInstanceView> {
     const { tenantId } = this.tenantContext.requireContext();
     const instance = await this.prisma.whatsAppInstance.findFirst({ where: { id, tenantId } });
@@ -186,15 +210,35 @@ export class WhatsAppInstancesService implements OnModuleInit {
     const { tenantId } = this.tenantContext.requireContext();
 
     try {
-      const instance = await this.prisma.whatsAppInstance.create({
-        data: {
-          tenantId,
-          name: dto.name.trim(),
-          instanceName: dto.instanceName.trim(),
-          phone: normalizeNullableString(dto.phone),
-          active: dto.active ?? true,
-          credentialsEncrypted: this.encryptCredentials(dto.credentials),
-        },
+      const instance = await this.prisma.$transaction(async (tx) => {
+        // Serializes concurrent creations for the same tenant, so the count and
+        // the insert cannot interleave and exceed the configured limit.
+        const tenants = await tx.$queryRaw<Array<{ whatsappInstanceLimit: number }>>`
+          SELECT "whatsapp_instance_limit" AS "whatsappInstanceLimit"
+          FROM "tenants"
+          WHERE "id" = ${tenantId}::uuid
+          FOR UPDATE
+        `;
+        const tenant = tenants[0];
+        if (!tenant) {
+          throw new AppException('TENANT_NOT_FOUND', 'Tenant not found', 404);
+        }
+
+        const used = await tx.whatsAppInstance.count({ where: { tenantId } });
+        if (used >= tenant.whatsappInstanceLimit) {
+          throw new WhatsAppInstanceLimitReachedError(used);
+        }
+
+        return tx.whatsAppInstance.create({
+          data: {
+            tenantId,
+            name: dto.name.trim(),
+            instanceName: dto.instanceName.trim(),
+            phone: normalizeNullableString(dto.phone),
+            active: dto.active ?? true,
+            credentialsEncrypted: this.encryptCredentials(dto.credentials),
+          },
+        });
       });
       return toView(instance);
     } catch (error) {

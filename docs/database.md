@@ -79,12 +79,16 @@ reviewResolvedAt/reviewResolvedBy`. Migration `20260921233422_lgpd_compliance`. 
 
 ### `Tenant`
 
-| Campo       | Tipo       | Observações        |
-| ----------- | ---------- | ------------------ |
-| `id`        | `uuid` PK  | `@default(uuid())` |
-| `name`      | `text`     |                    |
-| `createdAt` | `timestamp`| `@default(now())`  |
-| `updatedAt` | `timestamp`| `@updatedAt`       |
+| Campo                   | Tipo        | Observações                                      |
+| ----------------------- | ----------- | ------------------------------------------------ |
+| `id`                    | `uuid` PK   | `@default(uuid())`                               |
+| `name`                  | `text`      |                                                  |
+| `whatsappInstanceLimit` | `integer`   | default `3`; mínimo `0` (bloqueia novas instâncias) |
+| `createdAt`             | `timestamp` | `@default(now())`                                |
+| `updatedAt`             | `timestamp` | `@updatedAt`                                     |
+
+`whatsappInstanceLimit` é configurado pelo admin da plataforma e aplicado no backend ao criar
+instâncias WhatsApp (migration `20261020140000_tenant_whatsapp_instance_limit`).
 
 ### `User` (global)
 

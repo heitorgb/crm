@@ -51,7 +51,8 @@ a fonte de verdade é sempre o backend.
 | ------ | ---------------------------------------------------------- | ------------------------------------------- |
 | GET    | `/api/admin/tenants`                                       | Lista organizações (busca/paginação).       |
 | POST   | `/api/admin/tenants`                                       | Cria organização + primeiro OWNER.          |
-| GET    | `/api/admin/tenants/:id`                                   | Detalhe da organização + membros.           |
+| GET    | `/api/admin/tenants/:id`                                   | Detalhe da organização + membros + uso de WhatsApp. |
+| PATCH  | `/api/admin/tenants/:id/whatsapp-limit`                    | Define o limite de instâncias WhatsApp.     |
 | POST   | `/api/admin/tenants/:id/members`                           | Adiciona usuário (cria ou vincula).         |
 | PATCH  | `/api/admin/tenants/:id/members/:membershipId`             | Altera papel e/ou ativo.                    |
 | DELETE | `/api/admin/tenants/:id/members/:membershipId`             | Remove o vínculo (não apaga o `User`).      |
@@ -82,6 +83,22 @@ a fonte de verdade é sempre o backend.
 - `password` é obrigatório apenas quando o e-mail ainda não existe (`PASSWORD_REQUIRED`).
 - Usuário já vinculado → `MEMBERSHIP_ALREADY_EXISTS` (409).
 
+### Limite de instâncias WhatsApp (`PATCH /api/admin/tenants/:id/whatsapp-limit`)
+
+```json
+{ "whatsappInstanceLimit": 5 }
+```
+
+- Novas organizações nascem com limite **3** (default no banco).
+- O valor é inteiro e **mínimo 0**; `0` bloqueia qualquer novo cadastro. Valores negativos ou
+  decimais retornam 400.
+- O detalhe da organização (`GET /api/admin/tenants/:id`) retorna `whatsappInstanceLimit` e
+  `whatsappInstancesUsed` (todas as instâncias, inclusive desconectadas).
+- Reduzir o limite abaixo do uso atual **não exclui nem desconecta** instâncias: os cadastros
+  existentes são mantidos e novos ficam bloqueados até o uso ficar abaixo do limite.
+- A criação de instância valida o limite no backend dentro de uma transação com lock da linha do
+  tenant, impedindo que requisições simultâneas ultrapassem o limite.
+
 ## Regras
 
 - `role` ∈ `OWNER | ADMIN | USER`.
@@ -96,6 +113,8 @@ a fonte de verdade é sempre o backend.
 
 - `/admin/tenants` — lista de organizações + busca + "Nova organização" (dialog com dados do owner).
 - `/admin/tenants/:id` — membros: adicionar, alterar papel, ativar/desativar e remover.
+- Aba **Limites** — limite de instâncias WhatsApp, uso atual, vagas disponíveis e aviso quando a
+  organização está acima do limite configurado.
 - Item de navegação **Administração → Organizações** visível apenas quando
   `isPlatformAdmin` (retornado por `GET /api/auth/me`).
 

@@ -131,10 +131,11 @@ enum WebhookExecutionStatus {
 }
 
 model Tenant {
-  id        String   @id @default(uuid()) @db.Uuid
-  name      String
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  id                    String   @id @default(uuid()) @db.Uuid
+  name                  String
+  whatsappInstanceLimit Int      @default(3) @map("whatsapp_instance_limit")
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
 
   members            TenantUser[]
   refreshTokens      RefreshToken[]

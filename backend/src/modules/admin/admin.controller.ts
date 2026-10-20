@@ -18,6 +18,7 @@ import {
   ListUsersQueryDto,
   UpdateMemberDto,
   UpdateTenantModuleDto,
+  UpdateTenantWhatsAppLimitDto,
 } from './dto/admin.dto.js';
 import { PlatformAdminGuard } from './platform-admin.guard.js';
 import type { TenantContext } from '../../common/tenant-context/tenant-context.types.js';
@@ -45,6 +46,14 @@ export class AdminController {
   @Get('tenants/:id')
   getTenant(@Param('id', ParseUUIDPipe) id: string) {
     return this.admin.getTenant(id);
+  }
+
+  @Patch('tenants/:id/whatsapp-limit')
+  updateTenantWhatsAppLimit(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateTenantWhatsAppLimitDto,
+  ) {
+    return this.admin.updateWhatsAppInstanceLimit(id, dto);
   }
 
   @Get('modules')

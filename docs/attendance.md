@@ -25,6 +25,8 @@ Lead no WhatsApp
 
 - `WhatsAppInstance`: `tenantId`, `name`, `instanceName` (único global, chave de resolução do
   webhook), `externalInstanceId?`, `phone?`, `status`, `credentialsEncrypted?`, `active`.
+  O número de instâncias por organização é limitado por `Tenant.whatsappInstanceLimit`
+  (default `3`, configurável pelo admin da plataforma; `0` bloqueia novas instâncias).
 - `Conversation`: `tenantId`, `whatsappInstanceId`, `externalContactId?` (JID/número, chave de
   dedupe por instância), `leadId?`, `customerId?`, `contactId?`, `status`, `subject?`, `isGroup`,
   `groupName?` (assunto do grupo), `avatarUrl?` (foto do grupo), `lastMessageAt?`, `closedAt?`.
@@ -62,6 +64,11 @@ Prompt 09; `MessageAttachment.metadata`, `Message.metadata` e `LeadAnalysis` seg
   `EVOLUTION_WEBHOOK_SECRET` global **ou** o `webhookSecret` da instância.
 - O tenant **nunca** vem do payload: é resolvido por `instanceName` → `WhatsAppInstance`.
 - Endpoints autenticados exigem membership; escrita de instância restrita a OWNER/ADMIN.
+- A criação valida `Tenant.whatsappInstanceLimit` no backend, em transação com lock da linha do
+  tenant. Instâncias desconectadas também ocupam vaga; excluir libera a vaga. Limite reduzido abaixo
+  do uso atual não remove instâncias, apenas bloqueia novos cadastros
+  (`WHATSAPP_INSTANCE_LIMIT_REACHED`, 409). A UI consulta `GET /api/whatsapp/instances/quota` antes
+  de abrir o formulário e mostra um aviso amigável quando não há vagas.
 - A resolução de metadados de link roda no backend com proteção contra SSRF: somente HTTP/HTTPS,
   portas 80/443, bloqueio de loopback/redes privadas/link-local/metadata de nuvem e validação de
   cada redirecionamento (DNS fixado no IP validado, no máximo 3 redirects). Há limite de tempo,
@@ -340,6 +347,7 @@ fluxo humano existente.
 | Método | Rota                                             | Papéis           |
 | ------ | ------------------------------------------------ | ---------------- |
 | GET    | `/api/whatsapp/instances`                        | autenticado      |
+| GET    | `/api/whatsapp/instances/quota`                  | autenticado      |
 | GET    | `/api/whatsapp/instances/:id`                    | autenticado      |
 | POST   | `/api/whatsapp/instances`                        | `OWNER`, `ADMIN` |
 | PATCH  | `/api/whatsapp/instances/:id`                    | `OWNER`, `ADMIN` |

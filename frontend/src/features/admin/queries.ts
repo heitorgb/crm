@@ -37,6 +37,15 @@ export function useAdminUsers(params: ListAdminParams) {
   });
 }
 
+export function useUpdateTenantWhatsAppLimit(tenantId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (whatsappInstanceLimit: number) =>
+      adminService.updateWhatsAppLimit(tenantId, whatsappInstanceLimit),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: adminKeys.all }),
+  });
+}
+
 export function useCreateTenant() {
   const queryClient = useQueryClient();
   return useMutation({

@@ -8,6 +8,7 @@ import {
 export const whatsappKeys = {
   all: ['whatsapp-instances'] as const,
   list: (params: ListWhatsAppInstancesParams) => ['whatsapp-instances', 'list', params] as const,
+  quota: ['whatsapp-instances', 'quota'] as const,
   status: (id: string) => ['whatsapp-instances', 'status', id] as const,
 };
 
@@ -16,6 +17,13 @@ export function useWhatsAppInstances(params: ListWhatsAppInstancesParams = {}) {
     queryKey: whatsappKeys.list(params),
     queryFn: () => whatsappService.list(params),
     placeholderData: (previous) => previous,
+  });
+}
+
+export function useWhatsAppQuota() {
+  return useQuery({
+    queryKey: whatsappKeys.quota,
+    queryFn: () => whatsappService.quota(),
   });
 }
 

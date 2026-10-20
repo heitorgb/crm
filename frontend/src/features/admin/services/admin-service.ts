@@ -31,6 +31,12 @@ export const adminService = {
   createTenant: (input: CreateTenantInput) =>
     apiRequest<AdminTenantDetail>('/admin/tenants', { method: 'POST', body: input }),
 
+  updateWhatsAppLimit: (tenantId: string, whatsappInstanceLimit: number) =>
+    apiRequest<AdminTenantDetail>(`/admin/tenants/${tenantId}/whatsapp-limit`, {
+      method: 'PATCH',
+      body: { whatsappInstanceLimit },
+    }),
+
   addMember: (tenantId: string, input: AddMemberInput) =>
     apiRequest<AdminTenantDetail>(`/admin/tenants/${tenantId}/members`, {
       method: 'POST',

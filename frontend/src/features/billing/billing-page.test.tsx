@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import type { BillingCharge, BillingOverview, BillingSettings } from '@/types/billing';
 
 const state = vi.hoisted(() => ({
@@ -107,7 +108,11 @@ describe('BillingPage', () => {
       upcoming: [],
     } satisfies BillingOverview;
 
-    render(<BillingPage />);
+    render(
+      <MemoryRouter>
+        <BillingPage />
+      </MemoryRouter>,
+    );
 
     expect(screen.getByText('Cobranças')).toBeTruthy();
     expect(screen.getByText('Acme')).toBeTruthy();
@@ -134,7 +139,11 @@ describe('BillingPage', () => {
       upcoming: [],
     } satisfies BillingOverview;
 
-    render(<BillingPage />);
+    render(
+      <MemoryRouter>
+        <BillingPage />
+      </MemoryRouter>,
+    );
 
     expect(screen.getByText('Nenhuma cobrança encontrada')).toBeTruthy();
   });

@@ -48,6 +48,11 @@ const SettingsPage = lazy(() =>
 const BillingPage = lazy(() =>
   import('@/features/billing/billing-page').then((module) => ({ default: module.BillingPage })),
 );
+const ScheduledMessagesPage = lazy(() =>
+  import('@/features/scheduled-messages/scheduled-messages-page').then((module) => ({
+    default: module.ScheduledMessagesPage,
+  })),
+);
 const WebhooksPage = lazy(() =>
   import('@/features/webhooks/webhooks-page').then((module) => ({ default: module.WebhooksPage })),
 );
@@ -76,6 +81,14 @@ export function AppRoutes() {
           <Route
             path="/atendimento/whatsapp"
             element={<Navigate to="/configuracoes?tab=whatsapp" replace />}
+          />
+          <Route
+            path="/mensagens-agendadas"
+            element={
+              <ModuleRoute moduleKey={MODULE_KEYS.ATTENDANCE}>
+                <ScheduledMessagesPage />
+              </ModuleRoute>
+            }
           />
 
           <Route

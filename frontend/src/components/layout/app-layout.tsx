@@ -13,6 +13,7 @@ import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 export function AppLayout() {
   const collapsed = useUiStore((state) => state.sidebarCollapsed);
   const mobileSidebarOpen = useUiStore((state) => state.mobileSidebarOpen);
+  const sidebarPosition = useUiStore((state) => state.sidebarPosition);
   const setMobileSidebarOpen = useUiStore((state) => state.setMobileSidebarOpen);
   const { pathname } = useLocation();
   const isAttendance = pathname.startsWith('/atendimento/conversas');
@@ -47,7 +48,7 @@ export function AppLayout() {
       />
 
       <Sheet open={mobileSidebarOpen} onOpenChange={setMobileSidebarOpen}>
-        <SheetContent side="left" className="w-[248px] p-0">
+        <SheetContent side={sidebarPosition} className="w-[248px] p-0">
           <SheetTitle className="sr-only">Navegação principal</SheetTitle>
           <Sidebar
             collapsed={false}

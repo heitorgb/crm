@@ -24,7 +24,7 @@ A aba ativa é sincronizada com o parâmetro `?tab=` da URL (`organization`, `te
 | ------------ | --------------------------------------------- | ------------- |
 | Organização  | `GET/PATCH /api/tenants/current`              | leitura: todos; PATCH: `OWNER`, `ADMIN` |
 | Equipe       | `GET/POST/PATCH/DELETE /api/members`          | leitura: todos; escrita: `OWNER`, `ADMIN` |
-| Aparência    | (frontend) tema claro/escuro/sistema          | todos         |
+| Aparência    | (frontend) tema e posição do menu mobile      | todos         |
 | Atendimento  | (frontend) exibir nome do atendente           | todos         |
 | Notificações | (frontend) contador de não lidas e som        | todos         |
 | WhatsApp     | `GET/POST/PATCH/DELETE /api/whatsapp/instances` + `connect`/`disconnect`/`status`/`webhook` | todos |
@@ -50,7 +50,10 @@ A aba ativa é sincronizada com o parâmetro `?tab=` da URL (`organization`, `te
 
 ### Aparência
 
-Seletor de tema reutilizando o `theme-store` (o mesmo do header). Sem persistência no backend.
+Seletor de tema reutilizando o `theme-store` (o mesmo do header) e seletor de **posição do menu
+lateral** no mobile (`Esquerda` ou `Direita`), persistido em `localStorage` (`orderup-ui`) com padrão
+`left`. A posição é aplicada somente ao drawer mobile; o menu fixo do desktop permanece à esquerda.
+Sem persistência no backend.
 
 ### Atendimento
 

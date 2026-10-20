@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { useSessionSync } from '@/features/auth/queries';
 import { useMessageNotifications } from '@/features/notifications/use-message-notifications';
@@ -18,6 +19,22 @@ export function AppLayout() {
 
   useSessionSync();
   useMessageNotifications();
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+      return;
+    }
+
+    const desktop = window.matchMedia('(min-width: 1024px)');
+    const handleChange = (event: MediaQueryListEvent): void => {
+      if (event.matches) {
+        setMobileSidebarOpen(false);
+      }
+    };
+
+    desktop.addEventListener('change', handleChange);
+    return () => desktop.removeEventListener('change', handleChange);
+  }, [setMobileSidebarOpen]);
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">

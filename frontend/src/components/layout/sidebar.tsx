@@ -55,7 +55,7 @@ export function Sidebar({
         ) : null}
       </div>
 
-      <nav className="flex-1 space-y-1 overflow-y-auto scrollbar-thin px-2 py-3">
+      <nav className="flex-1 space-y-1 overflow-x-hidden overflow-y-auto scrollbar-thin px-2 py-3">
         {entries.map((entry) =>
           isNavGroup(entry) ? (
             <SidebarGroup key={entry.title} group={entry} collapsed={collapsed} onNavigate={onNavigate} />
@@ -80,9 +80,9 @@ export function Sidebar({
             )}
           >
             {collapsed ? (
-              <PanelLeftOpen className="size-5 shrink-0" />
+              <PanelLeftOpen className="size-4 shrink-0" aria-hidden="true" />
             ) : (
-              <PanelLeftClose className="size-4 shrink-0" />
+              <PanelLeftClose className="size-4 shrink-0" aria-hidden="true" />
             )}
             {!collapsed ? <span>Recolher</span> : null}
           </button>
@@ -126,7 +126,7 @@ function SidebarGroup({
         )}
         aria-expanded={open}
       >
-        <group.icon className="size-4 shrink-0" />
+        <group.icon className="size-4 shrink-0" aria-hidden="true" />
         <span className="min-w-0 flex-1 truncate text-left">{group.title}</span>
         <ChevronDown
           className={cn('size-3.5 shrink-0 transition-transform', !open && '-rotate-90')}
@@ -159,6 +159,7 @@ function SidebarLink({
       to={item.to}
       end
       onClick={onNavigate}
+      aria-label={collapsed ? item.title : undefined}
       className={cn(
         'flex w-full min-w-0 items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium transition-colors',
         collapsed && 'justify-center px-0',
@@ -167,8 +168,8 @@ function SidebarLink({
           : 'text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-foreground',
       )}
     >
-      <item.icon className={cn('shrink-0', collapsed ? 'size-5' : 'size-4')} />
-      {!collapsed ? <span className="truncate">{item.title}</span> : null}
+      <item.icon className="size-4 shrink-0" aria-hidden="true" />
+      {!collapsed ? <span className="min-w-0 truncate">{item.title}</span> : null}
     </NavLink>
   );
 

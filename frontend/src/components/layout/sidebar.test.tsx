@@ -33,6 +33,30 @@ describe('Sidebar', () => {
     expect(link?.classList.contains('bg-sidebar-accent')).toBe(true);
   });
 
+  it('keeps the collapsed item icon at the expanded size without shrinking', () => {
+    const { container } = renderSidebar({ collapsed: true });
+    const icon = container.querySelector('a[href="/leads"] svg');
+
+    expect(icon?.classList.contains('size-4')).toBe(true);
+    expect(icon?.classList.contains('size-5')).toBe(false);
+    expect(icon?.classList.contains('shrink-0')).toBe(true);
+  });
+
+  it('exposes the item title as the accessible name when collapsed', () => {
+    const { container } = renderSidebar({ collapsed: true });
+    const link = container.querySelector('a[href="/leads"]');
+
+    expect(link?.getAttribute('aria-label')).toBe('Oportunidades');
+  });
+
+  it('keeps the expanded item icon at the same size as the collapsed one', () => {
+    const { container } = renderSidebar({ collapsed: false });
+    const icon = container.querySelector('a[href="/leads"] svg');
+
+    expect(icon?.classList.contains('size-4')).toBe(true);
+    expect(icon?.classList.contains('shrink-0')).toBe(true);
+  });
+
   it('renders the collapse toggle on the desktop sidebar', () => {
     renderSidebar({ collapsed: false, showCollapseToggle: true });
     expect(screen.getByRole('button', { name: 'Recolher menu' })).toBeTruthy();

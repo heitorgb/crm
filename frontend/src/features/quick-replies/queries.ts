@@ -11,11 +11,15 @@ export const quickReplyKeys = {
   detail: (id: string) => ['quick-replies', 'detail', id] as const,
 };
 
-export function useQuickReplies(params: ListQuickRepliesParams = {}) {
+export function useQuickReplies(
+  params: ListQuickRepliesParams = {},
+  options: { enabled?: boolean } = {},
+) {
   return useQuery({
     queryKey: quickReplyKeys.list(params),
     queryFn: () => quickRepliesService.list(params),
     placeholderData: (previous) => previous,
+    enabled: options.enabled ?? true,
   });
 }
 

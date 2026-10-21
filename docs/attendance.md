@@ -256,6 +256,9 @@ CRM (sem dependências novas). A tela é **full-bleed**: `MainContent` deixa de 
   **Ctrl+V** uma imagem/vídeo do clipboard (ex.: print de tela) abre a prévia de mídia — igual ao
   anexo — com campo de legenda e botões **Enviar**/**Cancelar** antes do envio
   (`MediaPreviewDialog`).
+- **Respostas rápidas no compositor**: digitar `/` abre a lista de respostas rápidas cadastradas; o
+  texto após a barra filtra por título ou conteúdo. Clique ou `Enter` insere a resposta no campo,
+  `↑`/`↓` navegam e `Esc` fecha. Ver [`quick-replies.md`](./quick-replies.md).
 - **Nome do atendente**: o compositor traz a opção **Exibir nome do atendente** (marcada por padrão),
   alternável a cada mensagem e lembrada por navegador. Quando ligada, o nome do atendente é enviado
   ao cliente como prefixo em negrito (`*Nome:*` seguido de quebra de linha) no texto e nas legendas

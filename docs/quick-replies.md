@@ -29,6 +29,9 @@ derivado do token verificado + membership ativa; nunca é aceito no corpo ou na 
 - Listagem com busca por título ou conteúdo e ações de criar, editar e excluir para OWNER/ADMIN.
 - Usuários com papel `USER` podem consultar as respostas, mas não alterá-las.
 - Rota protegida por `ProtectedRoute` + `ModuleRoute`, disponível no menu desktop e mobile.
+- No compositor do chat, digitar `/` abre a lista de respostas rápidas; o texto após a barra filtra
+  por título ou conteúdo. A seleção (clique ou `Enter`) insere o conteúdo no campo. `↑`/`↓` navegam
+  e `Esc` fecha a lista.
 
 ## Testes
 

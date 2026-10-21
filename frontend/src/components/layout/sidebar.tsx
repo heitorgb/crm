@@ -1,8 +1,9 @@
 import { createElement, useState, type ReactNode } from 'react';
-import { NavLink, useLocation, useMatch } from 'react-router-dom';
+import { NavLink, useLocation } from 'react-router-dom';
 import { ChevronDown, ExternalLink, Folder, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import {
   isNavGroup,
+  settingsNavigation,
   visibleNavigation,
   type NavEntry,
   type NavGroup,
@@ -24,6 +25,7 @@ interface SidebarProps {
   className?: string;
   footer?: ReactNode;
   showCollapseToggle?: boolean;
+  settingsAsGroup?: boolean;
 }
 
 export function Sidebar({
@@ -32,6 +34,7 @@ export function Sidebar({
   className,
   footer,
   showCollapseToggle = true,
+  settingsAsGroup = false,
 }: SidebarProps) {
   const toggleSidebar = useUiStore((state) => state.toggleSidebar);
   const platformAdmin = useAuthStore((state) => state.platformAdmin);
@@ -53,6 +56,13 @@ export function Sidebar({
   const renderEntry = (entry: NavEntry) =>
     isNavGroup(entry) ? (
       <SidebarGroup key={`group-${entry.title}`} group={entry} collapsed={collapsed} onNavigate={onNavigate} />
+    ) : settingsAsGroup && entry.to === '/configuracoes' ? (
+      <SidebarGroup
+        key="group-configuracoes"
+        group={settingsNavigation}
+        collapsed={collapsed}
+        onNavigate={onNavigate}
+      />
     ) : (
       <SidebarLink key={entry.to} item={entry} collapsed={collapsed} onNavigate={onNavigate} />
     );
@@ -228,8 +238,10 @@ function SidebarGroup({
   collapsed: boolean;
   onNavigate?: () => void;
 }) {
-  const location = useLocation();
-  const hasActiveChild = group.items.some((item) => location.pathname.startsWith(item.to));
+  const { pathname } = useLocation();
+  const hasActiveChild = group.items.some((item) =>
+    pathname.startsWith(item.to.split('?')[0]),
+  );
   const [open, setOpen] = useState(true);
 
   if (collapsed) {
@@ -279,7 +291,8 @@ function SidebarLink({
   collapsed?: boolean;
   onNavigate?: () => void;
 }) {
-  const isActive = useMatch({ path: item.to, end: true }) !== null;
+  const { pathname, search } = useLocation();
+  const isActive = isNavItemActive(item, pathname, search);
 
   const link = (
     <NavLink
@@ -310,4 +323,23 @@ function SidebarLink({
       <TooltipContent side="right">{item.title}</TooltipContent>
     </Tooltip>
   );
+}
+
+function isNavItemActive(item: NavItem, pathname: string, search: string): boolean {
+  const [itemPath, itemSearch = ''] = item.to.split('?');
+  if (pathname !== itemPath) {
+    return false;
+  }
+
+  const desiredTab = new URLSearchParams(itemSearch).get('tab');
+  if (!desiredTab && itemPath !== '/configuracoes') {
+    return true;
+  }
+
+  const currentTab = new URLSearchParams(search).get('tab');
+  if (desiredTab) {
+    return currentTab === desiredTab;
+  }
+
+  return currentTab === null || currentTab === 'organization';
 }

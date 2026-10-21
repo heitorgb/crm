@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { TooltipProvider } from '@/components/ui/tooltip';
 
@@ -24,11 +24,18 @@ afterEach(() => {
   customMenuState.data = undefined;
 });
 
-function renderSidebar(props: { collapsed: boolean; showCollapseToggle?: boolean }) {
+function renderSidebar(props: {
+  collapsed: boolean;
+  showCollapseToggle?: boolean;
+  settingsAsGroup?: boolean;
+  onNavigate?: () => void;
+  initialEntries?: string[];
+}) {
+  const { initialEntries = ['/leads'], ...sidebarProps } = props;
   return render(
-    <MemoryRouter initialEntries={['/leads']}>
+    <MemoryRouter initialEntries={initialEntries}>
       <TooltipProvider>
-        <Sidebar {...props} />
+        <Sidebar {...sidebarProps} />
       </TooltipProvider>
     </MemoryRouter>,
   );
@@ -92,6 +99,95 @@ describe('Sidebar', () => {
 
     expect(icon?.classList.contains('size-4')).toBe(true);
     expect(icon?.classList.contains('shrink-0')).toBe(true);
+  });
+
+
+  it('keeps settings as a direct link on the desktop sidebar', () => {
+    const { container } = renderSidebar({ collapsed: false });
+    const link = container.querySelector('a[href="/configuracoes"]');
+
+    expect(link?.textContent).toBe('Configurações');
+    expect(screen.queryByRole('button', { name: 'Configurações' })).toBeNull();
+  });
+
+  it('renders settings as an expandable group on the mobile sidebar', () => {
+    const { container } = renderSidebar({
+      collapsed: false,
+      settingsAsGroup: true,
+      initialEntries: ['/configuracoes'],
+    });
+
+    const toggle = screen.getByRole('button', { name: 'Configurações' });
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+
+    expect(container.querySelector('a[href="/configuracoes"]')?.textContent).toBe('Organização');
+    expect(
+      container.querySelector('a[href="/configuracoes?tab=team"]')?.textContent,
+    ).toBe('Equipe');
+    expect(
+      container.querySelector('a[href="/configuracoes?tab=appearance"]')?.textContent,
+    ).toBe('Aparência');
+    expect(
+      container.querySelector('a[href="/configuracoes?tab=attendance"]')?.textContent,
+    ).toBe('Atendimento');
+    expect(
+      container.querySelector('a[href="/configuracoes?tab=notifications"]')?.textContent,
+    ).toBe('Notificações');
+    expect(
+      container.querySelector('a[href="/configuracoes?tab=whatsapp"]')?.textContent,
+    ).toBe('WhatsApp');
+    expect(
+      container.querySelector('a[href="/configuracoes?tab=menu"]')?.textContent,
+    ).toBe('Menu Personalizado');
+  });
+
+  it('collapses and expands the settings group', () => {
+    renderSidebar({
+      collapsed: false,
+      settingsAsGroup: true,
+      initialEntries: ['/configuracoes'],
+    });
+
+    const toggle = screen.getByRole('button', { name: 'Configurações' });
+    fireEvent.click(toggle);
+
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByRole('link', { name: 'Equipe' })).toBeNull();
+
+    fireEvent.click(toggle);
+
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByRole('link', { name: 'Equipe' })).toBeTruthy();
+  });
+
+  it('highlights only the settings option matching the active tab', () => {
+    const { container } = renderSidebar({
+      collapsed: false,
+      settingsAsGroup: true,
+      initialEntries: ['/configuracoes?tab=whatsapp'],
+    });
+
+    const whatsapp = container.querySelector('a[href="/configuracoes?tab=whatsapp"]');
+    const team = container.querySelector('a[href="/configuracoes?tab=team"]');
+    const organization = container.querySelector('a[href="/configuracoes"]');
+
+    expect(whatsapp?.classList.contains('bg-sidebar-accent')).toBe(true);
+    expect(team?.classList.contains('bg-sidebar-accent')).toBe(false);
+    expect(organization?.classList.contains('bg-sidebar-accent')).toBe(false);
+  });
+
+  it('closes the mobile menu after selecting a settings option', () => {
+    const onNavigate = vi.fn();
+    renderSidebar({
+      collapsed: false,
+      settingsAsGroup: true,
+      onNavigate,
+      initialEntries: ['/configuracoes'],
+    });
+
+    fireEvent.click(screen.getByRole('link', { name: 'Equipe' }));
+
+    expect(onNavigate).toHaveBeenCalledTimes(1);
   });
 
   it('renders the collapse toggle on the desktop sidebar', () => {

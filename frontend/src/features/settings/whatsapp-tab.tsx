@@ -157,7 +157,7 @@ export function WhatsAppTab() {
 
   return (
     <Card>
-      <CardHeader className="flex-row items-start justify-between gap-3 space-y-0">
+      <CardHeader className="flex-col items-start gap-3 space-y-0 sm:flex-row sm:justify-between">
         <div>
           <CardTitle>WhatsApp</CardTitle>
           <CardDescription>
@@ -214,99 +214,174 @@ export function WhatsAppTab() {
             }
           />
         ) : (
-          <div className="overflow-hidden rounded-md border border-border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Instância</TableHead>
-                  <TableHead className="hidden md:table-cell">Telefone</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="hidden sm:table-cell">Credenciais</TableHead>
-                  <TableHead className="text-right">Ações</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {instances.map((instance) => (
-                  <TableRow key={instance.id}>
-                    <TableCell>
-                      <div className="font-medium text-foreground">{instance.name}</div>
-                      <div className="font-mono text-xs text-muted-foreground">
-                        {instance.instanceName}
-                      </div>
-                    </TableCell>
-                    <TableCell className="hidden font-mono text-xs md:table-cell">
-                      {instance.phone ?? '—'}
-                    </TableCell>
-                    <TableCell>
-                      <StatusBadge tone={statusTone[instance.status]}>
-                        {statusLabel[instance.status]}
-                      </StatusBadge>
-                    </TableCell>
-                    <TableCell className="hidden sm:table-cell">
-                      {instance.hasCredentials ? (
-                        <StatusBadge tone="info">Configuradas</StatusBadge>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">Globais</span>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex flex-wrap items-center justify-end gap-1">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => void handleConnect(instance)}
-                          disabled={connect.isPending}
-                        >
-                          <Plug />
-                          {instance.status === 'CONNECTED' ? 'Reconectar' : 'Conectar'}
-                        </Button>
-                        {instance.status === 'CONNECTED' ? (
+          <>
+            <div className="space-y-2 sm:hidden">
+              {instances.map((instance) => (
+                <div
+                  key={instance.id}
+                  className="min-w-0 space-y-3 rounded-md border border-border p-3"
+                >
+                  <div className="min-w-0 space-y-1">
+                    <p className="break-words text-sm font-medium text-foreground">
+                      {instance.name}
+                    </p>
+                    <p className="break-all font-mono text-xs text-muted-foreground">
+                      {instance.instanceName}
+                    </p>
+                  </div>
+                  <StatusBadge tone={statusTone[instance.status]}>
+                    {statusLabel[instance.status]}
+                  </StatusBadge>
+                  <div className="flex flex-wrap items-center gap-1">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-9"
+                      onClick={() => void handleConnect(instance)}
+                      disabled={connect.isPending}
+                    >
+                      <Plug />
+                      {instance.status === 'CONNECTED' ? 'Reconectar' : 'Conectar'}
+                    </Button>
+                    {instance.status === 'CONNECTED' ? (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-9"
+                        onClick={() => void disconnect.mutateAsync(instance.id)}
+                        disabled={disconnect.isPending}
+                        aria-label="Desconectar"
+                      >
+                        <Unplug />
+                      </Button>
+                    ) : null}
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="size-9"
+                      onClick={() => void handleWebhook(instance)}
+                      disabled={configureWebhook.isPending}
+                      aria-label="Configurar webhook"
+                    >
+                      <Link2 />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="size-9"
+                      onClick={() => openEdit(instance)}
+                      aria-label="Editar instância"
+                    >
+                      <Pencil />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="size-9 text-danger"
+                      onClick={() => setPendingDelete(instance)}
+                      aria-label="Excluir instância"
+                    >
+                      <Trash2 />
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="hidden overflow-hidden rounded-md border border-border sm:block">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Instância</TableHead>
+                    <TableHead className="hidden md:table-cell">Telefone</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="hidden sm:table-cell">Credenciais</TableHead>
+                    <TableHead className="text-right">Ações</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {instances.map((instance) => (
+                    <TableRow key={instance.id}>
+                      <TableCell>
+                        <div className="font-medium text-foreground">{instance.name}</div>
+                        <div className="font-mono text-xs text-muted-foreground">
+                          {instance.instanceName}
+                        </div>
+                      </TableCell>
+                      <TableCell className="hidden font-mono text-xs md:table-cell">
+                        {instance.phone ?? '—'}
+                      </TableCell>
+                      <TableCell>
+                        <StatusBadge tone={statusTone[instance.status]}>
+                          {statusLabel[instance.status]}
+                        </StatusBadge>
+                      </TableCell>
+                      <TableCell className="hidden sm:table-cell">
+                        {instance.hasCredentials ? (
+                          <StatusBadge tone="info">Configuradas</StatusBadge>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">Globais</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-wrap items-center justify-end gap-1">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => void handleConnect(instance)}
+                            disabled={connect.isPending}
+                          >
+                            <Plug />
+                            {instance.status === 'CONNECTED' ? 'Reconectar' : 'Conectar'}
+                          </Button>
+                          {instance.status === 'CONNECTED' ? (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="size-8"
+                              onClick={() => void disconnect.mutateAsync(instance.id)}
+                              disabled={disconnect.isPending}
+                              aria-label="Desconectar"
+                            >
+                              <Unplug />
+                            </Button>
+                          ) : null}
                           <Button
                             variant="ghost"
                             size="icon"
                             className="size-8"
-                            onClick={() => void disconnect.mutateAsync(instance.id)}
-                            disabled={disconnect.isPending}
-                            aria-label="Desconectar"
+                            onClick={() => void handleWebhook(instance)}
+                            disabled={configureWebhook.isPending}
+                            aria-label="Configurar webhook"
                           >
-                            <Unplug />
+                            <Link2 />
                           </Button>
-                        ) : null}
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="size-8"
-                          onClick={() => void handleWebhook(instance)}
-                          disabled={configureWebhook.isPending}
-                          aria-label="Configurar webhook"
-                        >
-                          <Link2 />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="size-8"
-                          onClick={() => openEdit(instance)}
-                          aria-label="Editar instância"
-                        >
-                          <Pencil />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="size-8 text-danger"
-                          onClick={() => setPendingDelete(instance)}
-                          aria-label="Excluir instância"
-                        >
-                          <Trash2 />
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="size-8"
+                            onClick={() => openEdit(instance)}
+                            aria-label="Editar instância"
+                          >
+                            <Pencil />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="size-8 text-danger"
+                            onClick={() => setPendingDelete(instance)}
+                            aria-label="Excluir instância"
+                          >
+                            <Trash2 />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </>
         )}
 
         <p className="text-xs text-muted-foreground">

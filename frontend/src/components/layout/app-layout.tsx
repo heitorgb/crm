@@ -54,6 +54,7 @@ export function AppLayout() {
             collapsed={false}
             onNavigate={() => setMobileSidebarOpen(false)}
             showCollapseToggle={false}
+            settingsAsGroup
             footer={isAttendance ? <AttendanceMobileOptions /> : undefined}
           />
         </SheetContent>

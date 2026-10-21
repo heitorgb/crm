@@ -48,7 +48,7 @@ export function SettingsPage() {
       />
 
       <Tabs value={activeTab} onValueChange={handleTabChange}>
-        <TabsList className="h-auto flex-wrap">
+        <TabsList className="hidden h-auto flex-wrap lg:inline-flex">
           <TabsTrigger value="organization">
             <Building2 />
             Organização

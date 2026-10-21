@@ -1,14 +1,18 @@
 import {
+  Bell,
   Building2,
   CalendarClock,
   Contact,
   Headset,
   KanbanSquare,
+  Menu,
   MessagesSquare,
+  Palette,
   Receipt,
   Settings,
   Settings2,
   Shield,
+  Smartphone,
   Tags,
   Users,
   Wallet,
@@ -119,6 +123,20 @@ export const navigation: NavEntry[] = [
   },
   { title: 'Configurações', to: '/configuracoes', icon: Settings },
 ];
+
+export const settingsNavigation: NavGroup = {
+  title: 'Configurações',
+  icon: Settings,
+  items: [
+    { title: 'Organização', to: '/configuracoes', icon: Building2 },
+    { title: 'Equipe', to: '/configuracoes?tab=team', icon: Users },
+    { title: 'Aparência', to: '/configuracoes?tab=appearance', icon: Palette },
+    { title: 'Atendimento', to: '/configuracoes?tab=attendance', icon: Headset },
+    { title: 'Notificações', to: '/configuracoes?tab=notifications', icon: Bell },
+    { title: 'WhatsApp', to: '/configuracoes?tab=whatsapp', icon: Smartphone },
+    { title: 'Menu Personalizado', to: '/configuracoes?tab=menu', icon: Menu },
+  ],
+};
 
 /**
  * Builds the visible menu for a user. Entries tied to a `moduleKey` are hidden

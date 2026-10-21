@@ -32,6 +32,7 @@ export interface NavItem {
 }
 
 export interface NavGroup {
+  id: string;
   title: string;
   icon: LucideIcon;
   items: NavItem[];
@@ -46,6 +47,7 @@ export function isNavGroup(entry: NavEntry): entry is NavGroup {
 
 export const navigation: NavEntry[] = [
   {
+    id: 'crm',
     title: 'CRM',
     icon: KanbanSquare,
     items: [
@@ -54,6 +56,7 @@ export const navigation: NavEntry[] = [
     ],
   },
   {
+    id: 'atendimento',
     title: 'Atendimento',
     icon: Headset,
     items: [
@@ -66,6 +69,7 @@ export const navigation: NavEntry[] = [
     ],
   },
   {
+    id: 'ferramentas',
     title: 'Ferramentas',
     icon: Wrench,
     items: [
@@ -84,11 +88,13 @@ export const navigation: NavEntry[] = [
     ],
   },
   {
+    id: 'contatos',
     title: 'Contatos',
     icon: Users,
     items: [{ title: 'Contatos', to: '/contatos', icon: Contact, moduleKey: MODULE_KEYS.CONTACTS }],
   },
   {
+    id: 'financeiro',
     title: 'Financeiro',
     icon: Wallet,
     items: [
@@ -101,6 +107,7 @@ export const navigation: NavEntry[] = [
     ],
   },
   {
+    id: 'integracoes',
     title: 'Integrações',
     icon: Webhook,
     items: [
@@ -113,6 +120,7 @@ export const navigation: NavEntry[] = [
     ],
   },
   {
+    id: 'administracao',
     title: 'Administração',
     icon: Shield,
     platformAdminOnly: true,
@@ -125,6 +133,7 @@ export const navigation: NavEntry[] = [
 ];
 
 export const settingsNavigation: NavGroup = {
+  id: 'configuracoes',
   title: 'Configurações',
   icon: Settings,
   items: [

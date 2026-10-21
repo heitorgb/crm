@@ -56,6 +56,11 @@ lateral** no mobile (`Esquerda` ou `Direita`), persistido em `localStorage` (`or
 `left`. A posição é aplicada somente ao drawer mobile; o menu fixo do desktop permanece à esquerda.
 Sem persistência no backend.
 
+O estado de expansão de cada grupo do menu lateral também é persistido em `orderup-ui`
+(`expandedNavGroups`), usando identificadores estáveis por grupo. Grupos sem preferência salva
+iniciam minimizados; a expansão é independente entre grupos e não depende da abertura do drawer
+mobile nem do recolhimento visual do menu.
+
 ### Atendimento
 
 Preferência do navegador persistida em `localStorage` (`orderup-attendance`), sem backend:

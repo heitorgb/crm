@@ -1,4 +1,4 @@
-import { createElement, useState, type ReactNode } from 'react';
+import { createElement, type ReactNode } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { ChevronDown, ExternalLink, Folder, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import {
@@ -55,7 +55,7 @@ export function Sidebar({
 
   const renderEntry = (entry: NavEntry) =>
     isNavGroup(entry) ? (
-      <SidebarGroup key={`group-${entry.title}`} group={entry} collapsed={collapsed} onNavigate={onNavigate} />
+      <SidebarGroup key={`group-${entry.id}`} group={entry} collapsed={collapsed} onNavigate={onNavigate} />
     ) : settingsAsGroup && entry.to === '/configuracoes' ? (
       <SidebarGroup
         key="group-configuracoes"
@@ -138,7 +138,9 @@ function SidebarCustomGroup({
   collapsed: boolean;
   onNavigate?: () => void;
 }) {
-  const [open, setOpen] = useState(true);
+  const groupId = `custom:${group.id}`;
+  const open = useUiStore((state) => state.expandedNavGroups[groupId] ?? false);
+  const setNavGroupExpanded = useUiStore((state) => state.setNavGroupExpanded);
 
   if (collapsed) {
     return (
@@ -159,7 +161,7 @@ function SidebarCustomGroup({
     <div>
       <button
         type="button"
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => setNavGroupExpanded(groupId, !open)}
         className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground transition-colors hover:text-foreground"
         aria-expanded={open}
       >
@@ -242,7 +244,8 @@ function SidebarGroup({
   const hasActiveChild = group.items.some((item) =>
     pathname.startsWith(item.to.split('?')[0]),
   );
-  const [open, setOpen] = useState(true);
+  const open = useUiStore((state) => state.expandedNavGroups[group.id] ?? false);
+  const setNavGroupExpanded = useUiStore((state) => state.setNavGroupExpanded);
 
   if (collapsed) {
     return (
@@ -258,7 +261,7 @@ function SidebarGroup({
     <div>
       <button
         type="button"
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => setNavGroupExpanded(group.id, !open)}
         className={cn(
           'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs font-semibold uppercase tracking-wide transition-colors',
           hasActiveChild ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',

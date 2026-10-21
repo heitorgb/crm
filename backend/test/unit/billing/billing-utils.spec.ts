@@ -7,6 +7,7 @@ import {
   localDateString,
   localHour,
   parseDateOnly,
+  startOfDayInTimeZone,
   formatDateBR,
   formatDateOnly,
 } from '../../../src/modules/billing/billing-time.js';
@@ -55,6 +56,18 @@ describe('billing-time', () => {
     const earlyUtc = new Date('2026-10-16T02:00:00.000Z');
     expect(localHour(earlyUtc, 'America/Sao_Paulo')).toBe(23);
     expect(localDateString(earlyUtc, 'America/Sao_Paulo')).toBe('2026-10-15');
+  });
+
+  it('resolves the start of a local day as a UTC instant', () => {
+    expect(startOfDayInTimeZone('2026-10-20', 'America/Sao_Paulo').toISOString()).toBe(
+      '2026-10-20T03:00:00.000Z',
+    );
+    expect(startOfDayInTimeZone('2026-10-21', 'America/Sao_Paulo').toISOString()).toBe(
+      '2026-10-21T03:00:00.000Z',
+    );
+    expect(startOfDayInTimeZone('2026-10-20', 'UTC').toISOString()).toBe(
+      '2026-10-20T00:00:00.000Z',
+    );
   });
 
   it('evaluates the send window including the overnight case', () => {

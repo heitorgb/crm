@@ -19,6 +19,7 @@ import {
   isValidDateOnly,
   localDateString,
   parseDateOnly,
+  startOfDayInTimeZone,
 } from './billing-time.js';
 import type {
   BillingChargeEffectiveStatus,
@@ -246,8 +247,11 @@ export class BillingChargesService {
     const from = query.from ?? `${today.slice(0, 7)}-01`;
     const to = query.to ?? today;
 
-    const fromDate = parseDateOnly(requireDateOnly(from, 'from'));
-    const toExclusive = parseDateOnly(addDays(requireDateOnly(to, 'to'), 1));
+    const fromDate = startOfDayInTimeZone(requireDateOnly(from, 'from'), this.timeZone);
+    const toExclusive = startOfDayInTimeZone(
+      addDays(requireDateOnly(to, 'to'), 1),
+      this.timeZone,
+    );
 
     const [
       pendingAgg,

@@ -45,6 +45,41 @@ export function localHour(date: Date, timeZone: string): number {
   return Number.parseInt(part(parts, 'hour'), 10) % 24;
 }
 
+/**
+ * UTC instant of 00:00 of a calendar date as seen in the given IANA time zone.
+ * Used to filter timestamp columns (e.g. `paidAt`) by the tenant's local days.
+ */
+export function startOfDayInTimeZone(dateOnly: string, timeZone: string): Date {
+  const date = parseDateOnly(dateOnly);
+  const firstOffset = timeZoneOffset(date, timeZone);
+  const refinedOffset = timeZoneOffset(new Date(date.getTime() - firstOffset), timeZone);
+  return new Date(date.getTime() - refinedOffset);
+}
+
+function timeZoneOffset(instant: Date, timeZone: string): number {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(instant);
+
+  const wallClockAsUtc = Date.UTC(
+    Number(part(parts, 'year')),
+    Number(part(parts, 'month')) - 1,
+    Number(part(parts, 'day')),
+    Number(part(parts, 'hour')),
+    Number(part(parts, 'minute')),
+    Number(part(parts, 'second')),
+  );
+
+  return wallClockAsUtc - instant.getTime();
+}
+
 export function addDays(dateOnly: string, days: number): string {
   const date = parseDateOnly(dateOnly);
   date.setUTCDate(date.getUTCDate() + days);
@@ -81,7 +116,10 @@ export function addMonthsClamped(dateOnly: string, months: number): string {
   return `${yearString}-${monthString}-${dayString}`;
 }
 
-function part(parts: Intl.DateTimeFormatPart[], type: 'year' | 'month' | 'day' | 'hour'): string {
+function part(
+  parts: Intl.DateTimeFormatPart[],
+  type: 'year' | 'month' | 'day' | 'hour' | 'minute' | 'second',
+): string {
   const found = parts.find((item) => item.type === type)?.value;
   if (!found) {
     throw new Error(`Missing date part "${type}" while formatting`);

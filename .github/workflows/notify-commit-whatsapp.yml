@@ -66,27 +66,6 @@ jobs:
             return result;
           }
 
-          function formatDate(value) {
-            if (!value) {
-              return null;
-            }
-            const date = new Date(value);
-            if (Number.isNaN(date.getTime())) {
-              return null;
-            }
-            const parts = new Intl.DateTimeFormat('pt-BR', {
-              timeZone: 'America/Sao_Paulo',
-              day: '2-digit',
-              month: '2-digit',
-              year: 'numeric',
-              hour: '2-digit',
-              minute: '2-digit',
-              hourCycle: 'h23',
-            }).formatToParts(date);
-            const part = (type) => parts.find((item) => item.type === type)?.value;
-            return `${part('day')}/${part('month')}/${part('year')} ${part('hour')}:${part('minute')}`;
-          }
-
           function splitCommitMessage(value) {
             const normalized = normalizeMultiline(value);
             if (!normalized) {
@@ -120,67 +99,77 @@ jobs:
             return { title, body };
           }
 
-          function formatCommitText(title, body) {
-            if (!title) {
-              return body || 'Mensagem não informada.';
+          function formatCommitBlock(commit, index, total) {
+            if (!commit.title) {
+              return commit.body || 'Mensagem não informada.';
             }
-            const headline = `*${title}*`;
-            return body ? `${headline}\n\n${body}` : headline;
+            const headline =
+              total > 1 ? `*${index + 1}. ${commit.title}*` : `*${commit.title}*`;
+            return commit.body ? `${headline}\n\n${commit.body}` : headline;
           }
 
-          function buildMessage(fields, commitText) {
-            const sections = ['🚀 *ATUALIZAÇÃO DO CRM*', '📝 *COMMIT REALIZADO*'];
-            if (commitText) {
-              sections.push(commitText);
+          function buildMessage(fields, commits) {
+            const sections = [
+              '🚀 *ATUALIZAÇÃO DO CRM*',
+              commits.length > 1 ? '📝 *COMMITS REALIZADOS*' : '📝 *COMMIT REALIZADO*',
+            ];
+            commits.forEach((commit, index) => {
+              sections.push(formatCommitBlock(commit, index, commits.length));
+            });
+            sections.push(`🌿 *Branch:* ${fields.branch}`);
+            if (fields.authors) {
+              sections.push(
+                `${commits.length > 1 ? '👤 *Autores:*' : '👤 *Autor:*'} ${fields.authors}`,
+              );
             }
-            sections.push(
-              `📦 *Repositório:* ${fields.repository}`,
-              `🌿 *Branch:* ${fields.branch}`,
-              `👤 *Autor:* ${fields.author}`,
-            );
-            if (fields.pusher) {
-              sections.push(`📤 *Push por:* ${fields.pusher}`);
-            }
-            if (fields.shortSha) {
-              sections.push(`🔖 *Hash:* ${fields.shortSha}`);
-            }
-            if (fields.date) {
-              sections.push(`🕒 *Data:* ${fields.date}`);
-            }
-            if (fields.commitUrl) {
-              sections.push(`🔗 *Ver alterações:*\n${fields.commitUrl}`);
+            if (fields.changeUrl) {
+              sections.push(`🔗 *Ver alterações:*\n${fields.changeUrl}`);
             }
             return sections.join('\n\n');
           }
 
-          function buildMessageWithinLimit(fields, rawMessage) {
-            const { title, body } = splitCommitMessage(rawMessage);
-            const full = buildMessage(fields, formatCommitText(title, body));
+          function buildMessageWithinLimit(fields, rawCommits) {
+            const commits = rawCommits.map((commit) => ({
+              ...commit,
+              ...splitCommitMessage(commit.rawMessage),
+            }));
+            const full = buildMessage(fields, commits);
             if (full.length <= MAX_MESSAGE_LENGTH) {
               return full;
             }
 
             const suffix = '\n\n… (mensagem truncada)';
-            const template = buildMessage(fields, formatCommitText(title, ''));
-            const separatorLength = title && body ? 2 : 0;
-            const budget =
-              MAX_MESSAGE_LENGTH - template.length - separatorLength - suffix.length;
-            if (budget <= 0) {
+            const templateBlocks = commits.map((commit) => ({ ...commit, body: '' }));
+            const template = buildMessage(fields, templateBlocks);
+            if (template.length + suffix.length > MAX_MESSAGE_LENGTH) {
               return truncateUtf16(template, MAX_MESSAGE_LENGTH);
             }
 
-            let truncatedBody = '';
-            for (const character of body) {
-              if (truncatedBody.length + character.length > budget) {
-                break;
+            let remaining = MAX_MESSAGE_LENGTH - template.length - suffix.length;
+            let truncated = false;
+            const limitedBlocks = commits.map((commit) => {
+              if (!commit.body || truncated) {
+                return { ...commit, body: '' };
               }
-              truncatedBody += character;
-            }
 
-            const candidate = buildMessage(
-              fields,
-              formatCommitText(title, `${truncatedBody.trimEnd()}${suffix}`),
-            );
+              const separatorLength = 2;
+              const available = remaining - separatorLength;
+              if (available <= 0) {
+                truncated = true;
+                return { ...commit, body: '' };
+              }
+              if (commit.body.length <= available) {
+                remaining -= commit.body.length + separatorLength;
+                return commit;
+              }
+
+              const truncatedBody = truncateUtf16(commit.body, available).trimEnd();
+              remaining = 0;
+              truncated = true;
+              return { ...commit, body: `${truncatedBody}${suffix}` };
+            });
+
+            const candidate = buildMessage(fields, limitedBlocks);
             if (candidate.length <= MAX_MESSAGE_LENGTH) {
               return candidate;
             }
@@ -207,12 +196,12 @@ jobs:
             return { url, token };
           }
 
-          function idempotencyKeyFor(repository, branch, sha) {
+          function idempotencyKeyFor(repository, branch, reference) {
             const digest = crypto
               .createHash('sha256')
-              .update(`${repository}\n${branch}\n${sha}`)
+              .update(`${repository}\n${branch}\n${reference}`)
               .digest('hex');
-            return `github-crm-commit:${digest}`;
+            return `github-crm-push:${digest}`;
           }
 
           function parseRetryAfter(response) {
@@ -361,6 +350,8 @@ jobs:
             const branch = normalizeSingleLine(
               String(event.ref ?? '').replace(/^refs\/heads\//, ''),
             );
+            const before = normalizeSingleLine(event.before);
+            const after = normalizeSingleLine(event.after);
             const commits = Array.isArray(event.commits) ? event.commits : [];
 
             if (event.deleted === true) {
@@ -375,15 +366,14 @@ jobs:
               console.log('Push sem commits novos; nada a notificar.');
               return;
             }
-            if (ZERO_SHA.test(String(event.before ?? '')) || ZERO_SHA.test(String(event.after ?? ''))) {
+            if (ZERO_SHA.test(before) || ZERO_SHA.test(after)) {
               console.log('Criação ou exclusão de referência ignorada.');
               return;
             }
 
             const { url, token } = requireWebhookConfig();
-            const pusher = normalizeSingleLine(event.pusher?.name);
             const notSent = [];
-            let sentCount = 0;
+            const validCommits = [];
 
             for (let index = 0; index < commits.length; index += 1) {
               const commit = commits[index] ?? {};
@@ -400,47 +390,57 @@ jobs:
                 continue;
               }
 
-              const shortSha = sha.slice(0, 7);
-              const author =
-                normalizeSingleLine(commit.author?.name) || 'Não informado';
-              const authorForComparison = normalizeSingleLine(commit.author?.name);
-              const pushAuthor =
-                pusher && pusher !== authorForComparison
-                  ? truncateUtf16(pusher, 100)
-                  : null;
-              const rawMessage = commit.message;
-              const fields = {
-                repository: truncateUtf16(repository, 140),
-                branch: truncateUtf16(branch, 200),
-                author: truncateUtf16(author, 100),
-                pusher: pushAuthor,
-                shortSha,
-                date: formatDate(commit.timestamp ?? commit.author?.date),
+              validCommits.push({
+                sha,
+                rawMessage: commit.message,
+                author: normalizeSingleLine(commit.author?.name) || 'Não informado',
                 commitUrl: `https://github.com/${repository}/commit/${sha}`,
-              };
-              const message = buildMessageWithinLimit(fields, rawMessage);
-              const idempotencyKey = idempotencyKeyFor(repository, branch, sha);
+              });
+            }
 
-              console.log(`${position} Notificando commit ${shortSha} (${fields.branch})...`);
-              const result = await sendWithRetry(url, token, { message }, idempotencyKey);
-
-              if (result.ok) {
-                sentCount += 1;
-                console.log(`${position} Commit ${shortSha} notificado (HTTP ${result.status}).`);
-                continue;
+            if (validCommits.length === 0) {
+              console.log('Nenhum commit novo válido para notificar.');
+              if (notSent.length > 0) {
+                console.error(`${notSent.length} commit(s) não notificado(s): ${notSent.join(', ')}`);
+                process.exitCode = 1;
               }
+              return;
+            }
 
-              notSent.push(shortSha);
-              console.error(`${position} Falha ao notificar ${shortSha}: ${describeFailure(result)}`);
+            const authors = [...new Set(validCommits.map((commit) => commit.author))];
+            const compareUrl =
+              validCommits.length > 1 && VALID_SHA.test(before) && VALID_SHA.test(after)
+                ? `https://github.com/${repository}/compare/${before}...${after}`
+                : validCommits[validCommits.length - 1].commitUrl;
+            const fields = {
+              branch: truncateUtf16(branch, 200),
+              authors: truncateUtf16(authors.join(', '), 200),
+              changeUrl: compareUrl,
+            };
+            const message = buildMessageWithinLimit(fields, validCommits);
+            const idempotencyKey = idempotencyKeyFor(
+              repository,
+              branch,
+              validCommits.map((commit) => commit.sha).join(','),
+            );
+
+            console.log(
+              `Notificando ${validCommits.length} commit(s) em ${fields.branch}...`,
+            );
+            const result = await sendWithRetry(url, token, { message }, idempotencyKey);
+
+            if (result.ok) {
+              console.log(
+                `${validCommits.length} commit(s) notificado(s) com sucesso (HTTP ${result.status}).`,
+              );
+            } else {
+              notSent.push(...validCommits.map((commit) => commit.sha));
+              console.error(`Falha ao notificar o push: ${describeFailure(result)}`);
               if (result.fatal) {
                 console.error('Erro de configuração ou integração do webhook; interrompendo.');
-                break;
               }
             }
 
-            if (sentCount > 0) {
-              console.log(`${sentCount} commit(s) notificado(s) com sucesso.`);
-            }
             if (notSent.length > 0) {
               console.error(`${notSent.length} commit(s) não notificado(s): ${notSent.join(', ')}`);
               process.exitCode = 1;

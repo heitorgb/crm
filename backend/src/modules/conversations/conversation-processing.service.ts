@@ -764,130 +764,173 @@ export class ConversationProcessingService implements OnModuleInit {
     await this.runAsTenant(tenantId, async () => {
       const message = await this.prisma.message.findFirst({
         where: { id: messageId, tenantId },
-        include: { conversation: { include: { instance: true } } },
+        select: {
+          id: true,
+          type: true,
+          direction: true,
+          metadata: true,
+        },
       });
       if (!message) {
         return;
       }
 
-      const alreadyStored = await this.prisma.messageAttachment.count({ where: { messageId } });
-      if (alreadyStored > 0) {
-        return;
-      }
+      await this.ensureMediaStored(tenantId, messageId);
 
-      const conversation = message.conversation;
-      const remoteJid = conversation.externalContactId;
-      const externalId = message.externalMessageId;
-      // Media the user sent from the phone/Web is stored too, so it can be
-      // downloaded from the provider with the matching direction.
-      const fromMe = message.direction === 'OUTBOUND';
-      if (!externalId || !remoteJid) {
-        await this.markMediaError(
-          tenantId,
-          conversation.id,
-          messageId,
-          message.metadata,
-          'missing_media_key',
-        );
-        return;
-      }
-
-      let content;
-      try {
-        content = await this.evolution.getBase64FromMediaMessage(
-          conversation.instance.instanceName,
-          { id: externalId, remoteJid, fromMe },
-        );
-      } catch (error) {
-        this.logger.warn(
-          `Failed to fetch media for message ${messageId}: ${
-            error instanceof Error ? error.message : 'unknown'
-          }`,
-        );
-        await this.markMediaError(
-          tenantId,
-          conversation.id,
-          messageId,
-          message.metadata,
-          'fetch_failed',
-        );
-        return;
-      }
-
-      const maxBytes = this.config.get('MEDIA_MAX_BYTES');
-      if ((content.size ?? 0) > maxBytes) {
-        await this.markMediaError(
-          tenantId,
-          conversation.id,
-          messageId,
-          message.metadata,
-          'too_large',
-        );
-        return;
-      }
-      if (content.base64.length > maxBytes * 2) {
-        await this.markMediaError(
-          tenantId,
-          conversation.id,
-          messageId,
-          message.metadata,
-          'too_large',
-        );
-        return;
-      }
-
-      const buffer = decodeBase64(content.base64);
-      if (!buffer || buffer.length === 0) {
-        await this.markMediaError(tenantId, conversation.id, messageId, message.metadata, 'empty');
-        return;
-      }
-      if (buffer.length > maxBytes) {
-        await this.markMediaError(
-          tenantId,
-          conversation.id,
-          messageId,
-          message.metadata,
-          'too_large',
-        );
-        return;
-      }
-
-      const isSticker = message.type === MessageType.STICKER;
-      const isImage = !isSticker && (await this.media.isImage(buffer));
-      const stored = isImage
-        ? await this.storeImage(tenantId, messageId, buffer, content.fileName ?? 'image.jpg')
-        : await this.storeFile(
-            tenantId,
-            messageId,
-            buffer,
-            content.fileName ?? (isSticker ? 'sticker.webp' : 'file'),
-            content.mimeType ?? (isSticker ? 'image/webp' : 'application/octet-stream'),
+      if (isTranscribableAudio(message)) {
+        try {
+          await this.queue.enqueue(
+            JOB_NAMES.TRANSCRIPTION_PROCESS,
+            { tenantId, messageId },
+            { jobId: `transcription-${messageId}` },
           );
-
-      await this.messages.createAttachment({
-        tenantId,
-        messageId,
-        storageKey: stored.storageKey,
-        thumbnailKey: stored.thumbnailKey,
-        fileName: stored.fileName,
-        mimeType: stored.mimeType,
-        size: stored.size,
-        width: stored.width,
-        height: stored.height,
-      });
-
-      if (!message.content && content.caption) {
-        await this.prisma.message.update({
-          where: { id: messageId },
-          data: { content: content.caption },
-        });
+        } catch (error) {
+          this.logger.warn(
+            `Failed to enqueue transcription for message ${messageId}: ${
+              error instanceof Error ? error.message : 'unknown'
+            }`,
+          );
+        }
       }
-
-      this.realtime.emitToTenant(tenantId, 'conversation.updated', {
-        conversationId: conversation.id,
-        messageId,
-      });
     });
+  }
+
+  /**
+   * Downloads an inbound/outbound media file from Evolution exactly once and
+   * stores it with the regular attachment pipeline. It is reused by the media
+   * job and by the transcription job when the attachment is not available yet.
+   */
+  async ensureMediaStored(
+    tenantId: string,
+    messageId: string,
+  ): Promise<MediaStorageResult> {
+    const message = await this.prisma.message.findFirst({
+      where: { id: messageId, tenantId },
+      include: { conversation: { include: { instance: true } } },
+    });
+    if (!message) {
+      return 'missing';
+    }
+
+    const alreadyStored = await this.prisma.messageAttachment.count({ where: { messageId } });
+    if (alreadyStored > 0) {
+      return 'stored';
+    }
+
+    const conversation = message.conversation;
+    const remoteJid = conversation.externalContactId;
+    const externalId = message.externalMessageId;
+    // Media the user sent from the phone/Web is stored too, so it can be
+    // downloaded from the provider with the matching direction.
+    const fromMe = message.direction === 'OUTBOUND';
+    if (!externalId || !remoteJid) {
+      await this.markMediaError(
+        tenantId,
+        conversation.id,
+        messageId,
+        message.metadata,
+        'missing_media_key',
+      );
+      return 'missing_media_key';
+    }
+
+    let content;
+    try {
+      content = await this.evolution.getBase64FromMediaMessage(
+        conversation.instance.instanceName,
+        { id: externalId, remoteJid, fromMe },
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Failed to fetch media for message ${messageId}: ${
+          error instanceof Error ? error.message : 'unknown'
+        }`,
+      );
+      await this.markMediaError(
+        tenantId,
+        conversation.id,
+        messageId,
+        message.metadata,
+        'fetch_failed',
+      );
+      return 'fetch_failed';
+    }
+
+    const maxBytes = this.config.get('MEDIA_MAX_BYTES');
+    if ((content.size ?? 0) > maxBytes) {
+      await this.markMediaError(
+        tenantId,
+        conversation.id,
+        messageId,
+        message.metadata,
+        'too_large',
+      );
+      return 'too_large';
+    }
+    if (content.base64.length > maxBytes * 2) {
+      await this.markMediaError(
+        tenantId,
+        conversation.id,
+        messageId,
+        message.metadata,
+        'too_large',
+      );
+      return 'too_large';
+    }
+
+    const buffer = decodeBase64(content.base64);
+    if (!buffer || buffer.length === 0) {
+      await this.markMediaError(tenantId, conversation.id, messageId, message.metadata, 'empty');
+      return 'empty';
+    }
+    if (buffer.length > maxBytes) {
+      await this.markMediaError(
+        tenantId,
+        conversation.id,
+        messageId,
+        message.metadata,
+        'too_large',
+      );
+      return 'too_large';
+    }
+
+    const isSticker = message.type === MessageType.STICKER;
+    const isImage = !isSticker && (await this.media.isImage(buffer));
+    const stored = isImage
+      ? await this.storeImage(tenantId, messageId, buffer, content.fileName ?? 'image.jpg')
+      : await this.storeFile(
+          tenantId,
+          messageId,
+          buffer,
+          content.fileName ?? (isSticker ? 'sticker.webp' : 'file'),
+          content.mimeType ?? (isSticker ? 'image/webp' : 'application/octet-stream'),
+        );
+
+    await this.messages.createAttachment({
+      tenantId,
+      messageId,
+      storageKey: stored.storageKey,
+      thumbnailKey: stored.thumbnailKey,
+      fileName: stored.fileName,
+      mimeType: stored.mimeType,
+      size: stored.size,
+      width: stored.width,
+      height: stored.height,
+    });
+
+    if (!message.content && content.caption) {
+      await this.prisma.message.update({
+        where: { id: messageId },
+        data: { content: content.caption },
+      });
+    }
+
+    this.realtime.emitToTenant(tenantId, 'conversation.updated', {
+      conversationId: conversation.id,
+      messageId,
+    });
+
+    return 'stored';
   }
 
   async retrySend(payload: JobPayload): Promise<void> {
@@ -1360,6 +1403,14 @@ export class ConversationProcessingService implements OnModuleInit {
   }
 }
 
+export type MediaStorageResult =
+  | 'stored'
+  | 'missing'
+  | 'missing_media_key'
+  | 'fetch_failed'
+  | 'too_large'
+  | 'empty';
+
 interface StoredMedia {
   storageKey: string;
   thumbnailKey: string | null;
@@ -1369,6 +1420,17 @@ interface StoredMedia {
   width: number | null;
   height: number | null;
   base64: string;
+}
+
+function isTranscribableAudio(message: {
+  type: MessageType;
+  direction: string;
+  metadata: Prisma.JsonValue;
+}): boolean {
+  if (message.type !== MessageType.AUDIO || message.direction !== 'INBOUND') {
+    return false;
+  }
+  return !(isRecord(message.metadata) && message.metadata.viewOnce === true);
 }
 
 function asString(value: unknown): string | null {

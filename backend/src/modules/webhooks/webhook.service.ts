@@ -264,6 +264,7 @@ export class WebhookService {
 
     const content = reaction ? reaction.emoji : extractText(message);
     const type = reaction ? MessageType.REACTION : detectType(message);
+    const audioDurationSeconds = type === MessageType.AUDIO ? readAudioDuration(message) : null;
     const linkPreview = extractWhatsAppLinkPreview(message);
     const externalMessageId = readString(key?.id);
     const quoted = await this.resolveInboundQuoted(instance.tenantId, message);
@@ -304,6 +305,7 @@ export class WebhookService {
         ...(quoted ? { quoted } : {}),
         ...(contacts ? { contacts } : {}),
         ...(linkPreview ? { linkPreview } : {}),
+        ...(audioDurationSeconds !== null ? { audioDurationSeconds } : {}),
         instanceName,
       },
     });
@@ -330,6 +332,30 @@ export class WebhookService {
         tenantId: instance.tenantId,
         messageId: persisted.id,
       });
+    }
+
+    // The row is created immediately so the chat can show "aguardando". The
+    // background worker decides whether transcription is enabled/compatible.
+    // It is best-effort: a transcription bookkeeping failure must never break
+    // the normal message receipt.
+    if (type === MessageType.AUDIO && direction === MessageDirection.INBOUND && !isViewOnce) {
+      try {
+        await this.prisma.messageTranscription.upsert({
+          where: { messageId: persisted.id },
+          create: {
+            tenantId: instance.tenantId,
+            messageId: persisted.id,
+            status: 'PENDING',
+          },
+          update: {},
+        });
+      } catch (error) {
+        this.logger.warn(
+          `Failed to create transcription state for message ${persisted.id}: ${
+            error instanceof Error ? error.message : 'unknown'
+          }`,
+        );
+      }
     }
 
     this.realtime.emitToConversation(instance.tenantId, conversation.id, 'message.created', {
@@ -1357,6 +1383,21 @@ function readString(value: unknown): string | null {
  * messages sent from the phone/Web; unknown or invalid values fall back to the
  * persistence instant.
  */
+function readAudioDuration(message: unknown): number | null {
+  if (!isRecord(message)) {
+    return null;
+  }
+  const audio = isRecord(message.audioMessage) ? message.audioMessage : null;
+  const raw = audio?.seconds;
+  const seconds =
+    typeof raw === 'number'
+      ? raw
+      : typeof raw === 'string' && raw.length > 0
+        ? Number(raw)
+        : Number.NaN;
+  return Number.isFinite(seconds) && seconds > 0 ? seconds : null;
+}
+
 function readMessageTimestamp(data: Record<string, unknown> | null): Date | null {
   const raw = data?.messageTimestamp;
   const seconds =

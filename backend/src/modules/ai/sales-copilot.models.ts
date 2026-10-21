@@ -49,9 +49,11 @@ export interface SalesContextSummary {
   messageCount: number;
   latestMessageId: string | null;
   latestMessageAt: string | null;
+  latestTranscriptionAt: string | null;
   leadUpdatedAt: string;
   historyTruncated: boolean;
   mediaWithoutText: number;
+  transcriptionsPending: number;
 }
 
 export interface SalesPriorActionContext {

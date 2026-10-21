@@ -35,6 +35,7 @@ function message(overrides: Partial<ConversationMessage> = {}): ConversationMess
     occurredAt: BASE.toISOString(),
     createdAt: BASE.toISOString(),
     attachments: [],
+    transcription: null,
     ...overrides,
   };
 }

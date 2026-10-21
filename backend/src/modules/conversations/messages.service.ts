@@ -4,6 +4,10 @@ import { buildPage, skipOf, type PageResult } from '../../common/http/pagination
 import { TenantContextService } from '../../common/tenant-context/tenant-context.service.js';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service.js';
 import { STORAGE, type StorageService } from '../../infrastructure/storage/storage.types.js';
+import {
+  toTranscriptionView,
+  type MessageTranscriptionView,
+} from '../transcription/transcription.view.js';
 import { ConversationNotFoundError, MessageNotFoundError } from './conversations.errors.js';
 
 export interface MessageAttachmentView {
@@ -30,6 +34,7 @@ export interface MessageView {
   occurredAt: Date;
   createdAt: Date;
   attachments: MessageAttachmentView[];
+  transcription: MessageTranscriptionView | null;
 }
 
 export interface PersistInboundInput {
@@ -117,6 +122,7 @@ const MESSAGE_INCLUDE = {
       metadata: true,
     },
   },
+  transcription: true,
 } satisfies Prisma.MessageInclude;
 
 type PrismaMessage = Prisma.MessageGetPayload<{ include: typeof MESSAGE_INCLUDE }>;
@@ -513,6 +519,7 @@ function toMessageView(message: PrismaMessage): MessageView {
         hasThumbnail: typeof metadata.thumbnailKey === 'string',
       };
     }),
+    transcription: message.transcription ? toTranscriptionView(message.transcription) : null,
   };
 }
 

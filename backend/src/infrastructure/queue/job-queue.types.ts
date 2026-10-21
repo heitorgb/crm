@@ -4,8 +4,12 @@ export interface JobPayload {
 
 export type JobProcessor = (payload: JobPayload) => Promise<void>;
 
+export interface EnqueueOptions {
+  jobId?: string;
+}
+
 export interface JobQueue {
-  enqueue(name: string, payload: JobPayload): Promise<void>;
+  enqueue(name: string, payload: JobPayload, options?: EnqueueOptions): Promise<void>;
   registerProcessor(name: string, processor: JobProcessor): void;
   scheduleRepeatable(name: string, everyMs: number, payload: JobPayload): Promise<void>;
   close(): Promise<void>;
@@ -16,6 +20,7 @@ export const JOB_QUEUE = 'JOB_QUEUE';
 export const JOB_NAMES = {
   WHATSAPP_SEND: 'whatsapp.message.send',
   MEDIA_PROCESS: 'media.process',
+  TRANSCRIPTION_PROCESS: 'transcription.process',
   CONTACTS_SYNC: 'whatsapp.contacts.sync',
   BILLING_SCAN: 'billing.scan',
   BILLING_REMINDER_SEND: 'billing.reminder.send',

@@ -8,6 +8,8 @@ RUN npm run build
 FROM node:24-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
+# ffmpeg converte OGG/Opus do WhatsApp para WAV antes da transcrição.
+RUN apk add --no-cache ffmpeg
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=build /app/dist ./dist

@@ -108,6 +108,14 @@ enum MessageStatus {
   FAILED
 }
 
+enum TranscriptionStatus {
+  NOT_APPLICABLE
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
 enum BillingChargeStatus {
   PENDING
   PAID
@@ -214,6 +222,7 @@ model Tenant {
   conversations              Conversation[]
   messages                   Message[]
   messageAttachments         MessageAttachment[]
+  messageTranscriptions      MessageTranscription[]
   webhookEvents              WebhookEvent[]
   billingCharges             BillingCharge[]
   billingRecurrences         BillingRecurrence[]
@@ -438,29 +447,30 @@ model Lead {
 }
 
 model LeadCommercialContext {
-  id                 String    @id @default(uuid()) @db.Uuid
-  tenantId           String    @map("tenant_id") @db.Uuid
-  leadId             String    @unique @map("lead_id") @db.Uuid
-  conversationId     String?   @map("conversation_id") @db.Uuid
-  summary            String
-  objective          String
-  need               String
-  confirmedFacts     Json      @default("[]") @map("confirmed_facts")
-  hypotheses         Json      @default("[]")
-  pendingInformation Json      @default("[]") @map("pending_information")
-  nextQuestion       String    @map("next_question")
-  suggestedReply     String    @map("suggested_reply")
-  rationale          String
-  provider           String
-  model              String
-  promptVersion      String    @map("prompt_version")
-  analysisVersion    Int       @default(1) @map("analysis_version")
-  latestMessageId    String?   @map("latest_message_id")
-  latestMessageAt    DateTime? @map("latest_message_at")
-  leadUpdatedAt      DateTime  @map("lead_updated_at")
-  lastAnalyzedAt     DateTime  @map("last_analyzed_at")
-  createdAt          DateTime  @default(now()) @map("created_at")
-  updatedAt          DateTime  @updatedAt @map("updated_at")
+  id                    String    @id @default(uuid()) @db.Uuid
+  tenantId              String    @map("tenant_id") @db.Uuid
+  leadId                String    @unique @map("lead_id") @db.Uuid
+  conversationId        String?   @map("conversation_id") @db.Uuid
+  summary               String
+  objective             String
+  need                  String
+  confirmedFacts        Json      @default("[]") @map("confirmed_facts")
+  hypotheses            Json      @default("[]")
+  pendingInformation    Json      @default("[]") @map("pending_information")
+  nextQuestion          String    @map("next_question")
+  suggestedReply        String    @map("suggested_reply")
+  rationale             String
+  provider              String
+  model                 String
+  promptVersion         String    @map("prompt_version")
+  analysisVersion       Int       @default(1) @map("analysis_version")
+  latestMessageId       String?   @map("latest_message_id")
+  latestMessageAt       DateTime? @map("latest_message_at")
+  latestTranscriptionAt DateTime? @map("latest_transcription_at")
+  leadUpdatedAt         DateTime  @map("lead_updated_at")
+  lastAnalyzedAt        DateTime  @map("last_analyzed_at")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
 
   tenant          Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   lead            Lead                 @relation(fields: [leadId], references: [id], onDelete: Cascade)
@@ -741,14 +751,40 @@ model Message {
   occurredAt        DateTime         @default(now()) @map("occurred_at")
   createdAt         DateTime         @default(now()) @map("created_at")
 
-  tenant       Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  conversation Conversation        @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  attachments  MessageAttachment[]
+  tenant        Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  conversation  Conversation          @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  attachments   MessageAttachment[]
+  transcription MessageTranscription?
 
   @@unique([tenantId, externalMessageId])
   @@index([tenantId, conversationId, occurredAt])
   @@index([tenantId, createdAt])
   @@map("messages")
+}
+
+model MessageTranscription {
+  id            String              @id @default(uuid()) @db.Uuid
+  tenantId      String              @map("tenant_id") @db.Uuid
+  messageId     String              @unique @map("message_id") @db.Uuid
+  status        TranscriptionStatus @default(PENDING)
+  text          String?
+  language      String?
+  provider      String?
+  model         String?
+  attempts      Int                 @default(0)
+  retryable     Boolean             @default(true)
+  errorCode     String?             @map("error_code")
+  errorMessage  String?             @map("error_message")
+  transcribedAt DateTime?           @map("transcribed_at")
+  createdAt     DateTime            @default(now()) @map("created_at")
+  updatedAt     DateTime            @updatedAt @map("updated_at")
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, status])
+  @@index([tenantId, updatedAt])
+  @@map("message_transcriptions")
 }
 
 model MessageAttachment {
@@ -1165,6 +1201,9 @@ model AiSettings {
   deepseekApiKeyEncrypted   String?     @map("deepseek_api_key_encrypted")
   anthropicApiKeyEncrypted  String?     @map("anthropic_api_key_encrypted")
   openrouterApiKeyEncrypted String?     @map("openrouter_api_key_encrypted")
+  transcriptionEnabled      Boolean     @default(false) @map("transcription_enabled")
+  transcriptionProvider     AiProvider  @default(OPENAI) @map("transcription_provider")
+  transcriptionModel        String      @default("whisper-1") @map("transcription_model")
   createdAt                 DateTime    @default(now()) @map("created_at")
   updatedAt                 DateTime    @updatedAt @map("updated_at")
 

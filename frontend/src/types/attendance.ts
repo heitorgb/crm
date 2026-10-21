@@ -65,6 +65,27 @@ export interface Conversation {
   updatedAt: string;
 }
 
+export type TranscriptionStatus =
+  | 'NOT_APPLICABLE'
+  | 'PENDING'
+  | 'PROCESSING'
+  | 'COMPLETED'
+  | 'FAILED';
+
+export interface MessageTranscription {
+  status: TranscriptionStatus;
+  text: string | null;
+  language: string | null;
+  provider: string | null;
+  model: string | null;
+  attempts: number;
+  retryable: boolean;
+  canRetry: boolean;
+  errorCode: string | null;
+  errorMessage: string | null;
+  transcribedAt: string | null;
+}
+
 export interface ConversationMessage {
   id: string;
   conversationId: string;
@@ -87,6 +108,7 @@ export interface ConversationMessage {
     height: number | null;
     hasThumbnail: boolean;
   }[];
+  transcription: MessageTranscription | null;
 }
 
 export interface LinkPreview {

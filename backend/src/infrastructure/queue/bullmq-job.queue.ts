@@ -1,7 +1,12 @@
 import { Logger, type OnModuleDestroy } from '@nestjs/common';
 import { Queue, Worker } from 'bullmq';
 import { Redis } from 'ioredis';
-import type { JobPayload, JobProcessor, JobQueue } from './job-queue.types.js';
+import type {
+  EnqueueOptions,
+  JobPayload,
+  JobProcessor,
+  JobQueue,
+} from './job-queue.types.js';
 
 const QUEUE_NAME = 'orderup';
 
@@ -49,8 +54,11 @@ export class BullmqJobQueue implements JobQueue, OnModuleDestroy {
     });
   }
 
-  async enqueue(name: string, payload: JobPayload): Promise<void> {
-    await this.queue.add(name, payload, DEFAULT_JOB_OPTIONS);
+  async enqueue(name: string, payload: JobPayload, options?: EnqueueOptions): Promise<void> {
+    await this.queue.add(name, payload, {
+      ...DEFAULT_JOB_OPTIONS,
+      ...(options?.jobId ? { jobId: options.jobId } : {}),
+    });
   }
 
   registerProcessor(name: string, processor: JobProcessor): void {

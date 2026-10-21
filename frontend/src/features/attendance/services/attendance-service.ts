@@ -6,6 +6,7 @@ import type {
   ConversationMessage,
   ConversationStatus,
   LinkPreview,
+  MessageTranscription,
 } from '@/types/attendance';
 import type { BulkMediaBatch } from '@/types/bulk-media';
 
@@ -116,6 +117,12 @@ export const attendanceService = {
         ...(linkPreview !== undefined ? { linkPreview } : {}),
       },
     }),
+
+  retryTranscription: (conversationId: string, messageId: string) =>
+    apiRequest<MessageTranscription>(
+      `/ai/transcription/messages/${conversationId}/${messageId}/retry`,
+      { method: 'POST', body: {} },
+    ),
 
   editMessage: (id: string, messageId: string, content: string) =>
     apiRequest<ConversationMessage>(`/conversations/${id}/messages/${messageId}`, {

@@ -75,6 +75,14 @@ const MESSAGE_SELECT = {
   content: true,
   senderName: true,
   occurredAt: true,
+  transcription: {
+    select: {
+      status: true,
+      text: true,
+      language: true,
+      transcribedAt: true,
+    },
+  },
 } satisfies Prisma.MessageSelect;
 
 type MessageRow = Prisma.MessageGetPayload<{ select: typeof MESSAGE_SELECT }>;
@@ -256,6 +264,9 @@ export class SalesCopilotService {
           promptVersion: SALES_COPILOT_PROMPT_VERSION,
           latestMessageId: summary.latestMessageId,
           latestMessageAt: summary.latestMessageAt ? new Date(summary.latestMessageAt) : null,
+          latestTranscriptionAt: summary.latestTranscriptionAt
+            ? new Date(summary.latestTranscriptionAt)
+            : null,
           leadUpdatedAt: new Date(summary.leadUpdatedAt),
           lastAnalyzedAt: generatedAt,
         },
@@ -278,6 +289,9 @@ export class SalesCopilotService {
           analysisVersion: { increment: 1 },
           latestMessageId: summary.latestMessageId,
           latestMessageAt: summary.latestMessageAt ? new Date(summary.latestMessageAt) : null,
+          latestTranscriptionAt: summary.latestTranscriptionAt
+            ? new Date(summary.latestTranscriptionAt)
+            : null,
           leadUpdatedAt: new Date(summary.leadUpdatedAt),
           lastAnalyzedAt: generatedAt,
         },
@@ -375,6 +389,26 @@ export class SalesCopilotService {
       reasons.push('lead_updated');
     }
 
+    if (context.conversationId) {
+      const latestTranscription = await this.prisma.messageTranscription.findFirst({
+        where: {
+          tenantId,
+          status: 'COMPLETED',
+          message: { conversationId: context.conversationId },
+        },
+        orderBy: { transcribedAt: 'desc' },
+        select: { transcribedAt: true },
+      });
+      const latestAt = latestTranscription?.transcribedAt ?? null;
+      if (
+        latestAt &&
+        (!context.latestTranscriptionAt ||
+          latestAt.getTime() > context.latestTranscriptionAt.getTime())
+      ) {
+        reasons.push('new_transcription');
+      }
+    }
+
     return reasons;
   }
 
@@ -388,8 +422,13 @@ export class SalesCopilotService {
       ? await this.loadConversation(tenantId, lead, conversationId)
       : null;
 
-    const [messages, previousContext, previousRecommendations, previousFollowUps] =
-      await Promise.all([
+    const [
+      messages,
+      latestTranscription,
+      previousContext,
+      previousRecommendations,
+      previousFollowUps,
+    ] = await Promise.all([
         conversation
           ? this.prisma.message.findMany({
               where: { tenantId, conversationId: conversation.id },
@@ -398,6 +437,17 @@ export class SalesCopilotService {
               select: MESSAGE_SELECT,
             })
           : Promise.resolve([]),
+        conversation
+          ? this.prisma.messageTranscription.findFirst({
+              where: {
+                tenantId,
+                status: 'COMPLETED',
+                message: { conversationId: conversation.id },
+              },
+              orderBy: { transcribedAt: 'desc' },
+              select: { transcribedAt: true },
+            })
+          : Promise.resolve(null),
         this.prisma.leadCommercialContext.findFirst({ where: { tenantId, leadId } }),
         this.prisma.leadRecommendation.findMany({
           where: { tenantId, leadId },
@@ -426,9 +476,11 @@ export class SalesCopilotService {
       messageCount: history.included,
       latestMessageId: messages[0]?.id ?? null,
       latestMessageAt: messages[0]?.occurredAt.toISOString() ?? null,
+      latestTranscriptionAt: latestTranscription?.transcribedAt?.toISOString() ?? null,
       leadUpdatedAt: lead.updatedAt.toISOString(),
       historyTruncated: history.truncated,
       mediaWithoutText: history.mediaWithoutText,
+      transcriptionsPending: history.transcriptionsPending,
     };
 
     return {
@@ -520,6 +572,7 @@ function buildHistory(messages: MessageRow[]): {
   included: number;
   truncated: boolean;
   mediaWithoutText: number;
+  transcriptionsPending: number;
 } {
   if (messages.length === 0) {
     return {
@@ -527,6 +580,7 @@ function buildHistory(messages: MessageRow[]): {
       included: 0,
       truncated: false,
       mediaWithoutText: 0,
+      transcriptionsPending: 0,
     };
   }
 
@@ -534,11 +588,28 @@ function buildHistory(messages: MessageRow[]): {
   const selected: string[] = [];
   let usedChars = 0;
   let mediaWithoutText = 0;
+  let transcriptionsPending = 0;
   let droppedByChars = false;
 
   for (const message of limited) {
     const hasText = typeof message.content === 'string' && message.content.trim().length > 0;
-    if (!hasText && message.type !== MessageType.TEXT) {
+    const transcription = message.transcription;
+    const transcribedText =
+      message.type === MessageType.AUDIO &&
+      transcription?.status === 'COMPLETED' &&
+      typeof transcription.text === 'string' &&
+      transcription.text.trim().length > 0
+        ? transcription.text
+        : null;
+    const hasCompletedTranscription = transcribedText !== null;
+
+    if (message.type === MessageType.AUDIO) {
+      if (transcription?.status === 'PENDING' || transcription?.status === 'PROCESSING') {
+        transcriptionsPending += 1;
+      }
+    }
+
+    if (!hasText && !hasCompletedTranscription) {
       mediaWithoutText += 1;
     }
 
@@ -550,7 +621,21 @@ function buildHistory(messages: MessageRow[]): {
           : (message.senderName ?? 'ATENDENTE'),
       type: message.type,
       text: hasText ? message.content : null,
-      note: hasText ? undefined : 'conteúdo de mídia não transcrito',
+      transcription: hasCompletedTranscription
+        ? {
+            source: 'AUDIO',
+            text: transcribedText,
+            language: transcription?.language ?? null,
+          }
+        : undefined,
+      transcriptionStatus:
+        message.type === MessageType.AUDIO ? (transcription?.status ?? 'PENDING') : undefined,
+      note:
+        hasText || hasCompletedTranscription
+          ? undefined
+          : message.type === MessageType.AUDIO
+            ? 'áudio ainda sem transcrição concluída'
+            : 'conteúdo de mídia não transcrito',
     });
 
     if (usedChars + line.length + 1 > SALES_MAX_HISTORY_CHARS) {
@@ -569,6 +654,7 @@ function buildHistory(messages: MessageRow[]): {
     included: selected.length,
     truncated: messages.length > SALES_MAX_HISTORY_MESSAGES || droppedByChars,
     mediaWithoutText,
+    transcriptionsPending,
   };
 }
 

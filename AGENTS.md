@@ -27,6 +27,9 @@ Status atual (ver `docs/architecture.md` para detalhes):
   da oportunidade, com próxima ação, follow-ups e sugestões de atualização do lead. Ver `docs/ai.md`.
 - **Implementado:** recuperação de senha por e-mail (Resend), com token de uso único, expiração de
   30 minutos e telas de solicitação/redefinição. Ver `docs/authentication.md`.
+- **Implementado:** transcrição assíncrona de áudios recebidos no WhatsApp via API externa,
+  configuração independente por organização, exibição no atendimento e uso no contexto do Copiloto.
+  Ver `docs/ai.md` e `docs/media.md`.
 - **Planejado:** autenticação/autorização, módulos de CRM, multi-tenancy com RLS, filas, realtime.
 - **Futuro:** frontend (React + Vite), integrações (WhatsApp/Evolution API), dashboards, relatórios.
 

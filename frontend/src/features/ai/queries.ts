@@ -8,6 +8,7 @@ import type {
   UpdateAiSettingsInput,
   UpdateSalesFollowUpInput,
   UpdateSalesRecommendationInput,
+  UpdateTranscriptionSettingsInput,
 } from '@/types/ai';
 import { aiService } from './services/ai-service';
 
@@ -15,6 +16,9 @@ export const aiKeys = {
   all: ['ai'] as const,
   catalog: ['ai', 'catalog'] as const,
   settings: (tenantId: string) => ['ai', 'settings', tenantId] as const,
+  transcriptionCatalog: ['ai', 'transcription', 'catalog'] as const,
+  transcriptionSettings: (tenantId: string) =>
+    ['ai', 'transcription', 'settings', tenantId] as const,
 };
 
 export const salesCopilotKeys = {
@@ -60,6 +64,47 @@ export function useSaveAiSettings() {
 export function useTestAiConnection() {
   return useMutation({
     mutationFn: (input: TestAiConnectionInput) => aiService.testConnection(input),
+  });
+}
+
+export function useTranscriptionCatalog() {
+  return useQuery({
+    queryKey: aiKeys.transcriptionCatalog,
+    queryFn: () => aiService.getTranscriptionCatalog(),
+    staleTime: 60 * 60 * 1000,
+  });
+}
+
+export function useTranscriptionSettings() {
+  const tenantId = useAuthStore((state) => state.session?.tenant.id);
+
+  return useQuery({
+    queryKey: aiKeys.transcriptionSettings(tenantId ?? ''),
+    queryFn: () => aiService.getTranscriptionSettings(),
+    enabled: Boolean(tenantId),
+    staleTime: 30_000,
+  });
+}
+
+export function useSaveTranscriptionSettings() {
+  const queryClient = useQueryClient();
+  const tenantId = useAuthStore((state) => state.session?.tenant.id);
+
+  return useMutation({
+    mutationFn: (input: UpdateTranscriptionSettingsInput) =>
+      aiService.saveTranscriptionSettings(input),
+    onSuccess: (settings) => {
+      if (tenantId) {
+        queryClient.setQueryData(aiKeys.transcriptionSettings(tenantId), settings);
+      }
+      void queryClient.invalidateQueries({ queryKey: aiKeys.transcriptionCatalog });
+    },
+  });
+}
+
+export function useTestTranscription() {
+  return useMutation({
+    mutationFn: () => aiService.testTranscription(),
   });
 }
 

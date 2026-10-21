@@ -32,6 +32,7 @@ const message: ConversationMessage = {
       hasThumbnail: true,
     },
   ],
+  transcription: null,
 };
 
 describe('MessageMedia object URL lifecycle', () => {

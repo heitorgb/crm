@@ -1,7 +1,12 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import type { AiCatalog, AiSettings } from '@/types/ai';
+import type {
+  AiCatalog,
+  AiSettings,
+  TranscriptionCatalog,
+  TranscriptionSettings,
+} from '@/types/ai';
 
 const state = vi.hoisted(() => ({
   save: vi.fn(async (_input: Record<string, unknown>) => undefined),
@@ -10,6 +15,13 @@ const state = vi.hoisted(() => ({
     provider: 'OPENAI',
     model: 'gpt-6-luna',
     message: 'Conexão validada com sucesso.',
+  })),
+  saveTranscription: vi.fn(async (_input: Record<string, unknown>) => undefined),
+  testTranscription: vi.fn(async () => ({
+    ok: true,
+    provider: 'OPENAI',
+    model: 'whisper-1',
+    message: 'Credencial e modelo de transcrição validados com sucesso.',
   })),
 }));
 
@@ -90,11 +102,83 @@ const settings: AiSettings = {
   updatedAt: '2026-10-20T12:00:00.000Z',
 };
 
+const transcriptionCatalog: TranscriptionCatalog = {
+  providers: [
+    {
+      id: 'OPENAI',
+      label: 'OpenAI',
+      description: 'Transcrição oficial.',
+      supported: true,
+      unsupportedReason: null,
+      models: [{ id: 'whisper-1', label: 'Whisper', description: 'Econômico.' }],
+    },
+    {
+      id: 'DEEPSEEK',
+      label: 'DeepSeek',
+      description: 'Somente texto.',
+      supported: false,
+      unsupportedReason: 'O DeepSeek não oferece transcrição de áudio.',
+      models: [],
+    },
+    {
+      id: 'ANTHROPIC',
+      label: 'Anthropic',
+      description: 'Somente texto.',
+      supported: false,
+      unsupportedReason: 'A Anthropic não oferece transcrição de áudio.',
+      models: [],
+    },
+    {
+      id: 'OPENROUTER',
+      label: 'OpenRouter',
+      description: 'Somente texto.',
+      supported: false,
+      unsupportedReason: 'O OpenRouter não oferece transcrição de áudio.',
+      models: [],
+    },
+  ],
+  credentialPolicy: {
+    reusedFrom: 'OPENAI',
+    description: 'Reutiliza a credencial OpenAI.',
+  },
+};
+
+const transcriptionSettings: TranscriptionSettings = {
+  enabled: false,
+  provider: 'OPENAI',
+  model: 'whisper-1',
+  supported: true,
+  supportedModels: ['whisper-1'],
+  hasCredentials: true,
+  credentialProvider: 'OPENAI',
+  available: false,
+  reason: 'disabled',
+  updatedAt: '2026-10-20T12:00:00.000Z',
+};
+
 vi.mock('./queries', () => ({
   useAiCatalog: () => ({ data: catalog, isPending: false, isError: false }),
   useAiSettings: () => ({ data: settings, isPending: false, isError: false }),
   useSaveAiSettings: () => ({ mutateAsync: state.save, isPending: false }),
   useTestAiConnection: () => ({ mutateAsync: state.test, isPending: false }),
+  useTranscriptionCatalog: () => ({
+    data: transcriptionCatalog,
+    isPending: false,
+    isError: false,
+  }),
+  useTranscriptionSettings: () => ({
+    data: transcriptionSettings,
+    isPending: false,
+    isError: false,
+  }),
+  useSaveTranscriptionSettings: () => ({
+    mutateAsync: state.saveTranscription,
+    isPending: false,
+  }),
+  useTestTranscription: () => ({
+    mutateAsync: state.testTranscription,
+    isPending: false,
+  }),
 }));
 
 import { AiSettingsTab } from './ai-settings-tab';
@@ -111,6 +195,8 @@ if (!('ResizeObserver' in globalThis)) {
 beforeEach(() => {
   state.save.mockClear();
   state.test.mockClear();
+  state.saveTranscription.mockClear();
+  state.testTranscription.mockClear();
 });
 
 afterEach(cleanup);
@@ -120,15 +206,17 @@ describe('AiSettingsTab', () => {
     render(<AiSettingsTab canManage />);
 
     expect(screen.getByText('Inteligência Artificial')).toBeTruthy();
-    expect(screen.getByText('Pronta para uso')).toBeTruthy();
-    expect(screen.getByText('OpenAI')).toBeTruthy();
-    expect(screen.getByText('DeepSeek')).toBeTruthy();
-    expect(screen.getByText('Anthropic')).toBeTruthy();
-    expect(screen.getByText('OpenRouter')).toBeTruthy();
-    expect(screen.getByRole('img', { name: 'OpenAI' })).toBeTruthy();
-    expect(screen.getByRole('img', { name: 'DeepSeek' })).toBeTruthy();
-    expect(screen.getByRole('img', { name: 'Anthropic' })).toBeTruthy();
-    expect(screen.getByRole('img', { name: 'OpenRouter' })).toBeTruthy();
+    expect(screen.getAllByText('Pronta para uso').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('OpenAI').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('DeepSeek').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Anthropic').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('OpenRouter').length).toBeGreaterThan(0);
+    expect(screen.getByText('Transcrição de áudio')).toBeTruthy();
+    expect(screen.getAllByText('Sem suporte').length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('img', { name: 'OpenAI' }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('img', { name: 'DeepSeek' }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('img', { name: 'Anthropic' }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('img', { name: 'OpenRouter' }).length).toBeGreaterThan(0);
     expect(screen.getByText('Credencial configurada')).toBeTruthy();
   });
 
@@ -172,6 +260,20 @@ describe('AiSettingsTab', () => {
       apiKey: undefined,
     });
     expect(await screen.findByText('Conexão validada com sucesso.')).toBeTruthy();
+  });
+
+  it('saves the independent transcription configuration', async () => {
+    render(<AiSettingsTab canManage />);
+
+    fireEvent.click(screen.getByRole('switch', { name: /ativar transcrição de áudio/i }));
+    fireEvent.click(screen.getByRole('button', { name: /salvar transcrição/i }));
+
+    expect(state.saveTranscription).toHaveBeenCalledWith({
+      enabled: true,
+      provider: 'OPENAI',
+      model: 'whisper-1',
+    });
+    expect(await screen.findByText('Configuração de transcrição salva.')).toBeTruthy();
   });
 
   it('requires an explicit action to remove the stored credential', () => {

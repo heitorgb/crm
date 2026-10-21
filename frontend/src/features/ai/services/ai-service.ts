@@ -13,9 +13,13 @@ import type {
   SalesReplySuggestion,
   SuggestSalesReplyInput,
   TestAiConnectionInput,
+  TranscriptionCatalog,
+  TranscriptionConnectionTestResult,
+  TranscriptionSettings,
   UpdateAiSettingsInput,
   UpdateSalesFollowUpInput,
   UpdateSalesRecommendationInput,
+  UpdateTranscriptionSettingsInput,
 } from '@/types/ai';
 
 export const aiService = {
@@ -30,6 +34,24 @@ export const aiService = {
     apiRequest<AiConnectionTestResult>('/ai/test', {
       method: 'POST',
       body: input,
+    }),
+
+  getTranscriptionCatalog: () =>
+    apiRequest<TranscriptionCatalog>('/ai/transcription/catalog'),
+
+  getTranscriptionSettings: () =>
+    apiRequest<TranscriptionSettings>('/ai/transcription/settings'),
+
+  saveTranscriptionSettings: (input: UpdateTranscriptionSettingsInput) =>
+    apiRequest<TranscriptionSettings>('/ai/transcription/settings', {
+      method: 'PUT',
+      body: input,
+    }),
+
+  testTranscription: () =>
+    apiRequest<TranscriptionConnectionTestResult>('/ai/transcription/test', {
+      method: 'POST',
+      body: {},
     }),
 
   formalize: (text: string) =>

@@ -68,3 +68,7 @@ conversas reais do contato, incluindo mensagens, mídias, respostas e envio pelo
 mensagens continuam armazenadas exclusivamente no domínio de Atendimento; o lead mantém apenas o
 vínculo pelo `contactId`.
 
+O detalhe também integra o **Copiloto comercial** ([`ai.md`](./ai.md)): o painel analisa a
+oportunidade e a conversa selecionada, gera respostas contextuais e permite inseri-las no compositor
+para revisão. A IA nunca envia mensagens, move etapas ou altera dados automaticamente.
+

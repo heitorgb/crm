@@ -7,6 +7,7 @@ import {
   Pencil,
   RefreshCw,
   Smartphone,
+  Sparkles,
   UserRound,
 } from 'lucide-react';
 import { EmptyState } from '@/components/common/empty-state';
@@ -17,6 +18,8 @@ import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { Skeleton } from '@/components/ui/skeleton';
 import { buildTimeline } from '@/features/attendance/attendance-utils';
 import { ChatPanel } from '@/features/attendance/chat-panel';
+import type { ComposerInsertion } from '@/features/attendance/message-composer';
+import { SalesCopilotPanel } from '@/features/ai/sales-copilot-panel';
 import {
   useCloseConversation,
   useConversation,
@@ -51,6 +54,11 @@ export function LeadDetailSheet({ open, onOpenChange, lead, pipeline, onEdit }: 
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
   const [historyRequestedId, setHistoryRequestedId] = useState<string | null>(null);
   const [startConversationOpen, setStartConversationOpen] = useState(false);
+  const [copilotOpen, setCopilotOpen] = useState(true);
+  const [composerInsertion, setComposerInsertion] = useState<
+    (ComposerInsertion & { conversationId: string }) | null
+  >(null);
+  const insertionIdRef = useRef(0);
   const activeConversationId = selectedConversationId ?? conversations[0]?.id;
   const conversation = useConversation(activeConversationId);
   const messages = useConversationMessages(activeConversationId);
@@ -66,6 +74,24 @@ export function LeadDetailSheet({ open, onOpenChange, lead, pipeline, onEdit }: 
   const totalPages = messages.data?.meta.totalPages ?? 1;
   const hasOlderMessages = history.data ? history.hasNextPage === true : totalPages > 1;
   const loadingOlderMessages = history.isFetchingNextPage || (historyEnabled && history.isPending);
+  const latestMessageId = timeline[timeline.length - 1]?.id ?? null;
+
+  const activeComposerInsertion =
+    composerInsertion && composerInsertion.conversationId === activeConversationId
+      ? composerInsertion
+      : null;
+
+  const handleUseCopilotReply = (text: string, targetConversationId: string): void => {
+    if (!activeConversationId || targetConversationId !== activeConversationId) {
+      return;
+    }
+    insertionIdRef.current += 1;
+    setComposerInsertion({
+      id: insertionIdRef.current,
+      text,
+      conversationId: targetConversationId,
+    });
+  };
 
   useEffect(() => {
     const current = conversation.data;
@@ -88,7 +114,7 @@ export function LeadDetailSheet({ open, onOpenChange, lead, pipeline, onEdit }: 
   return (
     <>
       <Sheet open={open} onOpenChange={onOpenChange}>
-        <SheetContent className="flex w-full max-w-none flex-col gap-0 p-0 sm:max-w-[96vw] xl:max-w-7xl">
+        <SheetContent className="relative flex w-full max-w-none flex-col gap-0 p-0 sm:max-w-[96vw] xl:max-w-7xl">
           <div className="border-b border-border px-4 py-3 pr-12">
             <div className="flex flex-wrap items-center gap-2">
               <SheetTitle className="text-base">{lead.title}</SheetTitle>
@@ -99,11 +125,22 @@ export function LeadDetailSheet({ open, onOpenChange, lead, pipeline, onEdit }: 
                 <span className="size-2 rounded-full" style={{ backgroundColor: stage?.color ?? '#94a3b8' }} />
                 {stage?.name ?? 'Etapa não encontrada'}
               </span>
+              <div className="ml-auto flex items-center gap-2">
+                <Button
+                  variant={copilotOpen ? 'secondary' : 'outline'}
+                  size="sm"
+                  onClick={() => setCopilotOpen((value) => !value)}
+                  aria-pressed={copilotOpen}
+                >
+                  <Sparkles />
+                  Copiloto
+                </Button>
+              </div>
             </div>
             <p className="mt-1 text-xs text-muted-foreground">{pipeline.name} · oportunidade de {lead.contact.name}</p>
           </div>
 
-          <div className="flex min-h-0 flex-1 flex-col lg:grid lg:grid-cols-[300px_minmax(0,1fr)]">
+          <div className={cn('flex min-h-0 flex-1 flex-col lg:grid lg:grid-cols-[300px_minmax(0,1fr)]', copilotOpen && 'xl:grid-cols-[300px_minmax(0,1fr)_360px]')}>
             <aside className="max-h-64 overflow-y-auto border-b border-border bg-surface p-4 scrollbar-thin lg:max-h-none lg:border-b-0 lg:border-r">
               <div className="flex items-center gap-3">
                 <UserAvatar name={lead.contact.name} src={lead.contact.avatarUrl ?? undefined} className="size-11" />
@@ -169,7 +206,13 @@ export function LeadDetailSheet({ open, onOpenChange, lead, pipeline, onEdit }: 
             <section className="flex min-h-0 flex-1 flex-col">
               {conversations.length > 1 ? (
                 <div className="border-b border-border bg-card px-3 py-2">
-                  <Select value={activeConversationId} onValueChange={setSelectedConversationId}>
+                  <Select
+                    value={activeConversationId}
+                    onValueChange={(value) => {
+                      setSelectedConversationId(value);
+                      setComposerInsertion(null);
+                    }}
+                  >
                     <SelectTrigger className="w-full sm:w-80" aria-label="Selecionar conversa"><SelectValue placeholder="Selecionar conversa" /></SelectTrigger>
                     <SelectContent>
                       {conversations.map((item) => <SelectItem key={item.id} value={item.id}>{conversationOptionLabel(item)}</SelectItem>)}
@@ -205,6 +248,8 @@ export function LeadDetailSheet({ open, onOpenChange, lead, pipeline, onEdit }: 
                   onReopen={() => void reopenConversation.mutateAsync(conversation.data.id)}
                   refreshPending={refreshGroup.isPending}
                   onRefreshGroup={() => void refreshGroup.mutateAsync(conversation.data.id)}
+                  composerInsertion={activeComposerInsertion}
+                  onComposerInsertionHandled={() => setComposerInsertion(null)}
                 />
               ) : conversation.isError ? (
                 <div className="flex flex-1 items-center justify-center p-6">
@@ -214,6 +259,20 @@ export function LeadDetailSheet({ open, onOpenChange, lead, pipeline, onEdit }: 
                 <div className="flex-1 space-y-3 p-6"><Skeleton className="h-14 w-full" /><Skeleton className="h-12 w-2/5" /><Skeleton className="ml-auto h-12 w-1/3" /></div>
               )}
             </section>
+
+            {copilotOpen ? (
+              <div className="absolute inset-y-0 right-0 z-20 flex w-full max-w-sm border-l border-border bg-card shadow-xl xl:static xl:z-auto xl:max-w-none xl:shadow-none">
+                <SalesCopilotPanel
+                  key={`${lead.id}:${activeConversationId ?? 'no-conversation'}`}
+                  lead={lead}
+                  conversation={conversation.data ?? null}
+                  conversationId={activeConversationId ?? null}
+                  latestMessageId={latestMessageId}
+                  onUseReply={handleUseCopilotReply}
+                  onClose={() => setCopilotOpen(false)}
+                />
+              </div>
+            ) : null}
           </div>
         </SheetContent>
       </Sheet>

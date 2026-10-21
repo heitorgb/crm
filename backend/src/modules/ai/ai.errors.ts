@@ -111,3 +111,39 @@ export class AiProviderInvalidResponseError extends AppException {
     );
   }
 }
+
+export class AiSalesConversationMismatchError extends AppException {
+  constructor() {
+    super(
+      'AI_SALES_CONVERSATION_MISMATCH',
+      'A conversa selecionada não pertence ao contato desta oportunidade.',
+      404,
+    );
+  }
+}
+
+export class AiSalesRequestInProgressError extends AppException {
+  constructor() {
+    super('AI_SALES_REQUEST_IN_PROGRESS', 'Já existe uma análise comercial em andamento.', 409);
+  }
+}
+
+export class AiSalesInvalidResponseError extends AppException {
+  constructor() {
+    super(
+      'AI_SALES_INVALID_RESPONSE',
+      'A IA não retornou uma análise comercial válida. Tente novamente.',
+      502,
+    );
+  }
+}
+
+export class AiSalesReplyInvalidResponseError extends AppException {
+  constructor() {
+    super(
+      'AI_SALES_INVALID_RESPONSE',
+      'A IA não retornou uma resposta comercial válida. Tente novamente.',
+      502,
+    );
+  }
+}

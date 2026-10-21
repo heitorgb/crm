@@ -1,6 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/stores/auth-store';
-import type { TestAiConnectionInput, UpdateAiSettingsInput } from '@/types/ai';
+import type {
+  AnalyzeSalesOpportunityInput,
+  SuggestSalesReplyInput,
+  TestAiConnectionInput,
+  UpdateAiSettingsInput,
+} from '@/types/ai';
 import { aiService } from './services/ai-service';
 
 export const aiKeys = {
@@ -52,5 +57,18 @@ export function useTestAiConnection() {
 export function useFormalizeMessage() {
   return useMutation({
     mutationFn: (text: string) => aiService.formalize(text),
+  });
+}
+
+export function useAnalyzeSalesOpportunity() {
+  return useMutation({
+    mutationFn: (input: AnalyzeSalesOpportunityInput) =>
+      aiService.analyzeSalesOpportunity(input),
+  });
+}
+
+export function useSuggestSalesReply() {
+  return useMutation({
+    mutationFn: (input: SuggestSalesReplyInput) => aiService.suggestSalesReply(input),
   });
 }

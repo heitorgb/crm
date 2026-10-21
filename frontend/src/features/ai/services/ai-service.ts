@@ -4,6 +4,10 @@ import type {
   AiConnectionTestResult,
   AiFormalizationResult,
   AiSettings,
+  AnalyzeSalesOpportunityInput,
+  SalesAnalysis,
+  SalesReplySuggestion,
+  SuggestSalesReplyInput,
   TestAiConnectionInput,
   UpdateAiSettingsInput,
 } from '@/types/ai';
@@ -26,5 +30,17 @@ export const aiService = {
     apiRequest<AiFormalizationResult>('/ai/formalize', {
       method: 'POST',
       body: { text },
+    }),
+
+  analyzeSalesOpportunity: (input: AnalyzeSalesOpportunityInput) =>
+    apiRequest<SalesAnalysis>('/ai/sales/analyze', {
+      method: 'POST',
+      body: input,
+    }),
+
+  suggestSalesReply: (input: SuggestSalesReplyInput) =>
+    apiRequest<SalesReplySuggestion>('/ai/sales/suggest-reply', {
+      method: 'POST',
+      body: input,
     }),
 };

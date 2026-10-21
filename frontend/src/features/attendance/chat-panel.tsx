@@ -36,7 +36,7 @@ import {
   QUOTE_HIGHLIGHT_MS,
 } from './attendance-utils';
 import { MessageBubble } from './message-bubble';
-import { MessageComposer } from './message-composer';
+import { MessageComposer, type ComposerInsertion } from './message-composer';
 import { MessageEditor } from './message-editor';
 import { SenderAvatar } from './sender-avatar';
 
@@ -60,6 +60,8 @@ interface ChatPanelProps {
   onReopen: () => void;
   refreshPending: boolean;
   onRefreshGroup: () => void;
+  composerInsertion?: ComposerInsertion | null;
+  onComposerInsertionHandled?: () => void;
 }
 
 export function ChatPanel({
@@ -79,6 +81,8 @@ export function ChatPanel({
   onReopen,
   refreshPending,
   onRefreshGroup,
+  composerInsertion,
+  onComposerInsertionHandled,
 }: ChatPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -400,6 +404,8 @@ export function ChatPanel({
           conversationId={conversation.id}
           replyTo={replyTo}
           onCancelReply={() => setReplyTo(null)}
+          insertion={composerInsertion}
+          onInsertionHandled={onComposerInsertionHandled}
         />
       )}
 

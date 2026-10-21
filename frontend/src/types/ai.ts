@@ -63,3 +63,49 @@ export interface AiConnectionTestResult {
 export interface AiFormalizationResult {
   text: string;
 }
+
+export interface SalesCopilotContextSummary {
+  leadId: string;
+  conversationId: string | null;
+  messageCount: number;
+  latestMessageId: string | null;
+  latestMessageAt: string | null;
+  leadUpdatedAt: string;
+  historyTruncated: boolean;
+  mediaWithoutText: number;
+}
+
+export interface SalesAnalysis {
+  summary: string;
+  need: string;
+  knownInformation: string[];
+  pendingInformation: string[];
+  nextQuestion: string;
+  suggestedReply: string;
+  rationale: string;
+  provider: AiProvider;
+  model: string;
+  generatedAt: string;
+  promptVersion: string;
+  context: SalesCopilotContextSummary;
+}
+
+export interface SalesReplySuggestion {
+  reply: string;
+  provider: AiProvider;
+  model: string;
+  generatedAt: string;
+  promptVersion: string;
+  context: SalesCopilotContextSummary;
+}
+
+export interface AnalyzeSalesOpportunityInput {
+  leadId: string;
+  conversationId?: string;
+}
+
+export interface SuggestSalesReplyInput {
+  leadId: string;
+  conversationId?: string;
+  previousAnalysis?: string;
+}

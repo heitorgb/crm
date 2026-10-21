@@ -35,6 +35,10 @@ vi.mock('@/features/attendance/start-conversation-dialog', () => ({
   StartConversationDialog: () => null,
 }));
 
+vi.mock('@/features/ai/sales-copilot-panel', () => ({
+  SalesCopilotPanel: () => <div>Copiloto comercial</div>,
+}));
+
 const pipeline: LeadPipeline = {
   id: '11111111-1111-4111-8111-111111111111',
   name: 'Pipeline comercial',
@@ -115,6 +119,7 @@ describe('LeadDetailSheet', () => {
     expect(screen.getAllByText('Pagamento').length).toBeGreaterThan(0);
     expect(screen.getByText('Atual')).toBeTruthy();
     expect(screen.getByText('Chat de Ana')).toBeTruthy();
+    expect(screen.getByText('Copiloto comercial')).toBeTruthy();
     expect(screen.getByText('Abrir no atendimento')).toBeTruthy();
   });
 });

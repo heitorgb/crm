@@ -1,18 +1,8 @@
 import { Injectable } from '@nestjs/common';
-import { AppException } from '../../common/errors/app.exception.js';
 import { TenantContextService } from '../../common/tenant-context/tenant-context.service.js';
-import {
-  AiProviderAuthError,
-  AiProviderInvalidResponseError,
-  AiProviderModelUnavailableError,
-  AiProviderQuotaError,
-  AiProviderRateLimitError,
-  AiProviderTimeoutError,
-  AiProviderUnavailableError,
-  AiRequestInProgressError,
-} from './ai.errors.js';
+import { AiRequestInProgressError } from './ai.errors.js';
+import { AiExecutionService, toHttpError } from './ai-execution.service.js';
 import { buildFormalizationSystemPrompt } from './ai.prompt.js';
-import { AiProviderFailure } from './ai.provider.js';
 import { AiProviderFactory } from './ai.providers.js';
 import { AI_MAX_OUTPUT_TOKENS, AI_TEST_MAX_TOKENS } from './ai.models.js';
 import { AiSettingsService } from './ai-settings.service.js';
@@ -39,6 +29,7 @@ export class AiService {
   constructor(
     private readonly settings: AiSettingsService,
     private readonly providers: AiProviderFactory,
+    private readonly execution: AiExecutionService,
     private readonly tenantContext: TenantContextService,
   ) {}
 
@@ -76,50 +67,21 @@ export class AiService {
 
     this.inFlight.add(lockKey);
     try {
-      const settings = await this.settings.getForExecution();
-      const provider = this.providers.get(settings.provider);
+      const settings = await this.execution.resolveSettings();
+      const result = await this.execution.complete(
+        {
+          systemPrompt: buildFormalizationSystemPrompt(settings.formality),
+          userContent: text,
+          maxTokens: AI_MAX_OUTPUT_TOKENS,
+        },
+        settings,
+      );
 
-      const result = await provider.complete({
-        model: settings.model,
-        apiKey: settings.apiKey,
-        systemPrompt: buildFormalizationSystemPrompt(settings.formality),
-        userContent: text,
-        maxTokens: AI_MAX_OUTPUT_TOKENS,
-      });
-
-      return { text: result };
+      return { text: result.text };
     } catch (error) {
       throw toHttpError(error);
     } finally {
       this.inFlight.delete(lockKey);
     }
-  }
-}
-
-function toHttpError(error: unknown): AppException {
-  if (error instanceof AppException) {
-    return error;
-  }
-
-  if (!(error instanceof AiProviderFailure)) {
-    return new AiProviderUnavailableError();
-  }
-
-  switch (error.kind) {
-    case 'auth':
-      return new AiProviderAuthError();
-    case 'rate_limit':
-      return new AiProviderRateLimitError();
-    case 'quota':
-      return new AiProviderQuotaError();
-    case 'model_unavailable':
-      return new AiProviderModelUnavailableError();
-    case 'timeout':
-      return new AiProviderTimeoutError();
-    case 'invalid_response':
-      return new AiProviderInvalidResponseError();
-    case 'connection':
-    case 'provider':
-      return new AiProviderUnavailableError();
   }
 }

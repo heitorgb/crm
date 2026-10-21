@@ -1,5 +1,6 @@
 import { AiFormality, AiProvider } from '@prisma/client';
 import type { TenantContextService } from '../../../src/common/tenant-context/tenant-context.service.js';
+import { AiExecutionService } from '../../../src/modules/ai/ai-execution.service.js';
 import { AiProviderFailure, type AiProviderAdapter } from '../../../src/modules/ai/ai.provider.js';
 import type { AiProviderFactory } from '../../../src/modules/ai/ai.providers.js';
 import { AiService } from '../../../src/modules/ai/ai.service.js';
@@ -33,10 +34,16 @@ function createService(): {
     })),
   };
 
+  const execution = new AiExecutionService(
+    settings as unknown as AiSettingsService,
+    factory as unknown as AiProviderFactory,
+  );
+
   return {
     service: new AiService(
       settings as unknown as AiSettingsService,
       factory as unknown as AiProviderFactory,
+      execution,
       tenantContext as unknown as TenantContextService,
     ),
     settings,

@@ -8,12 +8,18 @@ import { AI_FORMALITIES, AI_PROVIDERS } from './ai.models.js';
 import { AiService } from './ai.service.js';
 import { AiSettingsService } from './ai-settings.service.js';
 import { FormalizeMessageDto, TestAiConnectionDto, UpdateAiSettingsDto } from './dto/ai.dto.js';
+import {
+  AnalyzeSalesOpportunityDto,
+  SuggestSalesReplyDto,
+} from './dto/sales-copilot.dto.js';
+import { SalesCopilotService } from './sales-copilot.service.js';
 
 @Controller('ai')
 export class AiController {
   constructor(
     private readonly settings: AiSettingsService,
     private readonly ai: AiService,
+    private readonly sales: SalesCopilotService,
   ) {}
 
   @Get('catalog')
@@ -51,5 +57,23 @@ export class AiController {
   @HttpCode(200)
   formalize(@Body() dto: FormalizeMessageDto) {
     return this.ai.formalize(dto.text);
+  }
+
+  @RequireModule(MODULE_KEYS.CRM)
+  @UseGuards(RateLimitGuard)
+  @RateLimit({ name: 'ai-sales-analyze', limit: 10, windowMs: 60_000 })
+  @Post('sales/analyze')
+  @HttpCode(200)
+  analyzeSalesOpportunity(@Body() dto: AnalyzeSalesOpportunityDto) {
+    return this.sales.analyze(dto);
+  }
+
+  @RequireModule(MODULE_KEYS.CRM)
+  @UseGuards(RateLimitGuard)
+  @RateLimit({ name: 'ai-sales-suggest-reply', limit: 15, windowMs: 60_000 })
+  @Post('sales/suggest-reply')
+  @HttpCode(200)
+  suggestSalesReply(@Body() dto: SuggestSalesReplyDto) {
+    return this.sales.suggestReply(dto);
   }
 }

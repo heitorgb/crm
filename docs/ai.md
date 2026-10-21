@@ -1,7 +1,8 @@
 # IA no atendimento — OrderUp CRM
 
-> Status: **Implementado**. Configuração por organização em **Configurações → IA** e botão de
-> formalização no compositor do chat. Nenhuma mensagem é enviada automaticamente ao WhatsApp.
+> Status: **Implementado**. Configuração por organização em **Configurações → IA**, botão de
+> formalização no compositor do chat e Copiloto comercial no detalhe da oportunidade. Nenhuma
+> mensagem é enviada automaticamente ao WhatsApp.
 
 Complementa [`settings.md`](./settings.md), [`attendance.md`](./attendance.md) e
 [`multi-tenancy.md`](./multi-tenancy.md).
@@ -86,10 +87,104 @@ e mantendo a última escrita consistente.
 | PUT    | `/api/ai/settings`  | `OWNER`, `ADMIN`  | Cria/atualiza a configuração do tenant         |
 | POST   | `/api/ai/test`      | `OWNER`, `ADMIN`  | Testa a conexão com as credenciais informadas  |
 | POST   | `/api/ai/formalize` | membros           | Reformula o texto do compositor                |
+| POST   | `/api/ai/sales/analyze` | membros      | Analisa a oportunidade e a conversa selecionada |
+| POST   | `/api/ai/sales/suggest-reply` | membros | Gera uma resposta contextual para o WhatsApp |
 
 `/api/ai/formalize` exige o módulo de atendimento habilitado e aplica rate limit de 20 req/min por
-IP. `/api/ai/test` aplica 8 req/min. O backend também evita formalizações concorrentes do mesmo
-usuário.
+IP. `/api/ai/sales/analyze` e `/api/ai/sales/suggest-reply` exigem o módulo `crm` (e o módulo
+`attendance` quando uma conversa é informada) e aplicam, respectivamente, 10 e 15 req/min por IP.
+`/api/ai/test` aplica 8 req/min. O backend também evita chamadas concorrentes do mesmo usuário.
+
+## Copiloto comercial (Fase 1)
+
+O detalhe da oportunidade em `/leads` exibe o painel **Copiloto comercial**. Ele analisa a
+oportunidade e a conversa atualmente selecionada, sem criar uma página isolada e sem substituir o
+atendimento existente.
+
+### Operações
+
+- **Analisar oportunidade / Reanalisar:** retorna resumo, necessidade, informações conhecidas,
+  informações pendentes, próxima pergunta, resposta sugerida e justificativa.
+- **Sugerir resposta / Gerar outra:** gera uma resposta para o estágio atual da negociação. A
+  sugestão anterior é preservada até o usuário escolher substituí-la.
+- **Usar resposta:** insere o texto no compositor da conversa selecionada para revisão e edição.
+  Nunca envia a mensagem. Se já houver rascunho, o compositor pede confirmação e oferece substituir
+  ou inserir ao final.
+
+A análise é mantida apenas no estado do painel (sem persistência nesta fase). O painel é reiniciado
+quando a oportunidade ou a conversa muda, evitando misturar contextos. A análise é marcada como
+desatualizada quando chega uma mensagem mais recente (`latestMessageId`) ou quando `lead.updatedAt`
+muda; nesse caso o usuário precisa acionar **Reanalisar**.
+
+### Contexto e contratos
+
+Os endpoints recebem apenas `leadId` e, opcionalmente, `conversationId`. A análise de resposta aceita
+também `previousAnalysis` (limite de 4.000 caracteres), tratado como referência não confiável e
+nunca como substituto dos dados oficiais.
+
+O backend sempre carrega do banco:
+
+- oportunidade, etapa, pipeline, valor, responsável, origem, etiquetas, observações e follow-up;
+- contato vinculado à oportunidade;
+- conversa do mesmo tenant e do mesmo contato da oportunidade;
+- mensagens reais da conversa, em ordem cronológica.
+
+Limites: até 80 mensagens e 24.000 caracteres de histórico. As mensagens mais recentes têm
+prioridade; quando o limite é atingido, `historyTruncated` é verdadeiro. Mensagens sem texto (mídia,
+áudio, documento, imagem) entram apenas como tipo + indicação de que o conteúdo não foi transcrito;
+o modelo é instruído a não presumir que compreendeu essas mídias. O backend não aceita histórico
+arbitrário enviado pelo frontend.
+
+Resposta estruturada da análise:
+
+```json
+{
+  "summary": "...",
+  "need": "...",
+  "knownInformation": ["..."],
+  "pendingInformation": ["..."],
+  "nextQuestion": "...",
+  "suggestedReply": "...",
+  "rationale": "...",
+  "provider": "OPENAI",
+  "model": "gpt-6-luna",
+  "generatedAt": "2026-10-21T12:00:00.000Z",
+  "promptVersion": "sales-copilot-v1",
+  "context": {
+    "leadId": "...",
+    "conversationId": "...",
+    "messageCount": 12,
+    "latestMessageId": "...",
+    "latestMessageAt": "...",
+    "leadUpdatedAt": "...",
+    "historyTruncated": false,
+    "mediaWithoutText": 0
+  }
+}
+```
+
+Sem conversa selecionada, a análise usa apenas os dados comerciais e informa a ausência de
+histórico. A resposta sugerida usa o mesmo idioma das últimas mensagens do cliente.
+
+### Reutilização e segurança
+
+- A configuração de provedor, modelo, formalidade e credencial é a mesma da formalização, carregada
+  por tenant. Não existe cadastro paralelo nem fallback entre provedores.
+- Provedores são chamados pelo serviço compartilhado `AiExecutionService`; a formalização mantém o
+  comportamento e o contrato anteriores.
+- Prompts do copiloto são separados do prompt de formalização.
+- Conversa, mensagens, observações e análise anterior são delimitadas como conteúdo não confiável.
+  Instruções dentro das mensagens do cliente não alteram regras, permissões ou ações.
+- A IA apenas sugere; não move etapas, não envia mensagens e não executa ações administrativas.
+- Respostas do provedor são validadas por schema. Conteúdo inválido retorna
+  `AI_SALES_INVALID_RESPONSE`; erros de provedor usam os mesmos códigos seguros da formalização.
+- Prompts, mensagens e credenciais não são registrados em logs.
+
+### Persistência
+
+Não há migration nesta fase. A decisão evita um sistema de memória/histórico de IA prematuro e
+mantém a análise no cliente. A consequência é que a análise não é compartilhada entre usuários nem
+sobrevive ao recarregamento da página; o painel oferece **Reanalisar** quando necessário.
 
 ## Segurança
 
@@ -147,5 +242,11 @@ tentar novamente ou enviar a mensagem original.
   erros e concorrência).
 - Integração: `backend/test/integration/ai.integration-spec.ts` (isolamento por tenant, papéis,
   credencial oculta, teste de conexão sem persistência e formalização com provedor mockado).
-- Frontend: `message-composer.test.tsx` (visibilidade, formalização sem envio, undo e falha) e
-  `ai-settings-tab.test.tsx` (formulário e credenciais).
+- Frontend: `message-composer.test.tsx` (visibilidade, formalização sem envio, undo, falha e
+  inserção de sugestão sem envio), `ai-settings-tab.test.tsx` (formulário e credenciais),
+  `sales-copilot-panel.test.tsx` (configuração, análise, atualização, sugestão, erro, histórico
+  ausente e troca de conversa) e `lead-detail-sheet.test.tsx` (integração do painel).
+- Copiloto: unitários de prompt/parser em `backend/test/unit/ai/`; integração em
+  `backend/test/integration/sales-copilot.integration-spec.ts` (contexto real, isolamento por
+  tenant, conversa de outro contato, IA desativada, timeout/erros, limite de histórico, resposta
+  inválida, injeção de instruções e geração sem envio).

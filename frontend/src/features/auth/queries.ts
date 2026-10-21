@@ -4,7 +4,13 @@ import { useNavigate } from 'react-router-dom';
 import { REFRESH_SKEW_MS, refreshSession, toSession } from '@/lib/session-refresh';
 import { useAuthStore } from '@/stores/auth-store';
 import { authService } from './services/auth-service';
-import type { ChangePasswordInput, LoginInput, UpdateProfileInput } from '@/types/auth';
+import type {
+  ChangePasswordInput,
+  ForgotPasswordInput,
+  LoginInput,
+  ResetPasswordInput,
+  UpdateProfileInput,
+} from '@/types/auth';
 
 export const authKeys = {
   all: ['auth'] as const,
@@ -80,6 +86,18 @@ export function useUpdateProfile() {
 export function useChangePassword() {
   return useMutation({
     mutationFn: (input: ChangePasswordInput) => authService.changePassword(input),
+  });
+}
+
+export function useForgotPassword() {
+  return useMutation({
+    mutationFn: (input: ForgotPasswordInput) => authService.forgotPassword(input),
+  });
+}
+
+export function useResetPassword() {
+  return useMutation({
+    mutationFn: (input: ResetPasswordInput) => authService.resetPassword(input),
   });
 }
 

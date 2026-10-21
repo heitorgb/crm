@@ -54,6 +54,16 @@ export class ForbiddenRoleError extends AppException {
   }
 }
 
+export class InvalidPasswordResetTokenError extends AppException {
+  constructor() {
+    super(
+      'INVALID_PASSWORD_RESET_TOKEN',
+      'O link de recuperação de senha é inválido, expirou ou já foi utilizado.',
+      400,
+    );
+  }
+}
+
 export class InvalidCurrentPasswordError extends AppException {
   constructor() {
     super('INVALID_CURRENT_PASSWORD', 'Current password is incorrect', 400);

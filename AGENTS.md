@@ -24,6 +24,8 @@ Status atual (ver `docs/architecture.md` para detalhes):
   e ícones). Ver `docs/custom-menu.md`.
 - **Implementado:** configuração de IA por organização (OpenAI, DeepSeek, Anthropic e OpenRouter) e
   formalização de mensagens no compositor do atendimento. Ver `docs/ai.md`.
+- **Implementado:** recuperação de senha por e-mail (Resend), com token de uso único, expiração de
+  30 minutos e telas de solicitação/redefinição. Ver `docs/authentication.md`.
 - **Planejado:** autenticação/autorização, módulos de CRM, multi-tenancy com RLS, filas, realtime.
 - **Futuro:** frontend (React + Vite), integrações (WhatsApp/Evolution API), dashboards, relatórios.
 

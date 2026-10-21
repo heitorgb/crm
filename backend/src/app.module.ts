@@ -13,6 +13,7 @@ import { validateEnv } from './config/env.validation.js';
 import { PrismaModule } from './infrastructure/prisma/prisma.module.js';
 import { RedisModule } from './infrastructure/redis/redis.module.js';
 import { CryptoModule } from './infrastructure/crypto/crypto.module.js';
+import { EmailModule } from './infrastructure/email/email.module.js';
 import { MediaModule } from './infrastructure/media/media.module.js';
 import { StorageModule } from './infrastructure/storage/storage.module.js';
 import { QueueModule } from './infrastructure/queue/queue.module.js';
@@ -60,6 +61,7 @@ import { AiModule } from './modules/ai/ai.module.js';
     PrismaModule,
     RedisModule,
     CryptoModule,
+    EmailModule,
     StorageModule,
     MediaModule,
     QueueModule,

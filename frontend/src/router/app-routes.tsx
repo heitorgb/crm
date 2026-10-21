@@ -2,7 +2,9 @@ import { Suspense, lazy } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { PageLoader } from '@/components/common/page-loader';
 import { AppLayout } from '@/components/layout/app-layout';
+import { ForgotPasswordPage } from '@/features/auth/forgot-password-page';
 import { LoginPage } from '@/features/auth/login-page';
+import { ResetPasswordPage } from '@/features/auth/reset-password-page';
 import { ModuleRoute } from '@/features/modules/module-route';
 import { ModuleUnavailablePage } from '@/features/modules/module-unavailable-page';
 import { MODULE_KEYS } from '@/types/modules';
@@ -80,6 +82,8 @@ export function AppRoutes() {
     <Suspense fallback={<PageLoader />}>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/esqueci-senha" element={<ForgotPasswordPage />} />
+        <Route path="/redefinir-senha" element={<ResetPasswordPage />} />
 
         <Route
           element={

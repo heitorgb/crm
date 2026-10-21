@@ -4,7 +4,10 @@ import type {
   AuthUser,
   ChangePasswordInput,
   CurrentSession,
+  ForgotPasswordInput,
+  ForgotPasswordResponse,
   LoginInput,
+  ResetPasswordInput,
   UpdateProfileInput,
 } from '@/types/auth';
 
@@ -24,6 +27,16 @@ export const authService = {
 
   changePassword: (input: ChangePasswordInput) =>
     apiRequest<void>('/auth/change-password', { method: 'POST', body: input }),
+
+  forgotPassword: (input: ForgotPasswordInput) =>
+    apiRequest<ForgotPasswordResponse>('/auth/forgot-password', {
+      method: 'POST',
+      body: input,
+      auth: false,
+    }),
+
+  resetPassword: (input: ResetPasswordInput) =>
+    apiRequest<void>('/auth/reset-password', { method: 'POST', body: input, auth: false }),
 
   switchTenant: (tenantId: string) =>
     apiRequest<AuthSessionResponse>('/auth/switch-tenant', { method: 'POST', body: { tenantId } }),

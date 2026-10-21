@@ -62,6 +62,13 @@ const adminEnvSchema = z.object({
     ),
 });
 
+// TRANSACTIONAL EMAIL (Resend)
+const emailEnvSchema = z.object({
+  RESEND_API_KEY: optionalEnv(z.string().min(1)),
+  RESEND_FROM_EMAIL: optionalEnv(z.string().min(3)),
+  APP_URL: optionalEnv(z.url()),
+});
+
 // LOGGING
 const loggingEnvSchema = z.object({
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
@@ -121,6 +128,7 @@ export const envSchema = appEnvSchema
   .merge(databaseEnvSchema)
   .merge(redisEnvSchema)
   .merge(authEnvSchema)
+  .merge(emailEnvSchema)
   .merge(adminEnvSchema)
   .merge(loggingEnvSchema)
   .merge(aiEnvSchema)

@@ -169,6 +169,21 @@ Constraints e índices:
 Índices: `UNIQUE (tokenHash)`, `userId`, `familyId`. Rotação/reuso detalhados em
 [`authentication.md`](./authentication.md).
 
+### `PasswordResetToken`
+
+| Campo       | Tipo          | Observações                                      |
+| ----------- | ------------- | ------------------------------------------------ |
+| `id`        | `uuid` PK     |                                                  |
+| `userId`    | `uuid` FK     | `ON DELETE CASCADE`                              |
+| `tokenHash` | `text` UNIQUE | SHA-256 do token opaco (nunca o token puro)      |
+| `expiresAt` | `timestamp`   | validade de 30 minutos                           |
+| `usedAt`    | `timestamp?`  | preenchido no uso; token não pode ser reutilizado |
+| `createdAt` | `timestamp`   |                                                  |
+
+Índices: `UNIQUE (tokenHash)`, `userId`, `expiresAt`. Não possui `tenantId` porque a identidade de
+login (`User.email`) é global; o token pertence ao usuário e não cruza contas. Migration
+`20261021030000_password_reset_tokens`. Ver [`authentication.md`](./authentication.md).
+
 ## Retenção e sensibilidade (LGPD — planejado)
 
 Padrões de schema para as próximas entidades de tenant (sem rotina de expurgo nesta fase):

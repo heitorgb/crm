@@ -14,11 +14,14 @@ import { Public } from './decorators/auth.decorators.js';
 import { CurrentTenant } from './decorators/current-tenant.decorator.js';
 import {
   ChangePasswordDto,
+  ForgotPasswordDto,
   LoginDto,
   RefreshDto,
+  ResetPasswordDto,
   SwitchTenantDto,
   UpdateProfileDto,
 } from './dto/auth.dto.js';
+import { PasswordResetService } from './password-reset.service.js';
 
 interface AuthResponse {
   accessToken: string;
@@ -35,6 +38,7 @@ export class AuthController {
   constructor(
     private readonly auth: AuthService,
     private readonly cookies: AuthCookieService,
+    private readonly passwordReset: PasswordResetService,
     private readonly config: ConfigService<Env, true>,
   ) {}
 
@@ -82,6 +86,24 @@ export class AuthController {
     const token = this.cookies.read(request) ?? dto.refreshToken;
     await this.auth.logout(token);
     this.cookies.clear(reply);
+  }
+
+  @Public()
+  @UseGuards(RateLimitGuard)
+  @RateLimit({ name: 'auth-forgot-password', limit: 5, windowMs: 60_000 })
+  @Post('forgot-password')
+  @HttpCode(200)
+  forgotPassword(@Body() dto: ForgotPasswordDto): Promise<{ message: string }> {
+    return this.passwordReset.request(dto);
+  }
+
+  @Public()
+  @UseGuards(RateLimitGuard)
+  @RateLimit({ name: 'auth-reset-password', limit: 10, windowMs: 60_000 })
+  @Post('reset-password')
+  @HttpCode(204)
+  async resetPassword(@Body() dto: ResetPasswordDto): Promise<void> {
+    await this.passwordReset.reset(dto);
   }
 
   @Get('me')

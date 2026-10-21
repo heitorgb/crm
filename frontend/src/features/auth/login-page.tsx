@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react';
+import { Link } from 'react-router-dom';
 import {
   AlertCircle,
   ArrowRight,
@@ -17,9 +18,12 @@ import { useLogin } from '@/features/auth/queries';
 import { ApiError } from '@/lib/api-client';
 import { cn } from '@/lib/utils';
 import { LoginShowcase } from './login-showcase';
-
-const fieldClasses =
-  'h-11 rounded-lg border-white/[0.09] bg-white/[0.035] pl-10 text-sm text-[var(--auth-foreground)] shadow-none placeholder:text-[var(--auth-muted)] hover:border-white/[0.16] focus-visible:border-emerald-400/60 focus-visible:ring-2 focus-visible:ring-emerald-400/20 focus-visible:ring-offset-0 disabled:cursor-not-allowed disabled:opacity-60';
+import {
+  authFieldClasses as fieldClasses,
+  authLabelClasses,
+  authLinkClasses,
+  authSubmitClasses,
+} from './auth-styles';
 
 export function LoginPage() {
   const [email, setEmail] = useState('');
@@ -85,7 +89,7 @@ export function LoginPage() {
                 <div className="space-y-2">
                   <Label
                     htmlFor="email"
-                    className="text-[13px] font-medium text-[var(--auth-muted-strong)]"
+                    className={authLabelClasses}
                   >
                     E-mail
                   </Label>
@@ -113,7 +117,7 @@ export function LoginPage() {
                 <div className="space-y-2">
                   <Label
                     htmlFor="password"
-                    className="text-[13px] font-medium text-[var(--auth-muted-strong)]"
+                    className={authLabelClasses}
                   >
                     Senha
                   </Label>
@@ -150,6 +154,14 @@ export function LoginPage() {
                       )}
                     </button>
                   </div>
+                  <div className="flex justify-end">
+                    <Link
+                      to="/esqueci-senha"
+                      className={cn('text-xs font-medium', authLinkClasses)}
+                    >
+                      Esqueci minha senha
+                    </Link>
+                  </div>
                 </div>
 
                 {errorMessage ? (
@@ -167,7 +179,7 @@ export function LoginPage() {
                   type="submit"
                   disabled={login.isPending}
                   aria-busy={login.isPending}
-                  className="auth-submit group h-11 w-full rounded-lg border border-emerald-300/20 px-4 text-sm font-semibold text-emerald-950 shadow-none transition-all focus-visible:ring-2 focus-visible:ring-emerald-300/60 focus-visible:ring-offset-0 disabled:cursor-not-allowed disabled:opacity-60"
+                  className={authSubmitClasses}
                 >
                   {login.isPending ? (
                     <>

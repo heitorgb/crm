@@ -39,6 +39,10 @@ Login real usa `POST /api/auth/login` (access token em memória/cookie HttpOnly 
 no CRM é exclusivamente pela autenticação real com e-mail e senha; não há sessão fictícia nem modo
 de demonstração na tela de login.
 
+Recuperação de senha: o link **Esqueci minha senha** leva a `/esqueci-senha` (solicitação) e o
+e-mail aponta para `/redefinir-senha?token=...`. A página de redefinição remove o token da URL após
+o sucesso, não usa storage persistente e define `Referrer-Policy: no-referrer` durante a exibição.
+
 ## Identidade visual (tokens)
 
 Extraídos de https://orderup.com.br/ (CSS oficial) e adaptados para light/dark. O padrão é **Light**.

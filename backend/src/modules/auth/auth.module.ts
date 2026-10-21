@@ -10,6 +10,7 @@ import { AuthCookieService } from './auth-cookie.service.js';
 import { JwtAuthGuard } from './guards/jwt-auth.guard.js';
 import { RolesGuard } from './guards/roles.guard.js';
 import { PasswordModule } from './password.module.js';
+import { PasswordResetService } from './password-reset.service.js';
 import { RefreshTokenService } from './refresh-token.service.js';
 
 @Module({
@@ -18,6 +19,7 @@ import { RefreshTokenService } from './refresh-token.service.js';
   providers: [
     AuthService,
     AuthCookieService,
+    PasswordResetService,
     RefreshTokenService,
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: RolesGuard },

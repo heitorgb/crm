@@ -156,6 +156,37 @@ ProxyPass        /socket.io/  http://127.0.0.1:PORTA_FRONTEND/socket.io/  upgrad
 ProxyPassReverse /socket.io/  http://127.0.0.1:PORTA_FRONTEND/socket.io/
 ```
 
+### Uploads no proxy externo
+
+O nginx do container define `client_max_body_size 52m` para aceitar foto de perfil (até 5 MB), mídia
+do atendimento e envios em massa. Qualquer proxy à frente (Apache, Cloudflare etc.) também precisa
+permitir esse tamanho. No Apache, verifique `LimitRequestBody`; se estiver limitado a 1 MB, uploads
+maiores falham com **413** antes de chegar ao backend.
+
+## Arquivos enviados (storage)
+
+Em produção os arquivos (mídia do atendimento e fotos de perfil) ficam no volume nomeado
+`storage_data`, montado em `/app/storage` pelo `docker-compose.prod.yml`. **Não é necessário criar
+`backend/storage` no host** — essa pasta é usada apenas no desenvolvimento local e não é montada no
+container.
+
+Confirme o mount e a permissão de escrita:
+
+```bash
+docker inspect orderup-backend --format '{{range .Mounts}}{{println .Type .Name .Destination}}{{end}}'
+docker compose -f docker-compose.prod.yml exec backend sh -c \
+  'echo "$STORAGE_LOCAL_DIR"; ls -ld /app/storage; touch /app/storage/.write-test && rm /app/storage/.write-test'
+```
+
+`STORAGE_LOCAL_DIR` deve ser `./storage` (padrão, resolvido para `/app/storage`) ou `/app/storage`.
+Se apontar para outro caminho fora do volume, os arquivos serão perdidos ao recriar o container.
+Backup do volume:
+
+```bash
+docker run --rm -v orderup-crm_storage_data:/data -v "$PWD/backups:/backup" alpine \
+  tar czf /backup/storage-$(date +%F).tar.gz -C /data .
+```
+
 ## Evolution API (WhatsApp)
 
 A Evolution roda em compose separado (`docker-compose.evolution.yml`) e **não** faz parte deste

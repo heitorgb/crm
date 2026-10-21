@@ -110,11 +110,21 @@ export async function apiUpload<T>(
     throw new ApiError(
       response.status,
       payload?.code ?? 'REQUEST_FAILED',
-      payload?.message ?? 'Não foi possível enviar o arquivo.',
+      payload?.message ?? uploadFallbackMessage(response.status),
     );
   }
 
   return payload as T;
+}
+
+function uploadFallbackMessage(status: number): string {
+  if (status === 413) {
+    return 'O arquivo é maior que o permitido pelo servidor.';
+  }
+  if (status === 415) {
+    return 'Formato de arquivo não suportado.';
+  }
+  return 'Não foi possível enviar o arquivo.';
 }
 
 export async function apiRequestBlob(path: string): Promise<Blob> {

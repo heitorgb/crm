@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { apiRequestBlob } from './api-client';
 
@@ -10,19 +10,21 @@ export function useAuthenticatedImage(src: string | null | undefined): string | 
     staleTime: 5 * 60 * 1000,
     retry: false,
   });
-  const objectUrl = useMemo(
-    () => (query.data ? URL.createObjectURL(query.data) : undefined),
-    [query.data],
-  );
+  const [objectUrl, setObjectUrl] = useState<string>();
 
-  useEffect(
-    () => () => {
-      if (objectUrl) {
-        URL.revokeObjectURL(objectUrl);
-      }
-    },
-    [objectUrl],
-  );
+  useEffect(() => {
+    if (!query.data) {
+      return undefined;
+    }
+
+    const url = URL.createObjectURL(query.data);
+    // Object URLs are external resources, so they must be created and revoked
+    // inside the effect to survive StrictMode's mount/unmount/remount cycle.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setObjectUrl(url);
+
+    return () => URL.revokeObjectURL(url);
+  }, [query.data]);
 
   return objectUrl;
 }

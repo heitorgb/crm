@@ -34,6 +34,11 @@ const context: SalesCopilotContext = {
     lastMessageAt: '2026-10-20T12:00:00.000Z',
   },
   transcript: '{"text":"Quero uma proposta"}',
+  priorActions: {
+    previousContext: null,
+    recommendations: [],
+    followUps: [],
+  },
   summary: {
     leadId: 'lead-1',
     conversationId: 'conversation-1',
@@ -75,6 +80,38 @@ describe('sales copilot prompts', () => {
     expect(content).toContain('Quero uma proposta');
     expect(content).toContain('ANALISE_ANTERIOR');
     expect(content).toContain('Resumo anterior.');
+  });
+
+  it('includes previous context and prior actions for continuity', () => {
+    const content = buildSalesUserContent({
+      ...context,
+      priorActions: {
+        previousContext: {
+          objective: 'Fechar a implantação.',
+          knownInformation: ['Cinco usuários'],
+          hypotheses: ['Hipótese: urgência'],
+          pendingInformation: ['Orçamento'],
+          nextQuestion: 'Qual o orçamento?',
+        },
+        recommendations: [
+          {
+            kind: 'NEXT_ACTION',
+            status: 'EXECUTED',
+            action: 'Perguntar o orçamento',
+            proposedValue: null,
+            decidedAt: '2026-10-20T12:00:00.000Z',
+          },
+        ],
+        followUps: [
+          { action: 'Ligar amanhã', status: 'PENDING', dueAt: '2026-10-22T12:00:00.000Z' },
+        ],
+      },
+    });
+
+    expect(content).toContain('CONTEXTO_PERSISTIDO_ANTERIOR');
+    expect(content).toContain('ACOES_ANTERIORES_REGISTRADAS');
+    expect(content).toContain('Perguntar o orçamento');
+    expect(content).toContain('Ligar amanhã');
   });
 
   it('states when no conversation is selected', () => {

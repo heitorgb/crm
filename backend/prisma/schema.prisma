@@ -25,6 +25,44 @@ enum AiFormality {
   VERY_FORMAL
 }
 
+enum LeadRecommendationKind {
+  NEXT_ACTION
+  LEAD_UPDATE
+}
+
+enum LeadRecommendationStatus {
+  RECOMMENDED
+  ACCEPTED
+  REJECTED
+  EXECUTED
+  CANCELED
+}
+
+enum LeadRecommendationPriority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum LeadUpdateField {
+  NEED
+  PRODUCT
+  BUDGET
+  DEADLINE
+  USERS
+  REQUIREMENTS
+  OBJECTION
+  STAGE
+  LOSS_REASON
+  NOTES
+}
+
+enum LeadFollowUpStatus {
+  PENDING
+  COMPLETED
+  CANCELED
+}
+
 enum CustomerStatus {
   ACTIVE
   INACTIVE
@@ -195,6 +233,9 @@ model Tenant {
   customMenuGroups           CustomMenuGroup[]
   customMenuButtons          CustomMenuButton[]
   aiSettings                 AiSettings?
+  leadCommercialContexts     LeadCommercialContext[]
+  leadRecommendations        LeadRecommendation[]
+  leadFollowUps              LeadFollowUp[]
 
   @@map("tenants")
 }
@@ -226,9 +267,12 @@ model TenantUser {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  tenant     Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  user       User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  ownedLeads Lead[] @relation("LeadOwner")
+  tenant                  Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user                    User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ownedLeads              Lead[]               @relation("LeadOwner")
+  recommendationDecisions LeadRecommendation[] @relation("RecommendationDecidedBy")
+  ownedFollowUps          LeadFollowUp[]       @relation("FollowUpOwner")
+  createdFollowUps        LeadFollowUp[]       @relation("FollowUpCreatedBy")
 
   @@unique([tenantId, userId])
   @@index([userId])
@@ -375,12 +419,15 @@ model Lead {
   createdAt      DateTime   @default(now()) @map("created_at")
   updatedAt      DateTime   @updatedAt @map("updated_at")
 
-  tenant   Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  pipeline LeadPipeline @relation(fields: [pipelineId], references: [id], onDelete: Restrict)
-  stage    LeadStage    @relation(fields: [stageId], references: [id], onDelete: Restrict)
-  contact  Contact      @relation(fields: [contactId], references: [id], onDelete: Cascade)
-  owner    TenantUser?  @relation("LeadOwner", fields: [ownerId], references: [id], onDelete: SetNull)
-  tags     LeadTag[]
+  tenant            Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  pipeline          LeadPipeline           @relation(fields: [pipelineId], references: [id], onDelete: Restrict)
+  stage             LeadStage              @relation(fields: [stageId], references: [id], onDelete: Restrict)
+  contact           Contact                @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  owner             TenantUser?            @relation("LeadOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  tags              LeadTag[]
+  commercialContext LeadCommercialContext?
+  recommendations   LeadRecommendation[]
+  followUps         LeadFollowUp[]
 
   @@index([tenantId, pipelineId, stageId])
   @@index([tenantId, status])
@@ -388,6 +435,115 @@ model Lead {
   @@index([tenantId, ownerId])
   @@index([tenantId, nextFollowUpAt])
   @@map("leads")
+}
+
+model LeadCommercialContext {
+  id                 String    @id @default(uuid()) @db.Uuid
+  tenantId           String    @map("tenant_id") @db.Uuid
+  leadId             String    @unique @map("lead_id") @db.Uuid
+  conversationId     String?   @map("conversation_id") @db.Uuid
+  summary            String
+  objective          String
+  need               String
+  confirmedFacts     Json      @default("[]") @map("confirmed_facts")
+  hypotheses         Json      @default("[]")
+  pendingInformation Json      @default("[]") @map("pending_information")
+  nextQuestion       String    @map("next_question")
+  suggestedReply     String    @map("suggested_reply")
+  rationale          String
+  provider           String
+  model              String
+  promptVersion      String    @map("prompt_version")
+  analysisVersion    Int       @default(1) @map("analysis_version")
+  latestMessageId    String?   @map("latest_message_id")
+  latestMessageAt    DateTime? @map("latest_message_at")
+  leadUpdatedAt      DateTime  @map("lead_updated_at")
+  lastAnalyzedAt     DateTime  @map("last_analyzed_at")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  tenant          Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  lead            Lead                 @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  conversation    Conversation?        @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  recommendations LeadRecommendation[]
+
+  @@index([tenantId, conversationId])
+  @@map("lead_commercial_contexts")
+}
+
+model LeadRecommendation {
+  id                    String                     @id @default(uuid()) @db.Uuid
+  tenantId              String                     @map("tenant_id") @db.Uuid
+  leadId                String                     @map("lead_id") @db.Uuid
+  conversationId        String?                    @map("conversation_id") @db.Uuid
+  contextId             String?                    @map("context_id") @db.Uuid
+  analysisVersion       Int                        @map("analysis_version")
+  kind                  LeadRecommendationKind
+  status                LeadRecommendationStatus   @default(RECOMMENDED)
+  priority              LeadRecommendationPriority
+  action                String
+  reason                String
+  expectedOutcome       String?                    @map("expected_outcome")
+  missingInformation    Json                       @default("[]") @map("missing_information")
+  suggestedDueAt        DateTime?                  @map("suggested_due_at")
+  suggestedMessage      String?                    @map("suggested_message")
+  updateField           LeadUpdateField?           @map("update_field")
+  proposedValue         String?                    @map("proposed_value")
+  evidence              String?
+  decidedAt             DateTime?                  @map("decided_at")
+  decidedByMembershipId String?                    @map("decided_by_membership_id") @db.Uuid
+  result                Json                       @default("{}")
+  beforeData            Json                       @default("{}") @map("before_data")
+  afterData             Json                       @default("{}") @map("after_data")
+  createdAt             DateTime                   @default(now()) @map("created_at")
+  updatedAt             DateTime                   @updatedAt @map("updated_at")
+
+  tenant       Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  lead         Lead                   @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  conversation Conversation?          @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  context      LeadCommercialContext? @relation(fields: [contextId], references: [id], onDelete: SetNull)
+  decidedBy    TenantUser?            @relation("RecommendationDecidedBy", fields: [decidedByMembershipId], references: [id], onDelete: SetNull)
+  followUp     LeadFollowUp?
+
+  @@index([tenantId, leadId, createdAt])
+  @@index([tenantId, leadId, analysisVersion])
+  @@index([tenantId, status])
+  @@map("lead_recommendations")
+}
+
+model LeadFollowUp {
+  id                    String             @id @default(uuid()) @db.Uuid
+  tenantId              String             @map("tenant_id") @db.Uuid
+  leadId                String             @map("lead_id") @db.Uuid
+  conversationId        String?            @map("conversation_id") @db.Uuid
+  recommendationId      String?            @unique @map("recommendation_id") @db.Uuid
+  ownerId               String?            @map("owner_id") @db.Uuid
+  createdByMembershipId String?            @map("created_by_membership_id") @db.Uuid
+  idempotencyKey        String?            @map("idempotency_key")
+  action                String
+  reason                String?
+  dueAt                 DateTime?          @map("due_at")
+  suggestedMessage      String?            @map("suggested_message")
+  status                LeadFollowUpStatus @default(PENDING)
+  completedAt           DateTime?          @map("completed_at")
+  canceledAt            DateTime?          @map("canceled_at")
+  rescheduleCount       Int                @default(0) @map("reschedule_count")
+  lastRescheduledAt     DateTime?          @map("last_rescheduled_at")
+  events                Json               @default("[]")
+  result                Json               @default("{}")
+  createdAt             DateTime           @default(now()) @map("created_at")
+  updatedAt             DateTime           @updatedAt @map("updated_at")
+
+  tenant         Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  lead           Lead                @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  conversation   Conversation?       @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  recommendation LeadRecommendation? @relation(fields: [recommendationId], references: [id], onDelete: SetNull)
+  owner          TenantUser?         @relation("FollowUpOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  createdBy      TenantUser?         @relation("FollowUpCreatedBy", fields: [createdByMembershipId], references: [id], onDelete: SetNull)
+
+  @@unique([tenantId, idempotencyKey])
+  @@index([tenantId, leadId, status, dueAt])
+  @@map("lead_follow_ups")
 }
 
 model Tag {
@@ -433,7 +589,7 @@ model CustomMenuGroup {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  tenant  Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant  Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   buttons CustomMenuButton[]
 
   @@index([tenantId, active, position])
@@ -538,11 +694,14 @@ model Conversation {
 
   tags ConversationTag[]
 
-  tenant   Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  instance WhatsAppInstance @relation(fields: [whatsappInstanceId], references: [id], onDelete: Cascade)
-  customer Customer?        @relation(fields: [customerId], references: [id], onDelete: SetNull)
-  contact  Contact?         @relation(fields: [contactId], references: [id], onDelete: SetNull)
-  messages Message[]
+  tenant             Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  instance           WhatsAppInstance        @relation(fields: [whatsappInstanceId], references: [id], onDelete: Cascade)
+  customer           Customer?               @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  contact            Contact?                @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  messages           Message[]
+  commercialContexts LeadCommercialContext[]
+  recommendations    LeadRecommendation[]
+  followUps          LeadFollowUp[]
 
   @@unique([whatsappInstanceId, externalContactId])
   @@index([tenantId, status])
@@ -996,18 +1155,18 @@ model PlatformSettings {
 }
 
 model AiSettings {
-  id                           String      @id @default(uuid()) @db.Uuid
-  tenantId                     String      @unique @map("tenant_id") @db.Uuid
-  provider                     AiProvider  @default(OPENAI)
-  model                        String
-  formality                    AiFormality @default(PROFESSIONAL)
-  enabled                      Boolean     @default(true)
-  openaiApiKeyEncrypted        String?     @map("openai_api_key_encrypted")
-  deepseekApiKeyEncrypted      String?     @map("deepseek_api_key_encrypted")
-  anthropicApiKeyEncrypted     String?     @map("anthropic_api_key_encrypted")
-  openrouterApiKeyEncrypted    String?     @map("openrouter_api_key_encrypted")
-  createdAt                    DateTime    @default(now()) @map("created_at")
-  updatedAt                    DateTime    @updatedAt @map("updated_at")
+  id                        String      @id @default(uuid()) @db.Uuid
+  tenantId                  String      @unique @map("tenant_id") @db.Uuid
+  provider                  AiProvider  @default(OPENAI)
+  model                     String
+  formality                 AiFormality @default(PROFESSIONAL)
+  enabled                   Boolean     @default(true)
+  openaiApiKeyEncrypted     String?     @map("openai_api_key_encrypted")
+  deepseekApiKeyEncrypted   String?     @map("deepseek_api_key_encrypted")
+  anthropicApiKeyEncrypted  String?     @map("anthropic_api_key_encrypted")
+  openrouterApiKeyEncrypted String?     @map("openrouter_api_key_encrypted")
+  createdAt                 DateTime    @default(now()) @map("created_at")
+  updatedAt                 DateTime    @updatedAt @map("updated_at")
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 

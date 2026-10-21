@@ -147,3 +147,61 @@ export class AiSalesReplyInvalidResponseError extends AppException {
     );
   }
 }
+
+export class AiSalesRecommendationNotFoundError extends AppException {
+  constructor() {
+    super('AI_SALES_RECOMMENDATION_NOT_FOUND', 'Recomendação comercial não encontrada.', 404);
+  }
+}
+
+export class AiSalesRecommendationInvalidStateError extends AppException {
+  constructor() {
+    super(
+      'AI_SALES_RECOMMENDATION_INVALID_STATE',
+      'Esta recomendação já foi decidida e não pode ser alterada.',
+      409,
+    );
+  }
+}
+
+export class AiSalesRecommendationInvalidStageError extends AppException {
+  constructor() {
+    super(
+      'AI_SALES_RECOMMENDATION_INVALID_STAGE',
+      'A etapa sugerida não existe no pipeline desta oportunidade.',
+      400,
+    );
+  }
+}
+
+export class AiSalesLeadUpdateTooLargeError extends AppException {
+  constructor() {
+    super(
+      'AI_SALES_LEAD_UPDATE_TOO_LARGE',
+      'A atualização deixaria as observações da oportunidade acima do limite permitido.',
+      400,
+    );
+  }
+}
+
+export class AiSalesFollowUpNotFoundError extends AppException {
+  constructor() {
+    super('AI_SALES_FOLLOW_UP_NOT_FOUND', 'Acompanhamento não encontrado.', 404);
+  }
+}
+
+export class AiSalesFollowUpInvalidStateError extends AppException {
+  constructor() {
+    super(
+      'AI_SALES_FOLLOW_UP_INVALID_STATE',
+      'Este acompanhamento já foi concluído ou cancelado.',
+      409,
+    );
+  }
+}
+
+export class AiSalesFollowUpOwnerNotFoundError extends AppException {
+  constructor() {
+    super('AI_SALES_FOLLOW_UP_OWNER_NOT_FOUND', 'Responsável não encontrado.', 404);
+  }
+}

@@ -54,7 +54,11 @@ export function LeadDetailSheet({ open, onOpenChange, lead, pipeline, onEdit }: 
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
   const [historyRequestedId, setHistoryRequestedId] = useState<string | null>(null);
   const [startConversationOpen, setStartConversationOpen] = useState(false);
-  const [copilotOpen, setCopilotOpen] = useState(true);
+  const [copilotOpen, setCopilotOpen] = useState(() =>
+    typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+      ? window.matchMedia('(min-width: 1280px)').matches
+      : true,
+  );
   const [composerInsertion, setComposerInsertion] = useState<
     (ComposerInsertion & { conversationId: string }) | null
   >(null);
@@ -114,7 +118,7 @@ export function LeadDetailSheet({ open, onOpenChange, lead, pipeline, onEdit }: 
   return (
     <>
       <Sheet open={open} onOpenChange={onOpenChange}>
-        <SheetContent className="relative flex w-full max-w-none flex-col gap-0 p-0 sm:max-w-[96vw] xl:max-w-7xl">
+        <SheetContent className="flex w-full max-w-none flex-col gap-0 overflow-hidden p-0 sm:max-w-[96vw] xl:max-w-7xl">
           <div className="border-b border-border px-4 py-3 pr-12">
             <div className="flex flex-wrap items-center gap-2">
               <SheetTitle className="text-base">{lead.title}</SheetTitle>
@@ -140,7 +144,13 @@ export function LeadDetailSheet({ open, onOpenChange, lead, pipeline, onEdit }: 
             <p className="mt-1 text-xs text-muted-foreground">{pipeline.name} · oportunidade de {lead.contact.name}</p>
           </div>
 
-          <div className={cn('flex min-h-0 flex-1 flex-col lg:grid lg:grid-cols-[300px_minmax(0,1fr)]', copilotOpen && 'xl:grid-cols-[300px_minmax(0,1fr)_360px]')}>
+          <div
+            data-testid="lead-detail-layout"
+            className={cn(
+              'relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden lg:grid lg:grid-cols-[300px_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)]',
+              copilotOpen && 'xl:grid-cols-[300px_minmax(0,1fr)_360px]',
+            )}
+          >
             <aside className="max-h-64 overflow-y-auto border-b border-border bg-surface p-4 scrollbar-thin lg:max-h-none lg:border-b-0 lg:border-r">
               <div className="flex items-center gap-3">
                 <UserAvatar name={lead.contact.name} src={lead.contact.avatarUrl ?? undefined} className="size-11" />
@@ -203,7 +213,10 @@ export function LeadDetailSheet({ open, onOpenChange, lead, pipeline, onEdit }: 
               </div>
             </aside>
 
-            <section className="flex min-h-0 flex-1 flex-col">
+            <section
+              data-testid="conversation-column"
+              className="flex min-h-0 flex-1 flex-col overflow-hidden"
+            >
               {conversations.length > 1 ? (
                 <div className="border-b border-border bg-card px-3 py-2">
                   <Select
@@ -261,7 +274,7 @@ export function LeadDetailSheet({ open, onOpenChange, lead, pipeline, onEdit }: 
             </section>
 
             {copilotOpen ? (
-              <div className="absolute inset-y-0 right-0 z-20 flex w-full max-w-sm border-l border-border bg-card shadow-xl xl:static xl:z-auto xl:max-w-none xl:shadow-none">
+              <div className="absolute inset-y-0 right-0 z-20 flex w-full border-l border-border bg-card shadow-xl xl:static xl:z-auto xl:max-w-none xl:shadow-none">
                 <SalesCopilotPanel
                   key={`${lead.id}:${activeConversationId ?? 'no-conversation'}`}
                   lead={lead}

@@ -12,6 +12,8 @@ import {
   OpenRouterProvider,
 } from './ai.providers.js';
 import { SalesCopilotService } from './sales-copilot.service.js';
+import { SalesFollowUpsService } from './sales-follow-ups.service.js';
+import { SalesRecommendationsService } from './sales-recommendations.service.js';
 
 @Module({
   imports: [ModulesModule],
@@ -21,6 +23,8 @@ import { SalesCopilotService } from './sales-copilot.service.js';
     AiExecutionService,
     AiService,
     SalesCopilotService,
+    SalesRecommendationsService,
+    SalesFollowUpsService,
     AiProviderFactory,
     OpenAiProvider,
     DeepSeekProvider,

@@ -230,7 +230,10 @@ export function ChatPanel({
   };
 
   return (
-    <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+    <div
+      data-testid="chat-panel"
+      className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+    >
       <div className="flex items-center gap-2 border-b border-border bg-card px-2 py-2 sm:px-4 sm:py-3">
         {onBack ? (
           <Button
@@ -308,6 +311,7 @@ export function ChatPanel({
       <div
         ref={scrollRef}
         onScroll={handleScroll}
+        data-testid="chat-messages"
         className="chat-wallpaper relative min-h-0 flex-1 overflow-y-auto scrollbar-thin px-3 py-4 sm:px-6"
       >
         {messagesPending ? (

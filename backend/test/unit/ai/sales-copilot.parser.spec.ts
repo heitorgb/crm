@@ -3,12 +3,26 @@ import { parseSalesAnalysis, parseSalesReply } from '../../../src/modules/ai/sal
 
 const VALID = {
   summary: 'Resumo',
+  objective: 'Objetivo comercial',
   need: 'Necessidade',
   knownInformation: ['Fato 1'],
+  hypotheses: ['Hipótese: suposição'],
   pendingInformation: ['Lacuna 1'],
   nextQuestion: 'Pergunta?',
   suggestedReply: 'Resposta sugerida.',
   rationale: 'Justificativa.',
+  nextAction: {
+    action: 'Próxima ação',
+    reason: 'Motivo',
+    priority: 'MEDIUM',
+    expectedOutcome: 'Resultado esperado',
+    missingInformation: ['Informação faltante'],
+    suggestedDueAt: null,
+    suggestedMessage: null,
+  },
+  leadUpdateSuggestions: [
+    { field: 'NEED', proposedValue: 'Necessidade confirmada', evidence: 'Evidência' },
+  ],
 };
 
 describe('sales copilot parser', () => {
@@ -48,6 +62,26 @@ describe('sales copilot parser', () => {
     expect(() => parseSalesAnalysis(JSON.stringify({ summary: 'só isso' }))).toThrow(
       expect.objectContaining({ code: 'AI_SALES_INVALID_RESPONSE' }),
     );
+  });
+
+  it('rejects invalid priorities and lead update fields', () => {
+    expect(() =>
+      parseSalesAnalysis(
+        JSON.stringify({
+          ...VALID,
+          nextAction: { ...VALID.nextAction, priority: 'URGENT' },
+        }),
+      ),
+    ).toThrow(expect.objectContaining({ code: 'AI_SALES_INVALID_RESPONSE' }));
+
+    expect(() =>
+      parseSalesAnalysis(
+        JSON.stringify({
+          ...VALID,
+          leadUpdateSuggestions: [{ field: 'ARBITRARY', proposedValue: 'x', evidence: 'y' }],
+        }),
+      ),
+    ).toThrow(expect.objectContaining({ code: 'AI_SALES_INVALID_RESPONSE' }));
   });
 
   it('rejects an empty or oversized reply', () => {

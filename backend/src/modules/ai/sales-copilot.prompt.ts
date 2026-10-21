@@ -28,12 +28,30 @@ export function buildSalesAnalysisSystemPrompt(): string {
     'O JSON deve ter exatamente estas chaves:',
     '{',
     '  "summary": "resumo do que está acontecendo e do que o cliente parece procurar",',
+    '  "objective": "objetivo comercial do cliente: o que ele deseja resolver ou comprar",',
     '  "need": "necessidade ou problema que o cliente deseja resolver; declare se não estiver clara",',
-    '  "knownInformation": ["fatos explícitos extraídos da conversa ou dos dados comerciais"],',
+    '  "knownInformation": ["fatos explícitos e confirmados, extraídos da conversa ou dos dados comerciais"],',
+    '  "hypotheses": ["interpretações ou hipóteses da IA que ainda precisam ser confirmadas; prefixe com Hipótese:"],',
     '  "pendingInformation": ["informações importantes ainda não identificadas"],',
     '  "nextQuestion": "a pergunta mais útil para avançar a conversa agora",',
     '  "suggestedReply": "mensagem natural, objetiva e pronta para o atendente revisar no WhatsApp",',
-    '  "rationale": "justificativa breve de por que essa abordagem é adequada neste momento"',
+    '  "rationale": "justificativa breve de por que essa abordagem é adequada neste momento",',
+    '  "nextAction": {',
+    '    "action": "próxima melhor ação concreta para avançar a oportunidade",',
+    '    "reason": "motivo baseado no estágio, mensagens e ações anteriores",',
+    '    "priority": "LOW | MEDIUM | HIGH",',
+    '    "expectedOutcome": "resultado esperado se a ação for executada",',
+    '    "missingInformation": ["informações que ainda faltam para essa ação"],',
+    '    "suggestedDueAt": "data ISO 8601 ou null quando não houver fundamento suficiente",',
+    '    "suggestedMessage": "mensagem pronta para revisão ou null"',
+    '  },',
+    '  "leadUpdateSuggestions": [',
+    '    {',
+    '      "field": "NEED | PRODUCT | BUDGET | DEADLINE | USERS | REQUIREMENTS | OBJECTION | STAGE | LOSS_REASON | NOTES",',
+    '      "proposedValue": "informação proposta para o cadastro comercial",',
+    '      "evidence": "trecho ou fato explícito que fundamenta a sugestão"',
+    '    }',
+    '  ]',
     '}',
     '',
     'Regras de conteúdo:',
@@ -41,7 +59,14 @@ export function buildSalesAnalysisSystemPrompt(): string {
     '- Escreva "suggestedReply" no mesmo idioma das últimas mensagens do cliente; se não houver histórico, use português do Brasil.',
     '- A resposta sugerida deve ser adequada ao WhatsApp, humana, objetiva e sem saudações ou perguntas desnecessárias.',
     '- Não repita perguntas que o cliente já respondeu.',
-    '- Use no máximo 20 itens em "knownInformation" e 20 em "pendingInformation".',
+    '- Use no máximo 20 itens em "knownInformation", 20 em "hypotheses", 20 em "pendingInformation" e 8 em "leadUpdateSuggestions".',
+    '- "knownInformation" contém somente fatos confirmados. Nunca coloque hipóteses nessa lista.',
+    '- Não repita em "pendingInformation" informações que o cliente já forneceu.',
+    '- A próxima ação deve ser específica, considerar o estágio atual, as mensagens recentes, o contexto persistido e as ações anteriores. Evite recomendações genéricas ou repetidas.',
+    '- Só sugira prazo em "suggestedDueAt" quando houver fundamento explícito no contexto; caso contrário use null.',
+    '- Só inclua uma sugestão em "leadUpdateSuggestions" quando houver evidência explícita. Use apenas os campos permitidos. Para STAGE, use exatamente o nome de uma etapa existente do pipeline.',
+    '- Não proponha alteração de etapa, status, valor ou qualquer dado comercial sem evidência clara.',
+    '- Se não houver contexto suficiente, declare a limitação e recomende uma pergunta de esclarecimento em vez de inventar dados.',
     '- Se não houver histórico de mensagens, baseie a análise apenas nos dados comerciais e deixe explícita a ausência de contexto conversacional.',
   ].join('\n');
 }
@@ -88,6 +113,22 @@ export function buildSalesUserContent(
     `HISTORICO_TRUNCADO: ${context.summary.historyTruncated ? 'sim' : 'não'}`,
     `MIDIAS_SEM_TEXTO: ${context.summary.mediaWithoutText}`,
   ];
+
+  sections.push(
+    '',
+    'CONTEXTO_PERSISTIDO_ANTERIOR (referência; não trate hipóteses como fatos):',
+    JSON.stringify(context.priorActions.previousContext, null, 2),
+    '',
+    'ACOES_ANTERIORES_REGISTRADAS (referência; não repita ações já executadas sem motivo):',
+    JSON.stringify(
+      {
+        recommendations: context.priorActions.recommendations,
+        followUps: context.priorActions.followUps,
+      },
+      null,
+      2,
+    ),
+  );
 
   if (options.previousAnalysis) {
     sections.push(

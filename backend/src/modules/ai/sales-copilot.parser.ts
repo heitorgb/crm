@@ -16,14 +16,47 @@ const listText = z
       .map((item) => item.slice(0, 500)),
   );
 
+const updateFieldSchema = z.enum([
+  'NEED',
+  'PRODUCT',
+  'BUDGET',
+  'DEADLINE',
+  'USERS',
+  'REQUIREMENTS',
+  'OBJECTION',
+  'STAGE',
+  'LOSS_REASON',
+  'NOTES',
+]);
+
 const analysisSchema = z.object({
   summary: z.string().trim().min(1).max(4_000),
+  objective: z.string().trim().min(1).max(2_000),
   need: z.string().trim().min(1).max(2_000),
   knownInformation: listText,
+  hypotheses: listText,
   pendingInformation: listText,
   nextQuestion: z.string().trim().min(1).max(1_000),
   suggestedReply: z.string().trim().min(1).max(4_000),
   rationale: z.string().trim().min(1).max(2_000),
+  nextAction: z.object({
+    action: z.string().trim().min(1).max(500),
+    reason: z.string().trim().min(1).max(2_000),
+    priority: z.enum(['LOW', 'MEDIUM', 'HIGH']),
+    expectedOutcome: z.string().trim().min(1).max(1_000),
+    missingInformation: listText,
+    suggestedDueAt: z.string().trim().max(64).nullable(),
+    suggestedMessage: z.string().trim().max(4_000).nullable(),
+  }),
+  leadUpdateSuggestions: z
+    .array(
+      z.object({
+        field: updateFieldSchema,
+        proposedValue: z.string().trim().min(1).max(2_000),
+        evidence: z.string().trim().min(1).max(2_000),
+      }),
+    )
+    .max(8),
 });
 
 export function parseSalesAnalysis(raw: string): SalesAnalysisPayload {

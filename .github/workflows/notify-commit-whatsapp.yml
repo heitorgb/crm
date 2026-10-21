@@ -4,6 +4,11 @@ on:
   push:
     branches:
       - '**'
+  pull_request:
+    types:
+      - closed
+    branches:
+      - main
 
 permissions:
   contents: read
@@ -16,13 +21,14 @@ jobs:
   notify:
     name: Enviar commits ao CRM
     runs-on: ubuntu-latest
-    if: ${{ !github.event.deleted && !endsWith(github.actor, '[bot]') }}
+    if: ${{ !github.event.deleted && (github.event_name == 'pull_request' || !endsWith(github.actor, '[bot]')) }}
     steps:
       - name: Notificar commits
         env:
           CRM_WEBHOOK_URL: ${{ secrets.CRM_WEBHOOK_URL }}
           CRM_WEBHOOK_TOKEN: ${{ secrets.CRM_WEBHOOK_TOKEN }}
           GITHUB_EVENT_PATH: ${{ github.event_path }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
         run: |
           node <<'NODE'
           const fs = require('node:fs');
@@ -35,6 +41,10 @@ jobs:
           const RETRY_DELAYS_MS = [2000, 5000];
           const ZERO_SHA = /^0{40,64}$/;
           const VALID_SHA = /^[0-9a-f]{7,64}$/i;
+          const MERGE_PULL_REQUEST = /^Merge pull request #(\d+) from ([^\s/]+)\/(\S+)/i;
+          const MERGE_BRANCH =
+            /^Merge (?:remote-tracking )?branch '([^']+)'(?: of [^\s]+)?(?: into ([^\s]+))?/i;
+          const SQUASH_PULL_REQUEST = /\(#(\d+)\)\s*$/;
           const FATAL_CODES = new Set([
             'WEBHOOK_UNAUTHORIZED',
             'MODULE_DISABLED',
@@ -64,6 +74,74 @@ jobs:
               result += character;
             }
             return result;
+          }
+
+          function formatDate(value) {
+            if (!value) {
+              return null;
+            }
+            const date = new Date(value);
+            if (Number.isNaN(date.getTime())) {
+              return null;
+            }
+            const parts = new Intl.DateTimeFormat('pt-BR', {
+              timeZone: 'America/Sao_Paulo',
+              day: '2-digit',
+              month: '2-digit',
+              year: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit',
+              hourCycle: 'h23',
+            }).formatToParts(date);
+            const part = (type) => parts.find((item) => item.type === type)?.value;
+            return `${part('day')}/${part('month')}/${part('year')} ${part('hour')}:${part('minute')}`;
+          }
+
+          function cleanBranchName(value) {
+            return normalizeSingleLine(value)
+              .replace(/^refs\/heads\//, '')
+              .replace(/^(?:origin|upstream)\//, '');
+          }
+
+          function safeHttpsUrl(value) {
+            const url = normalizeSingleLine(value);
+            if (!url) {
+              return null;
+            }
+            try {
+              return new URL(url).protocol === 'https:' ? url : null;
+            } catch {
+              return null;
+            }
+          }
+
+          function parseMergeInfo(title) {
+            const pullRequest = title.match(MERGE_PULL_REQUEST);
+            if (pullRequest) {
+              return {
+                kind: 'pull_request',
+                number: Number(pullRequest[1]),
+                source: cleanBranchName(pullRequest[3]),
+                destination: null,
+              };
+            }
+
+            const branch = title.match(MERGE_BRANCH);
+            if (branch) {
+              return {
+                kind: 'branch',
+                number: null,
+                source: cleanBranchName(branch[1]),
+                destination: branch[2] ? cleanBranchName(branch[2]) : null,
+              };
+            }
+
+            return null;
+          }
+
+          function squashPullRequestNumber(title) {
+            const match = title.match(SQUASH_PULL_REQUEST);
+            return match ? Number(match[1]) : null;
           }
 
           function splitCommitMessage(value) {
@@ -100,19 +178,36 @@ jobs:
           }
 
           function formatCommitBlock(commit, index, total) {
+            const lines = [];
             if (!commit.title) {
-              return commit.body || 'Mensagem não informada.';
+              lines.push(commit.body || 'Mensagem não informada.');
+            } else {
+              const headline =
+                total > 1 ? `*${index + 1}. ${commit.title}*` : `*${commit.title}*`;
+              lines.push(headline);
+              if (commit.body) {
+                lines.push(commit.body);
+              }
             }
-            const headline =
-              total > 1 ? `*${index + 1}. ${commit.title}*` : `*${commit.title}*`;
-            return commit.body ? `${headline}\n\n${commit.body}` : headline;
+
+            const metadata = [];
+            if (commit.shortSha) {
+              metadata.push(`🔖 *Hash:* ${commit.shortSha}`);
+            }
+            if (commit.date) {
+              metadata.push(`🕒 *Data:* ${commit.date}`);
+            }
+            if (total > 1 && commit.commitUrl) {
+              metadata.push(`🔗 *Commit:* ${commit.commitUrl}`);
+            }
+            if (metadata.length > 0) {
+              lines.push(metadata.join('\n'));
+            }
+            return lines.join('\n\n');
           }
 
-          function buildMessage(fields, commits) {
-            const sections = [
-              '🚀 *ATUALIZAÇÃO DO CRM*',
-              commits.length > 1 ? '📝 *COMMITS REALIZADOS*' : '📝 *COMMIT REALIZADO*',
-            ];
+          function buildCommitMessage(fields, commits) {
+            const sections = ['📝 *NOVO COMMIT NO CRM*'];
             commits.forEach((commit, index) => {
               sections.push(formatCommitBlock(commit, index, commits.length));
             });
@@ -128,19 +223,19 @@ jobs:
             return sections.join('\n\n');
           }
 
-          function buildMessageWithinLimit(fields, rawCommits) {
+          function buildCommitMessageWithinLimit(fields, rawCommits) {
             const commits = rawCommits.map((commit) => ({
               ...commit,
               ...splitCommitMessage(commit.rawMessage),
             }));
-            const full = buildMessage(fields, commits);
+            const full = buildCommitMessage(fields, commits);
             if (full.length <= MAX_MESSAGE_LENGTH) {
               return full;
             }
 
             const suffix = '\n\n… (mensagem truncada)';
             const templateBlocks = commits.map((commit) => ({ ...commit, body: '' }));
-            const template = buildMessage(fields, templateBlocks);
+            const template = buildCommitMessage(fields, templateBlocks);
             if (template.length + suffix.length > MAX_MESSAGE_LENGTH) {
               return truncateUtf16(template, MAX_MESSAGE_LENGTH);
             }
@@ -169,7 +264,64 @@ jobs:
               return { ...commit, body: `${truncatedBody}${suffix}` };
             });
 
-            const candidate = buildMessage(fields, limitedBlocks);
+            const candidate = buildCommitMessage(fields, limitedBlocks);
+            if (candidate.length <= MAX_MESSAGE_LENGTH) {
+              return candidate;
+            }
+            return truncateUtf16(candidate, MAX_MESSAGE_LENGTH);
+          }
+
+          function renderProductionMessage(fields) {
+            const sections = ['🚀 *ATUALIZAÇÃO ENVIADA PARA PRODUÇÃO*'];
+            if (fields.repository) {
+              sections.push(`📦 *Repositório:* ${fields.repository}`);
+            }
+            if (fields.source) {
+              sections.push(`🌿 *Origem:* ${fields.source}`);
+            }
+            if (fields.destination) {
+              sections.push(`🎯 *Destino:* ${fields.destination}`);
+            }
+            if (fields.responsible) {
+              sections.push(`👤 *Responsável pelo merge:* ${fields.responsible}`);
+            }
+            if (fields.pullRequest) {
+              sections.push(`🔀 *Pull Request:* ${fields.pullRequest}`);
+            }
+            if (fields.link && fields.linkLabel) {
+              sections.push(`🔗 *${fields.linkLabel}:*\n${fields.link}`);
+            }
+            if (fields.summary) {
+              sections.push(`📝 *Resumo das alterações:*\n${fields.summary}`);
+            }
+            return sections.join('\n\n');
+          }
+
+          function buildProductionMessageWithinLimit(fields) {
+            const summary = normalizeMultiline(fields.summary);
+            const full = renderProductionMessage({ ...fields, summary });
+            if (full.length <= MAX_MESSAGE_LENGTH) {
+              return full;
+            }
+
+            const suffix = '\n\n… (mensagem truncada)';
+            const template = renderProductionMessage({ ...fields, summary: '' });
+            if (template.length + suffix.length > MAX_MESSAGE_LENGTH) {
+              return truncateUtf16(template, MAX_MESSAGE_LENGTH);
+            }
+
+            const summaryPrefix = '\n\n📝 *Resumo das alterações:*\n';
+            const available =
+              MAX_MESSAGE_LENGTH - template.length - summaryPrefix.length - suffix.length;
+            if (available <= 0) {
+              return truncateUtf16(template, MAX_MESSAGE_LENGTH);
+            }
+
+            const truncatedSummary = truncateUtf16(summary, available).trimEnd();
+            const candidate = renderProductionMessage({
+              ...fields,
+              summary: `${truncatedSummary}${suffix}`,
+            });
             if (candidate.length <= MAX_MESSAGE_LENGTH) {
               return candidate;
             }
@@ -202,6 +354,14 @@ jobs:
               .update(`${repository}\n${branch}\n${reference}`)
               .digest('hex');
             return `github-crm-push:${digest}`;
+          }
+
+          function productionIdempotencyKeyFor(repository, destination, reference) {
+            const digest = crypto
+              .createHash('sha256')
+              .update(`${repository}\n${destination}\n${reference}`)
+              .digest('hex');
+            return `github-crm-production:${digest}`;
           }
 
           function parseRetryAfter(response) {
@@ -338,18 +498,86 @@ jobs:
             return last;
           }
 
-          async function main() {
-            if (!process.env.GITHUB_EVENT_PATH) {
-              throw new Error('GITHUB_EVENT_PATH não foi informado.');
+          async function handlePullRequest(event) {
+            const action = normalizeSingleLine(event.action);
+            const pullRequest = event.pull_request ?? {};
+
+            if (action !== 'closed' || pullRequest.merged !== true) {
+              console.log('Pull Request não integrado; nada a notificar.');
+              return;
             }
 
-            const event = JSON.parse(
-              fs.readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'),
-            );
             const repository = normalizeSingleLine(event.repository?.full_name);
-            const branch = normalizeSingleLine(
-              String(event.ref ?? '').replace(/^refs\/heads\//, ''),
+            const destination = cleanBranchName(pullRequest.base?.ref);
+            if (!repository || destination.toLowerCase() !== 'main') {
+              console.log('Pull Request sem integração identificável em main; nada a notificar.');
+              return;
+            }
+
+            const number = Number.isInteger(pullRequest.number) ? pullRequest.number : null;
+            const mergeSha = normalizeSingleLine(pullRequest.merge_commit_sha);
+            if (!number && !VALID_SHA.test(mergeSha)) {
+              console.error('Pull Request integrado sem número ou commit de merge; nada a notificar.');
+              return;
+            }
+
+            const source = cleanBranchName(pullRequest.head?.ref || pullRequest.head?.label);
+            const responsible = normalizeSingleLine(
+              pullRequest.merged_by?.login ||
+                pullRequest.merged_by?.name ||
+                event.sender?.login ||
+                pullRequest.user?.login,
             );
+            const pullRequestTitle = normalizeSingleLine(pullRequest.title);
+            const pullRequestLabel = number
+              ? `#${number}${pullRequestTitle ? ` — ${pullRequestTitle}` : ''}`
+              : pullRequestTitle || null;
+            const pullRequestUrl = safeHttpsUrl(pullRequest.html_url);
+            const mergeCommitUrl = VALID_SHA.test(mergeSha)
+              ? `https://github.com/${repository}/commit/${mergeSha}`
+              : null;
+            const link = pullRequestUrl || mergeCommitUrl;
+            const fields = {
+              repository: truncateUtf16(repository, 140),
+              source: source ? truncateUtf16(source, 200) : null,
+              destination: truncateUtf16(destination, 50),
+              responsible: responsible ? truncateUtf16(responsible, 150) : null,
+              pullRequest: pullRequestLabel ? truncateUtf16(pullRequestLabel, 300) : null,
+              link,
+              linkLabel: link ? (pullRequestUrl ? 'Ver Pull Request' : 'Ver commit de merge') : null,
+              summary: pullRequest.body,
+            };
+            const message = buildProductionMessageWithinLimit(fields);
+            const reference = VALID_SHA.test(mergeSha)
+              ? mergeSha
+              : `pull-request-${number}`;
+            const idempotencyKey = productionIdempotencyKeyFor(
+              repository,
+              destination,
+              reference,
+            );
+            const { url, token } = requireWebhookConfig();
+
+            console.log(
+              `Notificando integração do Pull Request ${number ? `#${number}` : reference} em ${destination}...`,
+            );
+            const result = await sendWithRetry(url, token, { message }, idempotencyKey);
+
+            if (result.ok) {
+              console.log(`Integração em ${destination} notificada com sucesso (HTTP ${result.status}).`);
+              return;
+            }
+
+            console.error(`Falha ao notificar a integração em ${destination}: ${describeFailure(result)}`);
+            if (result.fatal) {
+              console.error('Erro de configuração ou integração do webhook; interrompendo.');
+            }
+            process.exitCode = 1;
+          }
+
+          async function handlePush(event) {
+            const repository = normalizeSingleLine(event.repository?.full_name);
+            const branch = cleanBranchName(event.ref);
             const before = normalizeSingleLine(event.before);
             const after = normalizeSingleLine(event.after);
             const commits = Array.isArray(event.commits) ? event.commits : [];
@@ -371,9 +599,11 @@ jobs:
               return;
             }
 
-            const { url, token } = requireWebhookConfig();
+            const isMain = branch.toLowerCase() === 'main';
+            const pusher = normalizeSingleLine(event.pusher?.name);
             const notSent = [];
-            const validCommits = [];
+            const normalCommits = [];
+            const productionMerges = [];
 
             for (let index = 0; index < commits.length; index += 1) {
               const commit = commits[index] ?? {};
@@ -390,15 +620,62 @@ jobs:
                 continue;
               }
 
-              validCommits.push({
+              const { title } = splitCommitMessage(commit.message);
+              const merge = parseMergeInfo(title);
+              const squashNumber = merge ? null : squashPullRequestNumber(title);
+              const author = normalizeSingleLine(commit.author?.name) || 'Não informado';
+              const commitData = {
                 sha,
                 rawMessage: commit.message,
-                author: normalizeSingleLine(commit.author?.name) || 'Não informado',
+                author,
+                shortSha: sha.slice(0, 7),
+                date: formatDate(commit.timestamp ?? commit.author?.date),
                 commitUrl: `https://github.com/${repository}/commit/${sha}`,
-              });
+              };
+
+              if (
+                isMain &&
+                merge?.kind === 'branch' &&
+                merge.source &&
+                merge.source.toLowerCase() !== 'main' &&
+                (!merge.destination || merge.destination.toLowerCase() === 'main')
+              ) {
+                const responsible = author !== 'Não informado' ? author : pusher;
+                productionMerges.push({
+                  ...commitData,
+                  source: merge.source,
+                  destination: merge.destination || 'main',
+                  responsible,
+                });
+                console.log(
+                  `${position} Merge de ${merge.source} em ${branch} identificado; notificação de produção separada.`,
+                );
+                continue;
+              }
+
+              if (merge?.kind === 'pull_request') {
+                console.log(
+                  `${position} Merge automático do Pull Request #${merge.number} ignorado como commit comum; a notificação de produção é gerada pelo evento pull_request.`,
+                );
+                continue;
+              }
+
+              if (isMain && squashNumber) {
+                console.log(
+                  `${position} Commit de squash do Pull Request #${squashNumber} ignorado como commit comum; a notificação de produção é gerada pelo evento pull_request.`,
+                );
+                continue;
+              }
+
+              if (merge) {
+                console.log(`${position} Commit automático de merge ignorado como commit comum.`);
+                continue;
+              }
+
+              normalCommits.push(commitData);
             }
 
-            if (validCommits.length === 0) {
+            if (normalCommits.length === 0 && productionMerges.length === 0) {
               console.log('Nenhum commit novo válido para notificar.');
               if (notSent.length > 0) {
                 console.error(`${notSent.length} commit(s) não notificado(s): ${notSent.join(', ')}`);
@@ -407,37 +684,85 @@ jobs:
               return;
             }
 
-            const authors = [...new Set(validCommits.map((commit) => commit.author))];
-            const compareUrl =
-              validCommits.length > 1 && VALID_SHA.test(before) && VALID_SHA.test(after)
-                ? `https://github.com/${repository}/compare/${before}...${after}`
-                : validCommits[validCommits.length - 1].commitUrl;
-            const fields = {
-              branch: truncateUtf16(branch, 200),
-              authors: truncateUtf16(authors.join(', '), 200),
-              changeUrl: compareUrl,
-            };
-            const message = buildMessageWithinLimit(fields, validCommits);
-            const idempotencyKey = idempotencyKeyFor(
-              repository,
-              branch,
-              validCommits.map((commit) => commit.sha).join(','),
-            );
+            const { url, token } = requireWebhookConfig();
+            const summary = normalCommits
+              .map((commit) => splitCommitMessage(commit.rawMessage).title)
+              .filter(Boolean)
+              .join('\n');
 
-            console.log(
-              `Notificando ${validCommits.length} commit(s) em ${fields.branch}...`,
-            );
-            const result = await sendWithRetry(url, token, { message }, idempotencyKey);
-
-            if (result.ok) {
-              console.log(
-                `${validCommits.length} commit(s) notificado(s) com sucesso (HTTP ${result.status}).`,
+            for (const merge of productionMerges) {
+              const fields = {
+                repository: truncateUtf16(repository, 140),
+                source: truncateUtf16(merge.source, 200),
+                destination: truncateUtf16(merge.destination, 50),
+                responsible: merge.responsible
+                  ? truncateUtf16(merge.responsible, 150)
+                  : null,
+                pullRequest: null,
+                link: merge.commitUrl,
+                linkLabel: 'Ver commit de merge',
+                summary,
+              };
+              const message = buildProductionMessageWithinLimit(fields);
+              const idempotencyKey = productionIdempotencyKeyFor(
+                repository,
+                merge.destination,
+                merge.sha,
               );
-            } else {
-              notSent.push(...validCommits.map((commit) => commit.sha));
-              console.error(`Falha ao notificar o push: ${describeFailure(result)}`);
-              if (result.fatal) {
-                console.error('Erro de configuração ou integração do webhook; interrompendo.');
+
+              console.log(
+                `Notificando merge de ${merge.source} em ${merge.destination} (${merge.shortSha})...`,
+              );
+              const result = await sendWithRetry(url, token, { message }, idempotencyKey);
+
+              if (result.ok) {
+                console.log(
+                  `Merge de ${merge.source} em ${merge.destination} notificado com sucesso (HTTP ${result.status}).`,
+                );
+              } else {
+                notSent.push(merge.sha);
+                console.error(
+                  `Falha ao notificar o merge de ${merge.source} em ${merge.destination}: ${describeFailure(result)}`,
+                );
+                if (result.fatal) {
+                  console.error('Erro de configuração ou integração do webhook; interrompendo.');
+                }
+              }
+            }
+
+            if (normalCommits.length > 0) {
+              const authors = [...new Set(normalCommits.map((commit) => commit.author))];
+              const compareUrl =
+                normalCommits.length > 1 && VALID_SHA.test(before) && VALID_SHA.test(after)
+                  ? `https://github.com/${repository}/compare/${before}...${after}`
+                  : normalCommits[normalCommits.length - 1].commitUrl;
+              const fields = {
+                branch: truncateUtf16(branch, 200),
+                authors: truncateUtf16(authors.join(', '), 200),
+                changeUrl: compareUrl,
+              };
+              const message = buildCommitMessageWithinLimit(fields, normalCommits);
+              const idempotencyKey = idempotencyKeyFor(
+                repository,
+                branch,
+                normalCommits.map((commit) => commit.sha).join(','),
+              );
+
+              console.log(
+                `Notificando ${normalCommits.length} commit(s) em ${fields.branch}...`,
+              );
+              const result = await sendWithRetry(url, token, { message }, idempotencyKey);
+
+              if (result.ok) {
+                console.log(
+                  `${normalCommits.length} commit(s) notificado(s) com sucesso (HTTP ${result.status}).`,
+                );
+              } else {
+                notSent.push(...normalCommits.map((commit) => commit.sha));
+                console.error(`Falha ao notificar o push: ${describeFailure(result)}`);
+                if (result.fatal) {
+                  console.error('Erro de configuração ou integração do webhook; interrompendo.');
+                }
               }
             }
 
@@ -445,6 +770,28 @@ jobs:
               console.error(`${notSent.length} commit(s) não notificado(s): ${notSent.join(', ')}`);
               process.exitCode = 1;
             }
+          }
+
+          async function main() {
+            if (!process.env.GITHUB_EVENT_PATH) {
+              throw new Error('GITHUB_EVENT_PATH não foi informado.');
+            }
+
+            const event = JSON.parse(
+              fs.readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'),
+            );
+            const eventName = normalizeSingleLine(process.env.GITHUB_EVENT_NAME) || 'push';
+
+            if (eventName === 'pull_request') {
+              await handlePullRequest(event);
+              return;
+            }
+            if (eventName !== 'push') {
+              console.log(`Evento ${eventName} ignorado.`);
+              return;
+            }
+
+            await handlePush(event);
           }
 
           main().catch((error) => {

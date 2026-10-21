@@ -6,6 +6,7 @@ function makeService(): MediaProcessingService {
     MEDIA_IMAGE_MAX_DIMENSION: 1600,
     MEDIA_IMAGE_QUALITY: 80,
     MEDIA_THUMBNAIL_DIMENSION: 256,
+    AVATAR_DIMENSION: 512,
   };
   const config = { get: (key: string) => values[key] };
   return new MediaProcessingService(config as never);
@@ -46,5 +47,23 @@ describe('MediaProcessingService', () => {
   it('rejects non-image buffers', async () => {
     const service = makeService();
     expect(await service.isImage(Buffer.from('not an image'))).toBe(false);
+    expect(await service.detectImageFormat(Buffer.from('not an image'))).toBeNull();
+  });
+
+  it('detects the real format and creates a square avatar', async () => {
+    const service = makeService();
+    const input = await sharp({
+      create: { width: 1200, height: 800, channels: 3, background: '#22c55e' },
+    })
+      .webp()
+      .toBuffer();
+
+    expect(await service.detectImageFormat(input)).toBe('webp');
+
+    const avatar = await service.optimizeAvatar(input);
+
+    expect(avatar.mimeType).toBe('image/jpeg');
+    expect(avatar.width).toBe(512);
+    expect(avatar.height).toBe(512);
   });
 });

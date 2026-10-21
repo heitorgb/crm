@@ -124,10 +124,13 @@ instâncias WhatsApp (migration `20261020140000_tenant_whatsapp_instance_limit`)
 | `passwordHash` | `text`      | hash Argon2id; nunca a senha |
 | `name`         | `text`      |                         |
 | `active`       | `boolean`   | default `true`; usuário inativo perde acesso |
+| `avatarStorageKey` | `text?` | chave da foto no `StorageService` (migration `20261021020000_user_avatar`) |
+| `avatarUpdatedAt` | `timestamp?` | versão usada no cache busting da URL do avatar |
 | `createdAt`    | `timestamp` |                         |
 | `updatedAt`    | `timestamp` |                         |
 
-`User` é global: uma pessoa pode pertencer a vários tenants.
+`User` é global: uma pessoa pode pertencer a vários tenants. A foto de perfil também é global
+(uma por pessoa), mas o endpoint de leitura valida a membership do tenant atual.
 
 ### `TenantUser` (membership)
 
@@ -165,6 +168,21 @@ Constraints e índices:
 
 Índices: `UNIQUE (tokenHash)`, `userId`, `familyId`. Rotação/reuso detalhados em
 [`authentication.md`](./authentication.md).
+
+### `PasswordResetToken`
+
+| Campo       | Tipo          | Observações                                      |
+| ----------- | ------------- | ------------------------------------------------ |
+| `id`        | `uuid` PK     |                                                  |
+| `userId`    | `uuid` FK     | `ON DELETE CASCADE`                              |
+| `tokenHash` | `text` UNIQUE | SHA-256 do token opaco (nunca o token puro)      |
+| `expiresAt` | `timestamp`   | validade de 30 minutos                           |
+| `usedAt`    | `timestamp?`  | preenchido no uso; token não pode ser reutilizado |
+| `createdAt` | `timestamp`   |                                                  |
+
+Índices: `UNIQUE (tokenHash)`, `userId`, `expiresAt`. Não possui `tenantId` porque a identidade de
+login (`User.email`) é global; o token pertence ao usuário e não cruza contas. Migration
+`20261021030000_password_reset_tokens`. Ver [`authentication.md`](./authentication.md).
 
 ## Retenção e sensibilidade (LGPD — planejado)
 

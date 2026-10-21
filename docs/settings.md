@@ -1,7 +1,7 @@
 # Perfil e configurações — OrderUp CRM
 
 > Status: **Implementado**. Telas de **Meu perfil** (`/perfil`) e **Configurações** (`/configuracoes`)
-> com organização, equipe, aparência, atendimento, notificações e WhatsApp.
+> com organização, equipe, aparência, atendimento, notificações, WhatsApp, menu personalizado e IA.
 
 Complementa [`authentication.md`](./authentication.md) e [`multi-tenancy.md`](./multi-tenancy.md).
 
@@ -9,6 +9,13 @@ Complementa [`authentication.md`](./authentication.md) e [`multi-tenancy.md`](./
 
 - **Dados pessoais**: nome editável (`PATCH /api/auth/me`); e-mail de login **não** editável; papel e
   organização atuais em leitura.
+- **Foto de perfil**: avatar circular com fallback de iniciais. Seleção de JPEG/PNG/WebP (até 5 MB),
+  prévia antes de confirmar, envio (`POST /api/auth/me/avatar`, multipart), substituição e remoção
+  (`DELETE /api/auth/me/avatar`). O backend valida o conteúdo real com `sharp`, recorta em quadrado,
+  redimensiona para `AVATAR_DIMENSION` (padrão 512 px), reencoda em JPEG e grava no storage. A URL
+  pública (`/api/members/:membershipId/avatar?v=...`) é autenticada e escopada pelo tenant; o
+  `?v=` funciona como cache busting. A troca atualiza o `auth-store` e aparece imediatamente no
+  header, menu da conta, perfil e equipe, sem novo login.
 - **Senha**: senha atual + nova + confirmação (`POST /api/auth/change-password`). Ao trocar, os
   refresh tokens das **outras sessões** são revogados (`RefreshTokenService.revokeAllForUser`),
   mantendo a sessão atual (cookie `orderup_refresh`). Senha atual incorreta → `INVALID_CURRENT_PASSWORD`
@@ -17,8 +24,8 @@ Complementa [`authentication.md`](./authentication.md) e [`multi-tenancy.md`](./
 ## Configurações — `/configuracoes` (abas)
 
 A aba ativa é sincronizada com o parâmetro `?tab=` da URL (`organization`, `team`, `appearance`,
-`attendance`, `notifications`, `whatsapp`, `menu`); sem parâmetro, abre em **Organização**. A rota antiga
-`/atendimento/whatsapp` redireciona para `/configuracoes?tab=whatsapp`.
+`attendance`, `notifications`, `whatsapp`, `menu`, `ai`); sem parâmetro, abre em **Organização**. A rota
+antiga `/atendimento/whatsapp` redireciona para `/configuracoes?tab=whatsapp`.
 
 | Aba          | Endpoints                                     | Papéis        |
 | ------------ | --------------------------------------------- | ------------- |
@@ -29,6 +36,7 @@ A aba ativa é sincronizada com o parâmetro `?tab=` da URL (`organization`, `te
 | Notificações | (frontend) contador de não lidas e som        | todos         |
 | WhatsApp     | `GET/POST/PATCH/DELETE /api/whatsapp/instances` + `connect`/`disconnect`/`status`/`webhook` | todos |
 | Menu Personalizado | `GET/PUT /api/custom-menu`, `GET /api/custom-menu/navigation` + CRUD de grupos/botões | leitura: todos; escrita: `OWNER`, `ADMIN` |
+| IA           | `GET /api/ai/catalog`, `GET/PUT /api/ai/settings`, `POST /api/ai/test`, `POST /api/ai/formalize` | leitura: todos; escrita/teste: `OWNER`, `ADMIN`; formalização: todos |
 
 ### Organização
 
@@ -55,6 +63,11 @@ Seletor de tema reutilizando o `theme-store` (o mesmo do header) e seletor de **
 lateral** no mobile (`Esquerda` ou `Direita`), persistido em `localStorage` (`orderup-ui`) com padrão
 `left`. A posição é aplicada somente ao drawer mobile; o menu fixo do desktop permanece à esquerda.
 Sem persistência no backend.
+
+O estado de expansão de cada grupo do menu lateral também é persistido em `orderup-ui`
+(`expandedNavGroups`), usando identificadores estáveis por grupo. Grupos sem preferência salva
+iniciam minimizados; a expansão é independente entre grupos e não depende da abertura do drawer
+mobile nem do recolhimento visual do menu.
 
 ### Atendimento
 
@@ -85,6 +98,13 @@ tem nome, ícone opcional, status e ordem; cada botão tem nome, URL `http(s)`, 
 e ordem. Só grupos ativos com ao menos um botão ativo aparecem. Os links abrem em nova aba com
 `noopener`/`noreferrer`, sem criar rotas internas. O backend valida as URLs e escopa todas as
 operações pelo tenant do contexto. Fluxo completo em [`custom-menu.md`](./custom-menu.md).
+
+### IA
+
+Configuração de provedor, modelo, credenciais e nível de formalidade para o botão de IA no
+compositor do atendimento. A credencial é criptografada e nunca retornada pela API. O botão de
+formalização só aparece quando a configuração do tenant está ativa e completa. Fluxo completo,
+provedores, modelos e endpoints em [`ai.md`](./ai.md).
 
 ### WhatsApp
 
@@ -117,4 +137,3 @@ Disponível apenas para administradores da plataforma (`isPlatformAdmin`), em
 ## Fora de escopo
 
 - Alteração de e-mail, convite por token/e-mail e recuperação de senha (sem infra de e-mail).
-- Avatar/upload de imagem de perfil.

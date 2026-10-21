@@ -1,16 +1,24 @@
 import { randomUUID } from 'node:crypto';
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import type { Role } from '@prisma/client';
 import type { TenantContext } from '../../common/tenant-context/tenant-context.types.js';
 import { isPlatformAdminEmail } from '../../common/security/platform-admin.js';
+import { userAvatarUrl } from '../../common/user-avatar.js';
 import type { Env } from '../../config/env.validation.js';
+import {
+  ALLOWED_AVATAR_FORMATS,
+  MediaProcessingService,
+} from '../../infrastructure/media/media-processing.service.js';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service.js';
+import { STORAGE, type StorageService } from '../../infrastructure/storage/storage.types.js';
 import { TenantAccessDeniedError } from '../memberships/memberships.errors.js';
 import { MembershipsService } from '../memberships/memberships.service.js';
 import type { UserMembership } from '../memberships/memberships.service.js';
 import {
+  AvatarTooLargeError,
+  InvalidAvatarError,
   InvalidCredentialsError,
   InvalidCurrentPasswordError,
   InvalidRefreshTokenError,
@@ -29,6 +37,8 @@ interface LoadedUser {
   email: string;
   active: boolean;
   passwordHash: string;
+  avatarStorageKey: string | null;
+  avatarUpdatedAt: Date | null;
 }
 
 export interface CurrentSession {
@@ -51,6 +61,8 @@ export class AuthService {
     private readonly jwt: JwtService,
     private readonly config: ConfigService<Env, true>,
     private readonly memberships: MembershipsService,
+    private readonly media: MediaProcessingService,
+    @Inject(STORAGE) private readonly storage: StorageService,
   ) {}
 
   async login(dto: LoginDto, meta: RequestMetadata): Promise<IssuedSession> {
@@ -116,7 +128,7 @@ export class AuthService {
     const allowlist = this.config.get('PLATFORM_ADMIN_EMAILS') ?? [];
 
     return {
-      user: toPublicUser(user),
+      user: toPublicUser(user, context.membershipId),
       tenant: { id: context.tenantId, name: current?.tenantName ?? '' },
       role: current?.role ?? (context.role as Role),
       membershipId: context.membershipId,
@@ -163,7 +175,65 @@ export class AuthService {
       data: { name: dto.name.trim() },
     });
 
-    return toPublicUser(updated);
+    return toPublicUser(updated, context.membershipId);
+  }
+
+  async updateAvatar(context: TenantContext, input: Buffer): Promise<PublicUser> {
+    const maxBytes = this.config.get('AVATAR_MAX_BYTES');
+
+    if (input.length > maxBytes) {
+      throw new AvatarTooLargeError();
+    }
+
+    const format = await this.media.detectImageFormat(input);
+    const allowedFormats: readonly string[] = ALLOWED_AVATAR_FORMATS;
+    if (!format || !allowedFormats.includes(format)) {
+      throw new InvalidAvatarError();
+    }
+
+    const user = await this.prisma.user.findUnique({ where: { id: context.userId } });
+    if (!user || !user.active) {
+      throw new UserInactiveError();
+    }
+
+    const optimized = await this.media.optimizeAvatar(input);
+    const storageKey = `users/${user.id}/avatar/${randomUUID()}.${optimized.extension}`;
+    await this.storage.put(storageKey, optimized.buffer);
+
+    let updated: LoadedUser;
+    try {
+      updated = await this.prisma.user.update({
+        where: { id: user.id },
+        data: { avatarStorageKey: storageKey, avatarUpdatedAt: new Date() },
+      });
+    } catch (error) {
+      await this.storage.delete(storageKey).catch(() => undefined);
+      throw error;
+    }
+
+    if (user.avatarStorageKey && user.avatarStorageKey !== storageKey) {
+      await this.storage.delete(user.avatarStorageKey).catch(() => undefined);
+    }
+
+    return toPublicUser(updated, context.membershipId);
+  }
+
+  async removeAvatar(context: TenantContext): Promise<PublicUser> {
+    const user = await this.prisma.user.findUnique({ where: { id: context.userId } });
+    if (!user || !user.active) {
+      throw new UserInactiveError();
+    }
+
+    const updated = await this.prisma.user.update({
+      where: { id: user.id },
+      data: { avatarStorageKey: null, avatarUpdatedAt: null },
+    });
+
+    if (user.avatarStorageKey) {
+      await this.storage.delete(user.avatarStorageKey).catch(() => undefined);
+    }
+
+    return toPublicUser(updated, context.membershipId);
   }
 
   async changePassword(
@@ -244,7 +314,7 @@ export class AuthService {
     return {
       accessToken,
       expiresIn,
-      user: toPublicUser(user),
+      user: toPublicUser(user, membership.id),
       tenant: { id: membership.tenantId, name: membership.tenantName },
       role: membership.role,
       membershipId: membership.id,
@@ -260,6 +330,11 @@ export class AuthService {
   }
 }
 
-function toPublicUser(user: LoadedUser): PublicUser {
-  return { id: user.id, name: user.name, email: user.email };
+function toPublicUser(user: LoadedUser, membershipId: string): PublicUser {
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    avatarUrl: userAvatarUrl(membershipId, user.avatarUpdatedAt),
+  };
 }

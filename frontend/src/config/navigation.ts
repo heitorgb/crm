@@ -1,14 +1,19 @@
 import {
+  Bell,
   Building2,
   CalendarClock,
   Contact,
   Headset,
   KanbanSquare,
+  Menu,
   MessagesSquare,
+  Palette,
   Receipt,
   Settings,
   Settings2,
   Shield,
+  Smartphone,
+  Sparkles,
   Tags,
   Users,
   Wallet,
@@ -28,6 +33,7 @@ export interface NavItem {
 }
 
 export interface NavGroup {
+  id: string;
   title: string;
   icon: LucideIcon;
   items: NavItem[];
@@ -42,6 +48,7 @@ export function isNavGroup(entry: NavEntry): entry is NavGroup {
 
 export const navigation: NavEntry[] = [
   {
+    id: 'crm',
     title: 'CRM',
     icon: KanbanSquare,
     items: [
@@ -50,6 +57,7 @@ export const navigation: NavEntry[] = [
     ],
   },
   {
+    id: 'atendimento',
     title: 'Atendimento',
     icon: Headset,
     items: [
@@ -62,6 +70,7 @@ export const navigation: NavEntry[] = [
     ],
   },
   {
+    id: 'ferramentas',
     title: 'Ferramentas',
     icon: Wrench,
     items: [
@@ -80,11 +89,13 @@ export const navigation: NavEntry[] = [
     ],
   },
   {
+    id: 'contatos',
     title: 'Contatos',
     icon: Users,
     items: [{ title: 'Contatos', to: '/contatos', icon: Contact, moduleKey: MODULE_KEYS.CONTACTS }],
   },
   {
+    id: 'financeiro',
     title: 'Financeiro',
     icon: Wallet,
     items: [
@@ -97,6 +108,7 @@ export const navigation: NavEntry[] = [
     ],
   },
   {
+    id: 'integracoes',
     title: 'Integrações',
     icon: Webhook,
     items: [
@@ -109,6 +121,7 @@ export const navigation: NavEntry[] = [
     ],
   },
   {
+    id: 'administracao',
     title: 'Administração',
     icon: Shield,
     platformAdminOnly: true,
@@ -119,6 +132,22 @@ export const navigation: NavEntry[] = [
   },
   { title: 'Configurações', to: '/configuracoes', icon: Settings },
 ];
+
+export const settingsNavigation: NavGroup = {
+  id: 'configuracoes',
+  title: 'Configurações',
+  icon: Settings,
+  items: [
+    { title: 'Organização', to: '/configuracoes', icon: Building2 },
+    { title: 'Equipe', to: '/configuracoes?tab=team', icon: Users },
+    { title: 'Aparência', to: '/configuracoes?tab=appearance', icon: Palette },
+    { title: 'Atendimento', to: '/configuracoes?tab=attendance', icon: Headset },
+    { title: 'Notificações', to: '/configuracoes?tab=notifications', icon: Bell },
+    { title: 'WhatsApp', to: '/configuracoes?tab=whatsapp', icon: Smartphone },
+    { title: 'Menu Personalizado', to: '/configuracoes?tab=menu', icon: Menu },
+    { title: 'IA', to: '/configuracoes?tab=ai', icon: Sparkles },
+  ],
+};
 
 /**
  * Builds the visible menu for a user. Entries tied to a `moduleKey` are hidden

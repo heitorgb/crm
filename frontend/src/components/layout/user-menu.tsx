@@ -31,7 +31,11 @@ export function UserMenu() {
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button variant="ghost" className="h-9 gap-2 px-1.5 sm:pr-2.5" aria-label="Menu do usuário">
-          <UserAvatar name={session.user.name} />
+          <UserAvatar
+            name={session.user.name}
+            src={session.user.avatarUrl}
+            authenticated
+          />
           <span className="hidden min-w-0 text-left sm:block">
             <span className="block max-w-[9rem] truncate text-sm font-medium leading-tight">
               {session.user.name}

@@ -2,6 +2,9 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MessageComposer } from './message-composer';
+import { useAiSettings, useFormalizeMessage } from '@/features/ai/queries';
+import { TooltipProvider } from '@/components/ui/tooltip';
+import { ApiError } from '@/lib/api-client';
 import {
   useLinkPreview,
   useSendConversationMedia,
@@ -12,6 +15,11 @@ vi.mock('./queries', () => ({
   useLinkPreview: vi.fn(),
   useSendConversationMessage: vi.fn(),
   useSendConversationMedia: vi.fn(),
+}));
+
+vi.mock('@/features/ai/queries', () => ({
+  useAiSettings: vi.fn(),
+  useFormalizeMessage: vi.fn(),
 }));
 
 vi.mock('./use-audio-recorder', () => ({
@@ -61,10 +69,20 @@ const PREVIEW = {
 };
 
 let sendMessageMutate: ReturnType<typeof vi.fn>;
+let formalizeMutate: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   vi.useFakeTimers();
   sendMessageMutate = vi.fn().mockResolvedValue(undefined);
+  formalizeMutate = vi.fn().mockResolvedValue({ text: 'Texto reformulado.' });
+  vi.mocked(useAiSettings).mockReturnValue({
+    data: { available: false },
+    isPending: false,
+  } as never);
+  vi.mocked(useFormalizeMessage).mockReturnValue({
+    isPending: false,
+    mutateAsync: formalizeMutate,
+  } as never);
   vi.mocked(useLinkPreview).mockReturnValue({
     data: PREVIEW,
     isLoading: false,
@@ -88,7 +106,9 @@ afterEach(() => {
 
 function renderComposer() {
   return render(
-    <MessageComposer conversationId="conversation-1" replyTo={null} onCancelReply={vi.fn()} />,
+    <TooltipProvider>
+      <MessageComposer conversationId="conversation-1" replyTo={null} onCancelReply={vi.fn()} />
+    </TooltipProvider>,
   );
 }
 
@@ -178,6 +198,89 @@ describe('MessageComposer quick replies', () => {
     expect((textarea as HTMLTextAreaElement).value).toBe(
       'Atendemos de segunda a sexta, das 8h às 18h.',
     );
+    expect(sendMessageMutate).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('MessageComposer AI formalization', () => {
+  it('hides the AI button when the tenant has no usable configuration', () => {
+    renderComposer();
+    fireEvent.change(screen.getByPlaceholderText('Mensagem'), {
+      target: { value: 'oi, tudo bem?' },
+    });
+
+    expect(screen.queryByLabelText('Formalizar mensagem com IA')).toBeNull();
+  });
+
+  it('formalizes the full composer text without sending the message', async () => {
+    vi.mocked(useAiSettings).mockReturnValue({
+      data: { available: true },
+      isPending: false,
+    } as never);
+    formalizeMutate.mockResolvedValue({ text: 'Olá, tudo bem?' });
+
+    renderComposer();
+    const textarea = screen.getByPlaceholderText('Mensagem');
+    fireEvent.change(textarea, { target: { value: 'oi, td bem?' } });
+
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText('Formalizar mensagem com IA'));
+    });
+
+    expect(formalizeMutate).toHaveBeenCalledWith('oi, td bem?');
+    expect((textarea as HTMLTextAreaElement).value).toBe('Olá, tudo bem?');
+    expect(sendMessageMutate).not.toHaveBeenCalled();
+  });
+
+  it('restores the exact original text when undoing the formalization', async () => {
+    vi.mocked(useAiSettings).mockReturnValue({
+      data: { available: true },
+      isPending: false,
+    } as never);
+    const original = 'bom dia, preciso de ajuda com o pedido 123';
+    formalizeMutate.mockResolvedValue({
+      text: 'Bom dia! Preciso de ajuda com o pedido 123.',
+    });
+
+    renderComposer();
+    const textarea = screen.getByPlaceholderText('Mensagem');
+    fireEvent.change(textarea, { target: { value: original } });
+
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText('Formalizar mensagem com IA'));
+    });
+
+    expect((textarea as HTMLTextAreaElement).value).toBe(
+      'Bom dia! Preciso de ajuda com o pedido 123.',
+    );
+
+    fireEvent.click(screen.getByLabelText('Desfazer reformulação'));
+
+    expect((textarea as HTMLTextAreaElement).value).toBe(original);
+    expect(sendMessageMutate).not.toHaveBeenCalled();
+  });
+
+  it('keeps the original text and shows a friendly error when formalization fails', async () => {
+    vi.mocked(useAiSettings).mockReturnValue({
+      data: { available: true },
+      isPending: false,
+    } as never);
+    formalizeMutate.mockRejectedValue(
+      new ApiError(504, 'AI_PROVIDER_TIMEOUT', 'O provedor de IA demorou demais para responder.'),
+    );
+
+    renderComposer();
+    const textarea = screen.getByPlaceholderText('Mensagem');
+    const original = 'mensagem original que deve permanecer';
+    fireEvent.change(textarea, { target: { value: original } });
+
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText('Formalizar mensagem com IA'));
+    });
+
+    expect(screen.getByText('O provedor de IA demorou demais para responder.')).toBeTruthy();
+    expect((textarea as HTMLTextAreaElement).value).toBe(original);
     expect(sendMessageMutate).not.toHaveBeenCalled();
   });
 });

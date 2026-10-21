@@ -1,8 +1,9 @@
-import { createElement, useState, type ReactNode } from 'react';
-import { NavLink, useLocation, useMatch } from 'react-router-dom';
+import { createElement, type ReactNode } from 'react';
+import { NavLink, useLocation } from 'react-router-dom';
 import { ChevronDown, ExternalLink, Folder, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import {
   isNavGroup,
+  settingsNavigation,
   visibleNavigation,
   type NavEntry,
   type NavGroup,
@@ -24,6 +25,7 @@ interface SidebarProps {
   className?: string;
   footer?: ReactNode;
   showCollapseToggle?: boolean;
+  settingsAsGroup?: boolean;
 }
 
 export function Sidebar({
@@ -32,6 +34,7 @@ export function Sidebar({
   className,
   footer,
   showCollapseToggle = true,
+  settingsAsGroup = false,
 }: SidebarProps) {
   const toggleSidebar = useUiStore((state) => state.toggleSidebar);
   const platformAdmin = useAuthStore((state) => state.platformAdmin);
@@ -52,7 +55,14 @@ export function Sidebar({
 
   const renderEntry = (entry: NavEntry) =>
     isNavGroup(entry) ? (
-      <SidebarGroup key={`group-${entry.title}`} group={entry} collapsed={collapsed} onNavigate={onNavigate} />
+      <SidebarGroup key={`group-${entry.id}`} group={entry} collapsed={collapsed} onNavigate={onNavigate} />
+    ) : settingsAsGroup && entry.to === '/configuracoes' ? (
+      <SidebarGroup
+        key="group-configuracoes"
+        group={settingsNavigation}
+        collapsed={collapsed}
+        onNavigate={onNavigate}
+      />
     ) : (
       <SidebarLink key={entry.to} item={entry} collapsed={collapsed} onNavigate={onNavigate} />
     );
@@ -128,7 +138,9 @@ function SidebarCustomGroup({
   collapsed: boolean;
   onNavigate?: () => void;
 }) {
-  const [open, setOpen] = useState(true);
+  const groupId = `custom:${group.id}`;
+  const open = useUiStore((state) => state.expandedNavGroups[groupId] ?? false);
+  const setNavGroupExpanded = useUiStore((state) => state.setNavGroupExpanded);
 
   if (collapsed) {
     return (
@@ -149,7 +161,7 @@ function SidebarCustomGroup({
     <div>
       <button
         type="button"
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => setNavGroupExpanded(groupId, !open)}
         className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground transition-colors hover:text-foreground"
         aria-expanded={open}
       >
@@ -228,9 +240,12 @@ function SidebarGroup({
   collapsed: boolean;
   onNavigate?: () => void;
 }) {
-  const location = useLocation();
-  const hasActiveChild = group.items.some((item) => location.pathname.startsWith(item.to));
-  const [open, setOpen] = useState(true);
+  const { pathname } = useLocation();
+  const hasActiveChild = group.items.some((item) =>
+    pathname.startsWith(item.to.split('?')[0]),
+  );
+  const open = useUiStore((state) => state.expandedNavGroups[group.id] ?? false);
+  const setNavGroupExpanded = useUiStore((state) => state.setNavGroupExpanded);
 
   if (collapsed) {
     return (
@@ -246,7 +261,7 @@ function SidebarGroup({
     <div>
       <button
         type="button"
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => setNavGroupExpanded(group.id, !open)}
         className={cn(
           'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs font-semibold uppercase tracking-wide transition-colors',
           hasActiveChild ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
@@ -279,7 +294,8 @@ function SidebarLink({
   collapsed?: boolean;
   onNavigate?: () => void;
 }) {
-  const isActive = useMatch({ path: item.to, end: true }) !== null;
+  const { pathname, search } = useLocation();
+  const isActive = isNavItemActive(item, pathname, search);
 
   const link = (
     <NavLink
@@ -310,4 +326,23 @@ function SidebarLink({
       <TooltipContent side="right">{item.title}</TooltipContent>
     </Tooltip>
   );
+}
+
+function isNavItemActive(item: NavItem, pathname: string, search: string): boolean {
+  const [itemPath, itemSearch = ''] = item.to.split('?');
+  if (pathname !== itemPath) {
+    return false;
+  }
+
+  const desiredTab = new URLSearchParams(itemSearch).get('tab');
+  if (!desiredTab && itemPath !== '/configuracoes') {
+    return true;
+  }
+
+  const currentTab = new URLSearchParams(search).get('tab');
+  if (desiredTab) {
+    return currentTab === desiredTab;
+  }
+
+  return currentTab === null || currentTab === 'organization';
 }

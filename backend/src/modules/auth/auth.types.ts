@@ -33,6 +33,7 @@ export interface PublicUser {
   id: string;
   name: string;
   email: string;
+  avatarUrl: string | null;
 }
 
 export function extractBearerToken(header: string | undefined): string | undefined {

@@ -39,6 +39,10 @@ Login real usa `POST /api/auth/login` (access token em memória/cookie HttpOnly 
 no CRM é exclusivamente pela autenticação real com e-mail e senha; não há sessão fictícia nem modo
 de demonstração na tela de login.
 
+Recuperação de senha: o link **Esqueci minha senha** leva a `/esqueci-senha` (solicitação) e o
+e-mail aponta para `/redefinir-senha?token=...`. A página de redefinição remove o token da URL após
+o sucesso, não usa storage persistente e define `Referrer-Policy: no-referrer` durante a exibição.
+
 ## Identidade visual (tokens)
 
 Extraídos de https://orderup.com.br/ (CSS oficial) e adaptados para light/dark. O padrão é **Light**.
@@ -143,7 +147,7 @@ frontend/
   organizações), `/admin/tenants/:id` (gerenciar membros, papéis e ativos) e `/admin/settings`
   (configurações globais, incluindo o preview de links nas mensagens). Ver
   [`tenant-provisioning.md`](./tenant-provisioning.md).
-- Perfil e configurações: `/perfil` (dados pessoais + senha) e `/configuracoes` (abas Organização,
+- Perfil e configurações: `/perfil` (dados pessoais, foto de perfil + senha) e `/configuracoes` (abas Organização,
   Equipe, Aparência, Atendimento, Notificações, WhatsApp e Menu Personalizado). A aba ativa é
   sincronizada com o parâmetro `?tab=` da URL. Ver [`settings.md`](./settings.md) e
   [`custom-menu.md`](./custom-menu.md).

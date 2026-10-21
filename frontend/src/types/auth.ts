@@ -4,6 +4,7 @@ export interface AuthUser {
   id: string;
   name: string;
   email: string;
+  avatarUrl: string | null;
 }
 
 export interface AuthTenant {
@@ -55,4 +56,17 @@ export interface UpdateProfileInput {
 export interface ChangePasswordInput {
   currentPassword: string;
   newPassword: string;
+}
+
+export interface ForgotPasswordInput {
+  email: string;
+}
+
+export interface ResetPasswordInput {
+  token: string;
+  newPassword: string;
+}
+
+export interface ForgotPasswordResponse {
+  message: string;
 }

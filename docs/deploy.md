@@ -65,7 +65,13 @@ Configure em **Settings → Secrets and variables → Actions**:
    JWT_ACCESS_SECRET=<32+ chars>
    CREDENTIALS_ENCRYPTION_KEY=<32+ chars>
    PUBLIC_API_URL=https://<seu-dominio>   # alcançável PELA Evolution API
+   RESEND_API_KEY=<chave do Resend>
+   RESEND_FROM_EMAIL=OrderUp CRM <noreply@mail.<seu-dominio>>
+   APP_URL=https://<url-publica-do-frontend>   # usada no link de recuperação de senha
    ```
+
+   O domínio de `RESEND_FROM_EMAIL` precisa estar verificado no Resend. Sem essas três variáveis, a
+   recuperação de senha responde `503 EMAIL_NOT_CONFIGURED` e nenhum e-mail é enviado.
 
    `DATABASE_URL` e `REDIS_URL` são sobrescritos pelo compose (`postgres`/`redis` internos) — não
    precisa ajustá-los para o deploy.

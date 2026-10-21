@@ -173,6 +173,32 @@ describe('validateEnv', () => {
     expect(validateEnv({ ...baseEnv, RATE_LIMIT_ENABLED: 'true' }).RATE_LIMIT_ENABLED).toBe(true);
   });
 
+  it('parses the optional Resend and APP_URL configuration', () => {
+    const env = validateEnv({
+      ...baseEnv,
+      RESEND_API_KEY: 're_test',
+      RESEND_FROM_EMAIL: 'OrderUp CRM <noreply@mail.crm.orderup.com.br>',
+      APP_URL: 'https://crm.orderup.com.br',
+    });
+
+    expect(env.RESEND_API_KEY).toBe('re_test');
+    expect(env.RESEND_FROM_EMAIL).toBe('OrderUp CRM <noreply@mail.crm.orderup.com.br>');
+    expect(env.APP_URL).toBe('https://crm.orderup.com.br');
+  });
+
+  it('treats empty e-mail configuration as absent', () => {
+    const env = validateEnv({
+      ...baseEnv,
+      RESEND_API_KEY: '',
+      RESEND_FROM_EMAIL: '',
+      APP_URL: '',
+    });
+
+    expect(env.RESEND_API_KEY).toBeUndefined();
+    expect(env.RESEND_FROM_EMAIL).toBeUndefined();
+    expect(env.APP_URL).toBeUndefined();
+  });
+
   it('parses PLATFORM_ADMIN_EMAILS into a normalized list', () => {
     expect(validateEnv({ ...baseEnv }).PLATFORM_ADMIN_EMAILS).toEqual([]);
     expect(

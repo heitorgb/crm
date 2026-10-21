@@ -25,6 +25,8 @@ User → POST /auth/login (email, senha, tenantId opcional)
 | PATCH  | `/api/auth/me`         | não     | Atualiza o **nome** do usuário.                    |
 | POST   | `/api/auth/change-password` | não | Troca a senha (valida a atual) e revoga as outras sessões. |
 | POST   | `/api/auth/switch-tenant` | não  | Troca o tenant ativo, validando membership.        |
+| POST   | `/api/auth/forgot-password` | sim | Solicita link de recuperação; resposta sempre genérica. |
+| POST   | `/api/auth/reset-password` | sim | Consome o token e redefine a senha. |
 
 O `refreshToken` **não** vai no corpo das respostas; trafega em cookie HttpOnly. Clientes de API
 podem enviar `{ "refreshToken": "..." }` no corpo de `refresh`/`logout` (fallback).
@@ -101,6 +103,45 @@ Claims mínimas:
 Permissões **nunca** são derivadas do frontend. Editar contexto do bot exige membership válida no
 mesmo tenant; trocar de tenant troca perfil, sessões e preferências.
 
+## Recuperação de senha
+
+Fluxo independente dos tokens de autenticação normais:
+
+```text
+POST /auth/forgot-password { email }
+  → normaliza o e-mail e busca o User global pelo e-mail único
+  → invalida tokens de recuperação pendentes do usuário
+  → gera token opaco (32 bytes) e persiste somente SHA-256
+  → envia link {APP_URL}/redefinir-senha?token=... pelo Resend (validade 30 min)
+  → responde sempre: "Se existir uma conta associada a esse e-mail, ..."
+
+POST /auth/reset-password { token, newPassword }
+  → busca pelo hash do token, valida expiração/uso/usuário ativo
+  → em transação: consome o token, atualiza o hash Argon2id e revoga os refresh tokens do usuário
+  → responde 204 (sem autenticar automaticamente)
+```
+
+- Respostas de solicitação são genéricas para e-mails existentes, inexistentes e inativos
+  (anti-enumeração).
+- Tokens são de uso único; solicitar um novo invalida os anteriores. O consumo concorrente é
+  protegido por `updateMany` condicional dentro da transação.
+- A senha é global ao `User` (e-mail único), então o reset não recebe `tenantId` e não permite
+  redefinir a conta de outro usuário/organização. As sessões de todos os tenants daquele usuário
+  têm os refresh tokens revogados; JWTs de acesso já emitidos expiram no TTL normal.
+- Rate limit: 5 req/min por IP na solicitação, 10 req/min por IP no reset, além de 3 solicitações
+  por e-mail a cada 15 minutos.
+- Falhas do Resend retornam `502 EMAIL_DELIVERY_FAILED` sem detalhes internos. Configuração ausente
+  retorna `503 EMAIL_NOT_CONFIGURED`.
+- O token nunca é logado (o logger remove query string e redige `*.token`).
+
+Variáveis necessárias para o envio:
+
+```text
+RESEND_API_KEY         # chave do Resend (backend)
+RESEND_FROM_EMAIL      # remetente verificado, ex.: OrderUp CRM <noreply@...>
+APP_URL                # URL pública do frontend, usada no link
+```
+
 ## Troca de tenant
 
 - `POST /auth/switch-tenant` recebe `tenantId`, valida membership ativa do usuário autenticado e
@@ -116,6 +157,9 @@ REFRESH_TOKEN_TTL_DAYS   # default 30
 AUTH_COOKIE_SECURE       # default: true em produção, false fora
 AUTH_COOKIE_SAMESITE     # lax | strict | none (default lax)
 AUTH_COOKIE_DOMAIN       # opcional
+RESEND_API_KEY           # opcional no boot; necessário para recuperação de senha
+RESEND_FROM_EMAIL        # remetente verificado no Resend
+APP_URL                  # URL pública do frontend usada no link
 ```
 
 ## Segurança
@@ -128,7 +172,7 @@ AUTH_COOKIE_DOMAIN       # opcional
 
 ## Fora de escopo
 
-- Alteração de e-mail, recuperação de senha, MFA e convites.
+- Alteração de e-mail, MFA e convites.
 - RBAC granular por recurso (apenas roles base + endpoint-level).
-- Rate limiting de autenticação.
+- Rate limiting distribuído (o atual é em memória por instância).
 - Identidade do bot via webhook (entra na fase de bot/WhatsApp).

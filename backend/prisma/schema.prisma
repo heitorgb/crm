@@ -12,6 +12,19 @@ enum Role {
   USER
 }
 
+enum AiProvider {
+  OPENAI
+  DEEPSEEK
+  ANTHROPIC
+  OPENROUTER
+}
+
+enum AiFormality {
+  PROFESSIONAL
+  FORMAL
+  VERY_FORMAL
+}
+
 enum CustomerStatus {
   ACTIVE
   INACTIVE
@@ -181,21 +194,25 @@ model Tenant {
   leads                      Lead[]
   customMenuGroups           CustomMenuGroup[]
   customMenuButtons          CustomMenuButton[]
+  aiSettings                 AiSettings?
 
   @@map("tenants")
 }
 
 model User {
-  id           String   @id @default(uuid()) @db.Uuid
-  email        String   @unique
-  passwordHash String   @map("password_hash")
-  name         String
-  active       Boolean  @default(true)
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
+  id               String    @id @default(uuid()) @db.Uuid
+  email            String    @unique
+  passwordHash     String    @map("password_hash")
+  name             String
+  active           Boolean   @default(true)
+  avatarStorageKey String?   @map("avatar_storage_key")
+  avatarUpdatedAt  DateTime? @map("avatar_updated_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
 
-  memberships   TenantUser[]
-  refreshTokens RefreshToken[]
+  memberships         TenantUser[]
+  refreshTokens       RefreshToken[]
+  passwordResetTokens PasswordResetToken[]
 
   @@map("users")
 }
@@ -237,6 +254,21 @@ model RefreshToken {
   @@index([userId])
   @@index([familyId])
   @@map("refresh_tokens")
+}
+
+model PasswordResetToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("password_reset_tokens")
 }
 
 model Customer {
@@ -961,4 +993,23 @@ model PlatformSettings {
   updatedAt           DateTime @updatedAt @map("updated_at")
 
   @@map("platform_settings")
+}
+
+model AiSettings {
+  id                           String      @id @default(uuid()) @db.Uuid
+  tenantId                     String      @unique @map("tenant_id") @db.Uuid
+  provider                     AiProvider  @default(OPENAI)
+  model                        String
+  formality                    AiFormality @default(PROFESSIONAL)
+  enabled                      Boolean     @default(true)
+  openaiApiKeyEncrypted        String?     @map("openai_api_key_encrypted")
+  deepseekApiKeyEncrypted      String?     @map("deepseek_api_key_encrypted")
+  anthropicApiKeyEncrypted     String?     @map("anthropic_api_key_encrypted")
+  openrouterApiKeyEncrypted    String?     @map("openrouter_api_key_encrypted")
+  createdAt                    DateTime    @default(now()) @map("created_at")
+  updatedAt                    DateTime    @updatedAt @map("updated_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("ai_settings")
 }

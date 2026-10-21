@@ -6,10 +6,12 @@ import type { Role } from '@prisma/client';
 import { AppModule } from '../../src/app.module.js';
 import { createFastifyAdapter } from '../../src/common/http/create-fastify-adapter.js';
 import { registerHttpPlugins } from '../../src/common/http/register-http-plugins.js';
+import { EmailService } from '../../src/infrastructure/email/email.service.js';
 import { PrismaService } from '../../src/infrastructure/prisma/prisma.service.js';
 import { PasswordService } from '../../src/modules/auth/password.service.js';
 import { WebhookImageService } from '../../src/modules/integrations/webhooks/webhook-image.service.js';
 import { EvolutionClient } from '../../src/modules/whatsapp/evolution/evolution.client.js';
+import { AiProviderFactory } from '../../src/modules/ai/ai.providers.js';
 
 export const TEST_PASSWORD = 'correct-horse-battery';
 
@@ -24,6 +26,8 @@ export interface TestApp {
 export interface TestAppOptions {
   evolution?: unknown;
   imageService?: unknown;
+  aiProviderFactory?: unknown;
+  emailService?: unknown;
 }
 
 export async function createTestApp(options: TestAppOptions = {}): Promise<TestApp> {
@@ -35,6 +39,12 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestA
   }
   if (options.imageService) {
     builder.overrideProvider(WebhookImageService).useValue(options.imageService);
+  }
+  if (options.aiProviderFactory) {
+    builder.overrideProvider(AiProviderFactory).useValue(options.aiProviderFactory);
+  }
+  if (options.emailService) {
+    builder.overrideProvider(EmailService).useValue(options.emailService);
   }
 
   const moduleRef = await builder.compile();

@@ -91,7 +91,7 @@ reenfileira falhas vencidas.
 
 ## Frontend
 
-- Rota `/mensagens-agendadas` (Atendimento → Mensagens agendadas), com atalho em Cobranças.
+- Rota `/mensagens-agendadas` (Ferramentas → Mensagens agendadas), com atalho em Cobranças.
 - Listagem mobile-first com filtros por texto/tipo/status, status, próximo envio e quantidade de
   destinatários.
 - Formulário com tipo, título, texto, variáveis, valor opcional, anexo, destinatários com busca,

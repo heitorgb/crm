@@ -58,6 +58,11 @@ const ScheduledMessagesPage = lazy(() =>
     default: module.ScheduledMessagesPage,
   })),
 );
+const QuickRepliesPage = lazy(() =>
+  import('@/features/quick-replies/quick-replies-page').then((module) => ({
+    default: module.QuickRepliesPage,
+  })),
+);
 const WebhooksPage = lazy(() =>
   import('@/features/webhooks/webhooks-page').then((module) => ({ default: module.WebhooksPage })),
 );
@@ -100,6 +105,14 @@ export function AppRoutes() {
             element={
               <ModuleRoute moduleKey={MODULE_KEYS.ATTENDANCE}>
                 <ScheduledMessagesPage />
+              </ModuleRoute>
+            }
+          />
+          <Route
+            path="/respostas-rapidas"
+            element={
+              <ModuleRoute moduleKey={MODULE_KEYS.ATTENDANCE}>
+                <QuickRepliesPage />
               </ModuleRoute>
             }
           />

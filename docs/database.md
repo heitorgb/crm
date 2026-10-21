@@ -49,7 +49,9 @@ Destaques: `Lead` único por `(tenantId, phone)`; `PipelineStage` único por `(p
 ### Atendimento, WhatsApp e digest (Prompt 07)
 
 `WhatsAppInstance`, `Conversation`, `Message`, `MessageAttachment`, `Ticket`,
-`LeadDigestPreference`, `LeadDigestDelivery` e `WebhookEvent` — todas com `tenantId`.
+`LeadDigestPreference`, `LeadDigestDelivery`, `QuickReply` e `WebhookEvent` — todas com `tenantId`.
+`QuickReply` é único por `(tenantId, title)` e guarda modelos de mensagem reutilizáveis no
+atendimento (ver [`quick-replies.md`](./quick-replies.md)).
 Idempotência: `Message` único por `(tenantId, externalMessageId)`, `WebhookEvent` por
 `(provider, externalEventId)` e `LeadDigestDelivery` por `(tenantUserId, periodStart)`.
 Credenciais de instância são criptografadas. Detalhes, retenção e endpoints em

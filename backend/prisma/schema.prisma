@@ -157,6 +157,7 @@ model Tenant {
   customerTags               CustomerTag[]
   conversationTags           ConversationTag[]
   leadTags                   LeadTag[]
+  quickReplies               QuickReply[]
   whatsappInstances          WhatsAppInstance[]
   whatsappAvatars            WhatsAppAvatar[]
   conversations              Conversation[]
@@ -371,6 +372,21 @@ model Tag {
   @@unique([tenantId, name])
   @@index([tenantId, createdAt])
   @@map("tags")
+}
+
+model QuickReply {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  title     String
+  content   String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, title])
+  @@index([tenantId, createdAt])
+  @@map("quick_replies")
 }
 
 model LeadTag {

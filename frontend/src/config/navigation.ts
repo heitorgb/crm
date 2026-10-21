@@ -1,4 +1,21 @@
-import { Building2, CalendarClock, Contact, Headset, KanbanSquare, MessagesSquare, Receipt, Settings, Settings2, Shield, Tags, Users, Wallet, Webhook } from 'lucide-react';
+import {
+  Building2,
+  CalendarClock,
+  Contact,
+  Headset,
+  KanbanSquare,
+  MessagesSquare,
+  Receipt,
+  Settings,
+  Settings2,
+  Shield,
+  Tags,
+  Users,
+  Wallet,
+  Webhook,
+  Wrench,
+  Zap,
+} from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { MODULE_KEYS } from '@/types/modules';
 
@@ -40,6 +57,18 @@ export const navigation: NavEntry[] = [
         title: 'Conversas',
         to: '/atendimento/conversas',
         icon: MessagesSquare,
+        moduleKey: MODULE_KEYS.ATTENDANCE,
+      },
+    ],
+  },
+  {
+    title: 'Ferramentas',
+    icon: Wrench,
+    items: [
+      {
+        title: 'Respostas rápidas',
+        to: '/respostas-rapidas',
+        icon: Zap,
         moduleKey: MODULE_KEYS.ATTENDANCE,
       },
       {

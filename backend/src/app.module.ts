@@ -26,6 +26,7 @@ import { TenantsModule } from './modules/tenants/tenants.module.js';
 import { CustomersModule } from './modules/customers/customers.module.js';
 import { ContactsModule } from './modules/contacts/contacts.module.js';
 import { TagsModule } from './modules/tags/tags.module.js';
+import { QuickRepliesModule } from './modules/quick-replies/quick-replies.module.js';
 import { WhatsAppModule } from './modules/whatsapp/whatsapp.module.js';
 import { ConversationsModule } from './modules/conversations/conversations.module.js';
 import { BulkMediaModule } from './modules/bulk-media/bulk-media.module.js';
@@ -70,6 +71,7 @@ import { LeadsModule } from './modules/leads/leads.module.js';
     CustomersModule,
     ContactsModule,
     TagsModule,
+    QuickRepliesModule,
     WhatsAppModule,
     ConversationsModule,
     BulkMediaModule,

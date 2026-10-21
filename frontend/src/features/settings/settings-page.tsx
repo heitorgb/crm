@@ -1,4 +1,4 @@
-import { Bell, Building2, Headset, Palette, Smartphone, Users } from 'lucide-react';
+import { Bell, Building2, Headset, Menu, Palette, Smartphone, Users } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { PageHeader } from '@/components/common/page-header';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -6,6 +6,7 @@ import { useAuthStore } from '@/stores/auth-store';
 import { AppearanceTab } from './appearance-tab';
 import { AttendanceTab } from './attendance-tab';
 import { NotificationsTab } from './notifications-tab';
+import { CustomMenuTab } from '@/features/custom-menu/custom-menu-tab';
 import { OrganizationTab } from './organization-tab';
 import { TeamTab } from './team-tab';
 import { WhatsAppTab } from './whatsapp-tab';
@@ -17,6 +18,7 @@ const settingsTabs = [
   'attendance',
   'notifications',
   'whatsapp',
+  'menu',
 ] as const;
 
 type SettingsTab = (typeof settingsTabs)[number];
@@ -40,7 +42,10 @@ export function SettingsPage() {
 
   return (
     <div className="space-y-5">
-      <PageHeader title="Configurações" description="Organização, equipe, aparência e WhatsApp." />
+      <PageHeader
+        title="Configurações"
+        description="Organização, equipe, aparência, WhatsApp e menu personalizado."
+      />
 
       <Tabs value={activeTab} onValueChange={handleTabChange}>
         <TabsList className="h-auto flex-wrap">
@@ -68,6 +73,10 @@ export function SettingsPage() {
             <Smartphone />
             WhatsApp
           </TabsTrigger>
+          <TabsTrigger value="menu">
+            <Menu />
+            Menu Personalizado
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="organization">
@@ -87,6 +96,9 @@ export function SettingsPage() {
         </TabsContent>
         <TabsContent value="whatsapp">
           <WhatsAppTab />
+        </TabsContent>
+        <TabsContent value="menu">
+          <CustomMenuTab canManage={canManage} />
         </TabsContent>
       </Tabs>
     </div>

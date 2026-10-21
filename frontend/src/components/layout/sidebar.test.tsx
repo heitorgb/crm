@@ -8,9 +8,21 @@ vi.mock('@/features/modules/queries', () => ({
   useEnabledModules: () => ({ data: undefined }),
 }));
 
+import type { CustomMenuGroup } from '@/types/custom-menu';
 import { Sidebar } from './sidebar';
 
-afterEach(cleanup);
+const customMenuState = vi.hoisted(() => ({
+  data: undefined as CustomMenuGroup[] | undefined,
+}));
+
+vi.mock('@/features/custom-menu/queries', () => ({
+  useCustomMenuNavigation: () => ({ data: customMenuState.data }),
+}));
+
+afterEach(() => {
+  cleanup();
+  customMenuState.data = undefined;
+});
 
 function renderSidebar(props: { collapsed: boolean; showCollapseToggle?: boolean }) {
   return render(
@@ -20,6 +32,31 @@ function renderSidebar(props: { collapsed: boolean; showCollapseToggle?: boolean
       </TooltipProvider>
     </MemoryRouter>,
   );
+}
+
+function customGroup(overrides: Partial<CustomMenuGroup> = {}): CustomMenuGroup {
+  return {
+    id: 'group-1',
+    name: 'Lojas',
+    icon: 'store',
+    active: true,
+    position: 0,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    buttons: [
+      {
+        id: 'button-1',
+        name: 'JP Peças',
+        url: 'https://pecas.example.com',
+        icon: 'external-link',
+        active: true,
+        position: 0,
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      },
+    ],
+    ...overrides,
+  };
 }
 
 describe('Sidebar', () => {
@@ -65,5 +102,31 @@ describe('Sidebar', () => {
   it('hides the collapse toggle on the mobile sidebar', () => {
     renderSidebar({ collapsed: false, showCollapseToggle: false });
     expect(screen.queryByRole('button', { name: 'Recolher menu' })).toBeNull();
+  });
+
+  it('renders active custom menu groups with safe external links in a new tab', () => {
+    customMenuState.data = [customGroup()];
+    const { container } = renderSidebar({ collapsed: false });
+
+    expect(screen.getByRole('button', { name: 'Lojas' })).toBeTruthy();
+    const link = container.querySelector<HTMLAnchorElement>(
+      'a[href="https://pecas.example.com"]',
+    );
+
+    expect(link?.textContent).toBe('JP Peças');
+    expect(link?.getAttribute('target')).toBe('_blank');
+    expect(link?.getAttribute('rel')).toBe('noopener noreferrer');
+  });
+
+  it('filters custom groups without safe URLs and keeps working when loading fails', () => {
+    customMenuState.data = [
+      customGroup({ id: 'group-2', name: 'Inválido' }),
+    ];
+    customMenuState.data[0].buttons[0].url = 'javascript:alert(1)';
+
+    const { container } = renderSidebar({ collapsed: false });
+
+    expect(screen.queryByRole('button', { name: 'Inválido' })).toBeNull();
+    expect(container.querySelector('a[href^="javascript"]')).toBeNull();
   });
 });

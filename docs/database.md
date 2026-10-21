@@ -57,6 +57,14 @@ Idempotência: `Message` único por `(tenantId, externalMessageId)`, `WebhookEve
 Credenciais de instância são criptografadas. Detalhes, retenção e endpoints em
 [`attendance.md`](./attendance.md).
 
+### Menu personalizado
+
+`CustomMenuGroup` e `CustomMenuButton` — ambas com `tenantId`. Grupos têm `name`, `icon`, `active`,
+`position` e timestamps; botões têm `groupId` (FK `ON DELETE CASCADE`), `name`, `url`, `icon`,
+`active`, `position` e timestamps. O botão também carrega `tenantId` para defesa em profundidade e
+índices por tenant/grupo/status/ordem. Migration `20261020230000_custom_menu`. A exclusão do grupo
+remove os botões em cascata. Ver [`custom-menu.md`](./custom-menu.md).
+
 ### Cobranças (controle manual)
 
 `BillingCharge`, `BillingRecurrence`, `BillingSettings` e `BillingReminder` — todas com `tenantId`.

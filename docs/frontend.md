@@ -144,14 +144,17 @@ frontend/
   (configurações globais, incluindo o preview de links nas mensagens). Ver
   [`tenant-provisioning.md`](./tenant-provisioning.md).
 - Perfil e configurações: `/perfil` (dados pessoais + senha) e `/configuracoes` (abas Organização,
-  Equipe, Aparência, Atendimento, Notificações e WhatsApp). A aba ativa é sincronizada com o
-  parâmetro `?tab=` da URL. Ver [`settings.md`](./settings.md).
+  Equipe, Aparência, Atendimento, Notificações, WhatsApp e Menu Personalizado). A aba ativa é
+  sincronizada com o parâmetro `?tab=` da URL. Ver [`settings.md`](./settings.md) e
+  [`custom-menu.md`](./custom-menu.md).
 - Sidebar: Atendimento (Conversas), Ferramentas (Respostas rápidas e Mensagens agendadas), Contatos,
   Financeiro (Cobranças), Administração (Organizações e Configurações da plataforma, visíveis só para
-  `isPlatformAdmin`) e Configurações. As entradas ligadas a módulos são filtradas
-  pela disponibilidade real retornada por `GET /api/modules/enabled` (`visibleNavigation`); rotas de
-  módulos desativados redirecionam para `/indisponivel` via `ModuleRoute`. Ver
-  [`modules.md`](./modules.md).
+  `isPlatformAdmin`), grupos do **Menu Personalizado** e Configurações. As entradas ligadas a
+  módulos são filtradas pela disponibilidade real retornada por `GET /api/modules/enabled`
+  (`visibleNavigation`); rotas de módulos desativados redirecionam para `/indisponivel` via
+  `ModuleRoute`. Os grupos personalizados vêm de `GET /api/custom-menu/navigation`, são escopados
+  por tenant e abrem URLs externas em nova aba. Ver [`modules.md`](./modules.md) e
+  [`custom-menu.md`](./custom-menu.md).
 - `/settings/qualification-bot` e `/settings/lead-digest` com formulários orientados a negócio (sem
   pedir prompts técnicos). O bot de qualificação persiste perfis reais por tenant.
 - `ProtectedRoute` preparado para exigir sessão; a persistência real do refresh usa cookie HttpOnly.

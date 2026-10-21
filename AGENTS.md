@@ -20,6 +20,8 @@ Status atual (ver `docs/architecture.md` para detalhes):
   tratamento de erros, TenantContext, health check, testes e CI).
 - **Implementado:** módulos por organização (catálogo + disponibilidade por tenant, gestão restrita
   ao administrador da plataforma). Ver `docs/modules.md`.
+- **Implementado:** menu personalizado por organização (grupos e atalhos externos com ordem, status
+  e ícones). Ver `docs/custom-menu.md`.
 - **Planejado:** autenticação/autorização, módulos de CRM, multi-tenancy com RLS, filas, realtime, IA.
 - **Futuro:** frontend (React + Vite), integrações (WhatsApp/Evolution API), dashboards, relatórios.
 

@@ -12,6 +12,19 @@ enum Role {
   USER
 }
 
+enum AiProvider {
+  OPENAI
+  DEEPSEEK
+  ANTHROPIC
+  OPENROUTER
+}
+
+enum AiFormality {
+  PROFESSIONAL
+  FORMAL
+  VERY_FORMAL
+}
+
 enum CustomerStatus {
   ACTIVE
   INACTIVE
@@ -181,6 +194,7 @@ model Tenant {
   leads                      Lead[]
   customMenuGroups           CustomMenuGroup[]
   customMenuButtons          CustomMenuButton[]
+  aiSettings                 AiSettings?
 
   @@map("tenants")
 }
@@ -961,4 +975,23 @@ model PlatformSettings {
   updatedAt           DateTime @updatedAt @map("updated_at")
 
   @@map("platform_settings")
+}
+
+model AiSettings {
+  id                           String      @id @default(uuid()) @db.Uuid
+  tenantId                     String      @unique @map("tenant_id") @db.Uuid
+  provider                     AiProvider  @default(OPENAI)
+  model                        String
+  formality                    AiFormality @default(PROFESSIONAL)
+  enabled                      Boolean     @default(true)
+  openaiApiKeyEncrypted        String?     @map("openai_api_key_encrypted")
+  deepseekApiKeyEncrypted      String?     @map("deepseek_api_key_encrypted")
+  anthropicApiKeyEncrypted     String?     @map("anthropic_api_key_encrypted")
+  openrouterApiKeyEncrypted    String?     @map("openrouter_api_key_encrypted")
+  createdAt                    DateTime    @default(now()) @map("created_at")
+  updatedAt                    DateTime    @updatedAt @map("updated_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("ai_settings")
 }

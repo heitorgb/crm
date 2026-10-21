@@ -153,6 +153,7 @@ describe('Sidebar', () => {
     expect(
       container.querySelector('a[href="/configuracoes?tab=menu"]')?.textContent,
     ).toBe('Menu Personalizado');
+    expect(container.querySelector('a[href="/configuracoes?tab=ai"]')?.textContent).toBe('IA');
   });
 
   it('collapses and expands the settings group independently', () => {

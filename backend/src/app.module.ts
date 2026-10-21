@@ -37,6 +37,7 @@ import { BillingModule } from './modules/billing/billing.module.js';
 import { IntegrationsWebhooksModule } from './modules/integrations/webhooks/integrations-webhooks.module.js';
 import { LeadsModule } from './modules/leads/leads.module.js';
 import { CustomMenuModule } from './modules/custom-menu/custom-menu.module.js';
+import { AiModule } from './modules/ai/ai.module.js';
 
 @Module({
   imports: [
@@ -83,6 +84,7 @@ import { CustomMenuModule } from './modules/custom-menu/custom-menu.module.js';
     IntegrationsWebhooksModule,
     LeadsModule,
     CustomMenuModule,
+    AiModule,
   ],
   providers: [{ provide: APP_FILTER, useClass: AllExceptionsFilter }],
 })

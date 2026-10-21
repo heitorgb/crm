@@ -22,7 +22,9 @@ Status atual (ver `docs/architecture.md` para detalhes):
   ao administrador da plataforma). Ver `docs/modules.md`.
 - **Implementado:** menu personalizado por organização (grupos e atalhos externos com ordem, status
   e ícones). Ver `docs/custom-menu.md`.
-- **Planejado:** autenticação/autorização, módulos de CRM, multi-tenancy com RLS, filas, realtime, IA.
+- **Implementado:** configuração de IA por organização (OpenAI, DeepSeek, Anthropic e OpenRouter) e
+  formalização de mensagens no compositor do atendimento. Ver `docs/ai.md`.
+- **Planejado:** autenticação/autorização, módulos de CRM, multi-tenancy com RLS, filas, realtime.
 - **Futuro:** frontend (React + Vite), integrações (WhatsApp/Evolution API), dashboards, relatórios.
 
 ---

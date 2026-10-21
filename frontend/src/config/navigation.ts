@@ -13,6 +13,7 @@ import {
   Settings2,
   Shield,
   Smartphone,
+  Sparkles,
   Tags,
   Users,
   Wallet,
@@ -144,6 +145,7 @@ export const settingsNavigation: NavGroup = {
     { title: 'Notificações', to: '/configuracoes?tab=notifications', icon: Bell },
     { title: 'WhatsApp', to: '/configuracoes?tab=whatsapp', icon: Smartphone },
     { title: 'Menu Personalizado', to: '/configuracoes?tab=menu', icon: Menu },
+    { title: 'IA', to: '/configuracoes?tab=ai', icon: Sparkles },
   ],
 };
 

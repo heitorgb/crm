@@ -10,6 +10,7 @@ import { PrismaService } from '../../src/infrastructure/prisma/prisma.service.js
 import { PasswordService } from '../../src/modules/auth/password.service.js';
 import { WebhookImageService } from '../../src/modules/integrations/webhooks/webhook-image.service.js';
 import { EvolutionClient } from '../../src/modules/whatsapp/evolution/evolution.client.js';
+import { AiProviderFactory } from '../../src/modules/ai/ai.providers.js';
 
 export const TEST_PASSWORD = 'correct-horse-battery';
 
@@ -24,6 +25,7 @@ export interface TestApp {
 export interface TestAppOptions {
   evolution?: unknown;
   imageService?: unknown;
+  aiProviderFactory?: unknown;
 }
 
 export async function createTestApp(options: TestAppOptions = {}): Promise<TestApp> {
@@ -35,6 +37,9 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestA
   }
   if (options.imageService) {
     builder.overrideProvider(WebhookImageService).useValue(options.imageService);
+  }
+  if (options.aiProviderFactory) {
+    builder.overrideProvider(AiProviderFactory).useValue(options.aiProviderFactory);
   }
 
   const moduleRef = await builder.compile();

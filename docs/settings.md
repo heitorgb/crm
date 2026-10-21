@@ -1,7 +1,7 @@
 # Perfil e configurações — OrderUp CRM
 
 > Status: **Implementado**. Telas de **Meu perfil** (`/perfil`) e **Configurações** (`/configuracoes`)
-> com organização, equipe, aparência, atendimento, notificações e WhatsApp.
+> com organização, equipe, aparência, atendimento, notificações, WhatsApp, menu personalizado e IA.
 
 Complementa [`authentication.md`](./authentication.md) e [`multi-tenancy.md`](./multi-tenancy.md).
 
@@ -17,8 +17,8 @@ Complementa [`authentication.md`](./authentication.md) e [`multi-tenancy.md`](./
 ## Configurações — `/configuracoes` (abas)
 
 A aba ativa é sincronizada com o parâmetro `?tab=` da URL (`organization`, `team`, `appearance`,
-`attendance`, `notifications`, `whatsapp`, `menu`); sem parâmetro, abre em **Organização**. A rota antiga
-`/atendimento/whatsapp` redireciona para `/configuracoes?tab=whatsapp`.
+`attendance`, `notifications`, `whatsapp`, `menu`, `ai`); sem parâmetro, abre em **Organização**. A rota
+antiga `/atendimento/whatsapp` redireciona para `/configuracoes?tab=whatsapp`.
 
 | Aba          | Endpoints                                     | Papéis        |
 | ------------ | --------------------------------------------- | ------------- |
@@ -29,6 +29,7 @@ A aba ativa é sincronizada com o parâmetro `?tab=` da URL (`organization`, `te
 | Notificações | (frontend) contador de não lidas e som        | todos         |
 | WhatsApp     | `GET/POST/PATCH/DELETE /api/whatsapp/instances` + `connect`/`disconnect`/`status`/`webhook` | todos |
 | Menu Personalizado | `GET/PUT /api/custom-menu`, `GET /api/custom-menu/navigation` + CRUD de grupos/botões | leitura: todos; escrita: `OWNER`, `ADMIN` |
+| IA           | `GET /api/ai/catalog`, `GET/PUT /api/ai/settings`, `POST /api/ai/test`, `POST /api/ai/formalize` | leitura: todos; escrita/teste: `OWNER`, `ADMIN`; formalização: todos |
 
 ### Organização
 
@@ -90,6 +91,13 @@ tem nome, ícone opcional, status e ordem; cada botão tem nome, URL `http(s)`, 
 e ordem. Só grupos ativos com ao menos um botão ativo aparecem. Os links abrem em nova aba com
 `noopener`/`noreferrer`, sem criar rotas internas. O backend valida as URLs e escopa todas as
 operações pelo tenant do contexto. Fluxo completo em [`custom-menu.md`](./custom-menu.md).
+
+### IA
+
+Configuração de provedor, modelo, credenciais e nível de formalidade para o botão de IA no
+compositor do atendimento. A credencial é criptografada e nunca retornada pela API. O botão de
+formalização só aparece quando a configuração do tenant está ativa e completa. Fluxo completo,
+provedores, modelos e endpoints em [`ai.md`](./ai.md).
 
 ### WhatsApp
 

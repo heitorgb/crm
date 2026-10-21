@@ -1,8 +1,18 @@
-import { Bell, Building2, Headset, Menu, Palette, Smartphone, Users } from 'lucide-react';
+import {
+  Bell,
+  Building2,
+  Headset,
+  Menu,
+  Palette,
+  Smartphone,
+  Sparkles,
+  Users,
+} from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { PageHeader } from '@/components/common/page-header';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAuthStore } from '@/stores/auth-store';
+import { AiSettingsTab } from '@/features/ai/ai-settings-tab';
 import { AppearanceTab } from './appearance-tab';
 import { AttendanceTab } from './attendance-tab';
 import { NotificationsTab } from './notifications-tab';
@@ -19,6 +29,7 @@ const settingsTabs = [
   'notifications',
   'whatsapp',
   'menu',
+  'ai',
 ] as const;
 
 type SettingsTab = (typeof settingsTabs)[number];
@@ -44,7 +55,7 @@ export function SettingsPage() {
     <div className="space-y-5">
       <PageHeader
         title="Configurações"
-        description="Organização, equipe, aparência, WhatsApp e menu personalizado."
+        description="Organização, equipe, aparência, WhatsApp, menu personalizado e IA."
       />
 
       <Tabs value={activeTab} onValueChange={handleTabChange}>
@@ -77,6 +88,10 @@ export function SettingsPage() {
             <Menu />
             Menu Personalizado
           </TabsTrigger>
+          <TabsTrigger value="ai">
+            <Sparkles />
+            IA
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="organization">
@@ -99,6 +114,9 @@ export function SettingsPage() {
         </TabsContent>
         <TabsContent value="menu">
           <CustomMenuTab canManage={canManage} />
+        </TabsContent>
+        <TabsContent value="ai">
+          <AiSettingsTab canManage={canManage} />
         </TabsContent>
       </Tabs>
     </div>

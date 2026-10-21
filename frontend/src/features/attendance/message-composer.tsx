@@ -5,9 +5,11 @@ import {
   type ChangeEvent,
   type KeyboardEvent,
 } from 'react';
-import { Mic, Paperclip, Send, Trash2, X } from 'lucide-react';
+import { Loader2, Mic, Paperclip, RotateCcw, Send, Sparkles, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { useAiSettings, useFormalizeMessage } from '@/features/ai/queries';
 import { useQuickReplies } from '@/features/quick-replies/queries';
 import { ApiError } from '@/lib/api-client';
 import { useDebouncedValue } from '@/lib/use-debounced-value';
@@ -65,18 +67,25 @@ interface MessageComposerProps {
 export function MessageComposer({ conversationId, replyTo, onCancelReply }: MessageComposerProps) {
   const [draft, setDraft] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [aiBusy, setAiBusy] = useState(false);
+  const [undoText, setUndoText] = useState<string | null>(null);
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [activeQuickReplyIndex, setActiveQuickReplyIndex] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const selectionRef = useRef({ start: 0, end: 0 });
   const pendingCaretRef = useRef<number | null>(null);
+  const draftRef = useRef('');
 
   const sendMessage = useSendConversationMessage();
   const sendMedia = useSendConversationMedia();
   const showAgentName = useAttendanceStore((state) => state.showAgentName);
   const setShowAgentName = useAttendanceStore((state) => state.setShowAgentName);
-  const busy = sendMessage.isPending || sendMedia.isPending;
+  const aiSettings = useAiSettings();
+  const formalize = useFormalizeMessage();
+  const aiAvailable = aiSettings.data?.available === true;
+  const busy = sendMessage.isPending || sendMedia.isPending || aiBusy;
   const canSend = draft.trim().length > 0;
 
   const quickReplyQuery = quickReplyFilterQuery(draft);
@@ -114,6 +123,10 @@ export function MessageComposer({ conversationId, replyTo, onCancelReply }: Mess
     }
     element.style.height = 'auto';
     element.style.height = `${Math.min(element.scrollHeight, MAX_COMPOSER_HEIGHT)}px`;
+  }, [draft]);
+
+  useEffect(() => {
+    draftRef.current = draft;
   }, [draft]);
 
   useEffect(() => {
@@ -170,6 +183,8 @@ export function MessageComposer({ conversationId, replyTo, onCancelReply }: Mess
         linkPreview,
       });
       setDraft('');
+      setUndoText(null);
+      setAiError(null);
       setRemovedPreviewUrl(null);
       onCancelReply();
     } catch (caught) {
@@ -177,6 +192,58 @@ export function MessageComposer({ conversationId, replyTo, onCancelReply }: Mess
         caught instanceof ApiError ? caught.message : 'Não foi possível enviar a mensagem.',
       );
     }
+  };
+
+  const handleFormalize = async (): Promise<void> => {
+    if (!canSend || busy || !aiAvailable) {
+      return;
+    }
+
+    const original = draft;
+    setAiError(null);
+    setAiBusy(true);
+
+    try {
+      const result = await formalize.mutateAsync(original);
+
+      if (draftRef.current !== original) {
+        setAiError('O texto foi alterado durante a formalização. Tente novamente.');
+        return;
+      }
+
+      const formatted = result.text.trim();
+      if (formatted.length === 0) {
+        setAiError('A IA retornou uma resposta vazia. Tente novamente.');
+        return;
+      }
+
+      setUndoText(original);
+      selectionRef.current = { start: formatted.length, end: formatted.length };
+      pendingCaretRef.current = formatted.length;
+      setDraft(formatted);
+    } catch (caught) {
+      setAiError(
+        caught instanceof ApiError
+          ? caught.message
+          : 'Não foi possível formalizar a mensagem. Tente novamente.',
+      );
+    } finally {
+      setAiBusy(false);
+    }
+  };
+
+  const handleUndoFormalization = (): void => {
+    if (undoText === null) {
+      return;
+    }
+
+    const caret = undoText.length;
+    setDraft(undoText);
+    setUndoText(null);
+    setAiError(null);
+    selectionRef.current = { start: caret, end: caret };
+    pendingCaretRef.current = caret;
+    textareaRef.current?.focus();
   };
 
   const handleEmojiSelect = (emoji: string): void => {
@@ -196,6 +263,8 @@ export function MessageComposer({ conversationId, replyTo, onCancelReply }: Mess
   const handleQuickReplySelect = (quickReply: QuickReply): void => {
     const caret = quickReply.content.length;
     setError(null);
+    setAiError(null);
+    setUndoText(null);
     setRemovedPreviewUrl(null);
     setActiveQuickReplyIndex(0);
     selectionRef.current = { start: caret, end: caret };
@@ -267,6 +336,8 @@ export function MessageComposer({ conversationId, replyTo, onCancelReply }: Mess
         quotedMessageId: replyTo?.id,
       });
       setDraft('');
+      setUndoText(null);
+      setAiError(null);
       setRemovedPreviewUrl(null);
       setPendingFile(null);
       onCancelReply();
@@ -313,8 +384,10 @@ export function MessageComposer({ conversationId, replyTo, onCancelReply }: Mess
         className="hidden"
         onChange={handleFileSelected}
       />
-      {!pendingFile && (error || recorder.error) ? (
-        <p className="mb-2 text-xs font-medium text-danger">{error ?? recorder.error}</p>
+      {!pendingFile && (error || recorder.error || aiError) ? (
+        <p className="mb-2 text-xs font-medium text-danger">
+          {error ?? recorder.error ?? aiError}
+        </p>
       ) : null}
       {replyTo ? (
         <div className="mb-1.5 flex items-start gap-2 rounded-md border-l-4 border-primary bg-surface px-2 py-1.5">
@@ -343,6 +416,21 @@ export function MessageComposer({ conversationId, replyTo, onCancelReply }: Mess
             url={previewUrl}
             onRemove={() => setRemovedPreviewUrl(previewUrl)}
           />
+        </div>
+      ) : null}
+      {!recorder.recording && undoText !== null ? (
+        <div className="mb-1 flex justify-end px-1">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 gap-1.5 px-2 text-xs text-muted-foreground"
+            onClick={handleUndoFormalization}
+            aria-label="Desfazer reformulação"
+          >
+            <RotateCcw className="size-3.5" />
+            Desfazer reformulação
+          </Button>
         </div>
       ) : null}
       {!recorder.recording ? (
@@ -404,6 +492,10 @@ export function MessageComposer({ conversationId, replyTo, onCancelReply }: Mess
               if (removedPreviewUrl && !next.includes(removedPreviewUrl)) {
                 setRemovedPreviewUrl(null);
               }
+              if (next.length === 0) {
+                setUndoText(null);
+              }
+              setAiError(null);
               setActiveQuickReplyIndex(0);
               setDraft(next);
             }}
@@ -417,6 +509,24 @@ export function MessageComposer({ conversationId, replyTo, onCancelReply }: Mess
             className="max-h-40 min-h-[38px] flex-1 resize-none rounded-md border-0 bg-transparent px-2 py-2.5 text-sm shadow-none focus-visible:ring-0"
             onKeyDown={handleComposerKeyDown}
           />
+          {canSend && aiAvailable ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="size-9 shrink-0 rounded-full text-primary"
+                  onClick={() => void handleFormalize()}
+                  disabled={busy}
+                  aria-label="Formalizar mensagem com IA"
+                >
+                  {aiBusy ? <Loader2 className="animate-spin" /> : <Sparkles />}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Formalizar mensagem com IA</TooltipContent>
+            </Tooltip>
+          ) : null}
           {canSend ? (
             <Button
               size="icon"

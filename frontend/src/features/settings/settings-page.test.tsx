@@ -12,6 +12,9 @@ vi.mock('./whatsapp-tab', () => ({ WhatsAppTab: () => <div>WhatsApp</div> }));
 vi.mock('@/features/custom-menu/custom-menu-tab', () => ({
   CustomMenuTab: () => <div>Menu Personalizado</div>,
 }));
+vi.mock('@/features/ai/ai-settings-tab', () => ({
+  AiSettingsTab: () => <div>IA</div>,
+}));
 
 import { SettingsPage } from './settings-page';
 
@@ -32,6 +35,12 @@ describe('SettingsPage', () => {
     renderSettings('/configuracoes?tab=whatsapp');
 
     expect(screen.getByRole('tabpanel').textContent).toBe('WhatsApp');
+  });
+
+  it('opens the AI section from the tab query parameter', () => {
+    renderSettings('/configuracoes?tab=ai');
+
+    expect(screen.getByRole('tabpanel').textContent).toBe('IA');
   });
 
   it('falls back to the organization section without a tab parameter', () => {

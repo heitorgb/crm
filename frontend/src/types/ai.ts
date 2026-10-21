@@ -22,6 +22,57 @@ export interface AiFormalityOption {
   description: string;
 }
 
+export interface TranscriptionProviderOption {
+  id: AiProvider;
+  label: string;
+  description: string;
+  supported: boolean;
+  unsupportedReason: string | null;
+  models: AiModelOption[];
+}
+
+export interface TranscriptionCatalog {
+  providers: TranscriptionProviderOption[];
+  credentialPolicy: {
+    reusedFrom: AiProvider;
+    description: string;
+  };
+}
+
+export type TranscriptionUnavailableReason =
+  | 'disabled'
+  | 'provider_unsupported'
+  | 'model_unsupported'
+  | 'missing_credentials'
+  | 'unreadable_credentials';
+
+export interface TranscriptionSettings {
+  enabled: boolean;
+  provider: AiProvider;
+  model: string;
+  supported: boolean;
+  supportedModels: string[];
+  hasCredentials: boolean;
+  credentialProvider: AiProvider | null;
+  available: boolean;
+  reason: TranscriptionUnavailableReason | null;
+  updatedAt: string | null;
+}
+
+export interface UpdateTranscriptionSettingsInput {
+  enabled: boolean;
+  provider: AiProvider;
+  model: string;
+  apiKey?: string;
+}
+
+export interface TranscriptionConnectionTestResult {
+  ok: true;
+  provider: AiProvider;
+  model: string;
+  message: string;
+}
+
 export interface AiCatalog {
   providers: AiProviderOption[];
   formalities: AiFormalityOption[];
@@ -70,9 +121,11 @@ export interface SalesCopilotContextSummary {
   messageCount: number;
   latestMessageId: string | null;
   latestMessageAt: string | null;
+  latestTranscriptionAt: string | null;
   leadUpdatedAt: string;
   historyTruncated: boolean;
   mediaWithoutText: number;
+  transcriptionsPending: number;
 }
 
 export type SalesUpdateField =

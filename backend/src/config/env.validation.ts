@@ -81,6 +81,16 @@ const aiEnvSchema = z.object({
   AI_BASE_URL: optionalEnv(z.url()),
   AI_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
   AI_MAX_RETRIES: z.coerce.number().int().min(0).default(2),
+  TRANSCRIPTION_TIMEOUT_MS: z.coerce.number().int().positive().default(60000),
+  TRANSCRIPTION_MAX_BYTES: z.coerce.number().int().positive().default(26_214_400),
+  TRANSCRIPTION_MAX_DURATION_SECONDS: z.coerce.number().int().positive().default(600),
+  TRANSCRIPTION_CONCURRENCY: z.coerce.number().int().positive().default(2),
+  TRANSCRIPTION_TENANT_CONCURRENCY: z.coerce.number().int().positive().default(1),
+  TRANSCRIPTION_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(5).default(3),
+  TRANSCRIPTION_RETRY_DELAY_MS: z.coerce.number().int().min(0).default(1000),
+  TRANSCRIPTION_CONVERSION_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
+  TRANSCRIPTION_LANGUAGE: optionalEnv(z.string().min(2).max(10)),
+  FFMPEG_PATH: z.string().min(1).default('ffmpeg'),
 });
 
 const integrationEnvSchema = z.object({

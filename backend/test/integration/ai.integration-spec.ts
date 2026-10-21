@@ -27,6 +27,8 @@ describe('AI settings and formalization (integration)', () => {
   let ownerB: SeededTenant;
   let provider: FakeProvider;
   let factory: { get: ReturnType<typeof vi.fn> };
+  let transcriptionAdapter: { transcribe: ReturnType<typeof vi.fn>; check: ReturnType<typeof vi.fn> };
+  let transcriptionFactory: { get: ReturnType<typeof vi.fn> };
 
   beforeAll(async () => {
     provider = {
@@ -34,7 +36,20 @@ describe('AI settings and formalization (integration)', () => {
       complete: vi.fn(),
     };
     factory = { get: vi.fn(() => provider) };
-    context = await createTestApp({ aiProviderFactory: factory });
+    transcriptionAdapter = {
+      transcribe: vi.fn().mockResolvedValue({
+        text: 'Transcrição de teste.',
+        language: 'pt',
+        provider: 'OPENAI',
+        model: 'whisper-1',
+      }),
+      check: vi.fn().mockResolvedValue(undefined),
+    };
+    transcriptionFactory = { get: vi.fn(() => transcriptionAdapter) };
+    context = await createTestApp({
+      aiProviderFactory: factory,
+      transcriptionProviderFactory: transcriptionFactory,
+    });
     app = context.app;
     prisma = context.prisma;
   });
@@ -47,6 +62,9 @@ describe('AI settings and formalization (integration)', () => {
     provider.complete.mockReset();
     provider.complete.mockResolvedValue('OK');
     factory.get.mockClear();
+    transcriptionAdapter.check.mockReset();
+    transcriptionAdapter.check.mockResolvedValue(undefined);
+    transcriptionFactory.get.mockClear();
 
     const suffix = Date.now().toString();
     ownerA = await seedTenant(app, prisma, { name: `AI Owner A ${suffix}`, role: 'OWNER' });
@@ -355,5 +373,147 @@ describe('AI settings and formalization (integration)', () => {
     expect(result.statusCode).toBe(502);
     expect(result.json().code).toBe('AI_PROVIDER_AUTH_FAILED');
     expect(result.body).not.toContain('sk-owner-a-secret');
+  });
+
+  function saveTranscription(tenant: SeededTenant, payload: Record<string, unknown>) {
+    return app.inject({
+      method: 'PUT',
+      url: '/api/ai/transcription/settings',
+      headers: authHeaders(tenant),
+      payload,
+    });
+  }
+
+  it('reuses the existing OpenAI credential without storing a second key', async () => {
+    const secret = 'sk-owner-a-transcription-secret';
+    await saveSettings(ownerA, {
+      provider: 'OPENAI',
+      model: 'gpt-6-luna',
+      formality: 'FORMAL',
+      apiKey: secret,
+    });
+    const before = await prisma.aiSettings.findUniqueOrThrow({
+      where: { tenantId: ownerA.tenantId },
+    });
+
+    const saved = await saveTranscription(ownerA, {
+      enabled: true,
+      provider: 'OPENAI',
+      model: 'whisper-1',
+    });
+
+    expect(saved.statusCode).toBe(200);
+    expect(saved.json()).toMatchObject({
+      enabled: true,
+      provider: 'OPENAI',
+      model: 'whisper-1',
+      supported: true,
+      hasCredentials: true,
+      credentialProvider: 'OPENAI',
+      available: true,
+      reason: null,
+    });
+    expect(saved.body).not.toContain(secret);
+    expect(saved.json()).not.toHaveProperty('openaiApiKeyEncrypted');
+
+    const after = await prisma.aiSettings.findUniqueOrThrow({
+      where: { tenantId: ownerA.tenantId },
+    });
+    expect(after.openaiApiKeyEncrypted).toBe(before.openaiApiKeyEncrypted);
+  });
+
+  it('rejects providers without speech-to-text support and invalid models', async () => {
+    const unsupported = await saveTranscription(ownerA, {
+      enabled: true,
+      provider: 'DEEPSEEK',
+      model: 'whisper-1',
+    });
+    expect(unsupported.statusCode).toBe(400);
+    expect(unsupported.json().code).toBe('AI_TRANSCRIPTION_PROVIDER_UNSUPPORTED');
+
+    const invalidModel = await saveTranscription(ownerA, {
+      enabled: true,
+      provider: 'OPENAI',
+      model: 'gpt-6-luna',
+    });
+    expect(invalidModel.statusCode).toBe(400);
+    expect(invalidModel.json().code).toBe('AI_TRANSCRIPTION_MODEL_NOT_SUPPORTED');
+  });
+
+  it('keeps transcription settings isolated between tenants', async () => {
+    await saveSettings(ownerA, {
+      provider: 'OPENAI',
+      model: 'gpt-6-luna',
+      formality: 'FORMAL',
+      apiKey: 'sk-tenant-a-transcription',
+    });
+    await saveTranscription(ownerA, {
+      enabled: true,
+      provider: 'OPENAI',
+      model: 'gpt-4o-mini-transcribe',
+    });
+
+    const ownerAView = await app.inject({
+      method: 'GET',
+      url: '/api/ai/transcription/settings',
+      headers: authHeaders(ownerA),
+    });
+    const ownerBView = await app.inject({
+      method: 'GET',
+      url: '/api/ai/transcription/settings',
+      headers: authHeaders(ownerB),
+    });
+
+    expect(ownerAView.json()).toMatchObject({
+      enabled: true,
+      model: 'gpt-4o-mini-transcribe',
+      available: true,
+    });
+    expect(ownerBView.json()).toMatchObject({
+      enabled: false,
+      hasCredentials: false,
+      available: false,
+      reason: 'missing_credentials',
+    });
+  });
+
+  it('tests the stored transcription credential without sending audio or leaking the key', async () => {
+    await saveSettings(ownerA, {
+      provider: 'OPENAI',
+      model: 'gpt-6-luna',
+      formality: 'FORMAL',
+      apiKey: 'sk-transcription-test-secret',
+    });
+    await saveTranscription(ownerA, {
+      enabled: true,
+      provider: 'OPENAI',
+      model: 'whisper-1',
+    });
+
+    const result = await app.inject({
+      method: 'POST',
+      url: '/api/ai/transcription/test',
+      headers: authHeaders(ownerA),
+      payload: {},
+    });
+
+    expect(result.statusCode).toBe(200);
+    expect(result.json()).toMatchObject({ ok: true, provider: 'OPENAI', model: 'whisper-1' });
+    expect(transcriptionAdapter.check).toHaveBeenCalledWith({
+      apiKey: 'sk-transcription-test-secret',
+      model: 'whisper-1',
+    });
+    expect(transcriptionAdapter.transcribe).not.toHaveBeenCalled();
+    expect(result.body).not.toContain('sk-transcription-test-secret');
+  });
+
+  it('restricts transcription changes to owners and admins', async () => {
+    const result = await saveTranscription(userA, {
+      enabled: true,
+      provider: 'OPENAI',
+      model: 'whisper-1',
+    });
+
+    expect(result.statusCode).toBe(403);
   });
 });

@@ -1,11 +1,16 @@
 import type { OnModuleDestroy } from '@nestjs/common';
-import type { JobPayload, JobProcessor, JobQueue } from './job-queue.types.js';
+import type {
+  EnqueueOptions,
+  JobPayload,
+  JobProcessor,
+  JobQueue,
+} from './job-queue.types.js';
 
 export class InlineJobQueue implements JobQueue, OnModuleDestroy {
   private readonly processors = new Map<string, JobProcessor>();
   private readonly intervals: NodeJS.Timeout[] = [];
 
-  async enqueue(name: string, payload: JobPayload): Promise<void> {
+  async enqueue(name: string, payload: JobPayload, _options?: EnqueueOptions): Promise<void> {
     await this.run(name, payload);
   }
 

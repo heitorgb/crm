@@ -1,8 +1,8 @@
 # IA no atendimento — OrderUp CRM
 
 > Status: **Implementado**. Configuração por organização em **Configurações → IA**, botão de
-> formalização no compositor do chat e Copiloto comercial persistente no detalhe da oportunidade,
-> com próxima ação, follow-ups e sugestões de atualização do lead. Nenhuma mensagem é enviada
+> formalização no compositor do chat, Copiloto comercial persistente no detalhe da oportunidade e
+> transcrição assíncrona de áudios recebidos no WhatsApp. Nenhuma mensagem é enviada
 > automaticamente ao WhatsApp.
 
 Complementa [`settings.md`](./settings.md), [`attendance.md`](./attendance.md) e
@@ -60,6 +60,129 @@ Cada adaptador usa o endpoint e o formato próprios:
 
 Nenhuma URL é escolhida pelo cliente. O frontend só envia provedor/modelo da lista centralizada.
 
+## Transcrição de áudio (Speech-to-Text)
+
+A transcrição é uma configuração **independente** do provedor/modelo de texto. Uma organização pode
+usar DeepSeek no Copiloto e OpenAI para transcrever áudios, sem alterar o provedor principal.
+
+### Compatibilidade real dos provedores
+
+| Provedor   | Transcrição | Observação                                                                 |
+| ---------- | ----------- | -------------------------------------------------------------------------- |
+| OpenAI     | Sim         | API oficial `POST https://api.openai.com/v1/audio/transcriptions`.          |
+| DeepSeek   | Não         | A integração disponível no CRM só oferece modelos de texto.                 |
+| Anthropic  | Não         | A integração disponível no CRM só oferece modelos de texto.                 |
+| OpenRouter | Não         | O CRM o utiliza como acesso a modelos de texto; não há endpoint de STT.     |
+
+Provedores sem suporte aparecem na interface com o motivo e não podem ser salvos como configuração
+de transcrição. O backend valida novamente e responde `AI_TRANSCRIPTION_PROVIDER_UNSUPPORTED`.
+
+Modelos OpenAI aceitos (lista centralizada em
+`backend/src/modules/transcription/transcription.models.ts`):
+
+- `whisper-1` — modelo consolidado e econômico;
+- `gpt-4o-mini-transcribe` — melhor custo-benefício para áudios curtos;
+- `gpt-4o-transcribe` — maior precisão em áudios com ruído/sotaques.
+
+O identificador enviado à API é sempre o `id` do catálogo, nunca o rótulo da interface. A OpenAI
+aceita oficialmente `mp3`, `mp4`, `mpeg`, `mpga`, `m4a`, `wav` e `webm`; os áudios de voz do
+WhatsApp chegam como **OGG/Opus** e são convertidos para **WAV mono 16 kHz** com `ffmpeg` antes do
+envio. Sem essa conversão, `gpt-4o-transcribe`/`gpt-4o-mini-transcribe` respondem
+`400 Unsupported file format oga`. `whisper-1` ainda aceita OGG na prática, mas passa pela mesma
+normalização para manter o comportamento previsível entre modelos.
+
+O binário `ffmpeg` é instalado na imagem Docker do backend e pode ser apontado por `FFMPEG_PATH`.
+Se ele não estiver disponível, o estado é `FAILED` com
+`AI_TRANSCRIPTION_CONVERSION_UNAVAILABLE` (recuperável após corrigir o servidor), nunca
+“modelo indisponível”.
+
+### Reutilização de credencial
+
+A transcrição reutiliza `ai_settings.openai_api_key_encrypted`, a mesma credencial OpenAI já usada
+pela IA de texto. Não existe segunda cópia da chave. Se a organização usa outro provedor de texto e
+ainda não possui chave OpenAI, a própria seção de transcrição permite cadastrá-la; a chave é gravada
+no mesmo campo criptografado. Outra empresa nunca acessa essa credencial (escopo por `tenantId`).
+
+### Configuração e endpoints
+
+- `GET /api/ai/transcription/catalog` — provedores, suporte e modelos oficiais.
+- `GET /api/ai/transcription/settings` — estado sem segredos (`available`, `reason`, `hasCredentials`).
+- `PUT /api/ai/transcription/settings` — ativa/desativa, escolhe provedor/modelo (`OWNER`/`ADMIN`).
+- `POST /api/ai/transcription/test` — valida credencial/modelo via `GET /v1/models/{model}`, sem
+  enviar áudio (`OWNER`/`ADMIN`, 8 req/min).
+- `POST /api/ai/transcription/messages/:conversationId/:messageId/retry` — nova tentativa manual
+  idempotente para falha recuperável (10 req/min, módulo `atendimento`).
+
+Estados expostos: `NOT_APPLICABLE`, `PENDING`, `PROCESSING`, `COMPLETED`, `FAILED`. `FAILED` inclui
+`retryable`/`canRetry`; falhas definitivas (formato, tamanho, duração, autenticação, modelo) não
+oferecem nova tentativa. Áudios recebidos enquanto a transcrição estava desativada ficam
+`NOT_APPLICABLE`, mas passam a oferecer **Transcrever este áudio** depois que a configuração fica
+disponível; o backend revalida a configuração antes de enfileirar.
+
+Áudios recebidos **antes da existência do registro** de transcrição não aparecem silenciosamente
+como apenas player: a UI mostra “Transcrição não realizada para este áudio” e oferece
+**Transcrever este áudio**. O endpoint de retry cria o registro `PENDING` com a configuração atual do
+tenant e enfileira o job determinístico; mensagens já concluídas não são repetidas. Não existe
+varredura automática de todo o histórico — a recuperação é manual, por mensagem, e continua sujeita
+aos limites, idempotência e à disponibilidade da mídia original.
+
+O evento `message.updated` é emitido também em falha e em `NOT_APPLICABLE`, para que o balão saia de
+“aguardando” mesmo quando a transcrição não puder ser concluída.
+
+### Fluxo assíncrono
+
+1. O webhook da Evolution persiste a mensagem pelo fluxo existente e cria o registro `PENDING`
+   apenas para áudio recebido (não view-once). O processamento principal do webhook não espera a
+   transcrição.
+2. O job `media.process` baixa a mídia pela Evolution (`getBase64FromMediaMessage`), grava no storage
+   e então enfileira `transcription.process`. Não há requisição a URL arbitrária do webhook.
+3. O worker valida configuração, estado, formato, tamanho e duração, lê o arquivo do storage,
+   converte OGG/Opus para WAV quando necessário e chama a API externa com timeout.
+4. O resultado é normalizado, limitado a 20.000 caracteres e salvo em `message_transcriptions`,
+   associado à mensagem original. O áudio original permanece intacto.
+5. A conclusão emite `message.updated`/`conversation.updated`, e o chat aberto atualiza via realtime
+   existente, sem polling agressivo.
+
+O job usa `jobId` estável por mensagem, transição atômica de estado e verificação de `COMPLETED`
+para impedir chamadas duplicadas. Se o anexo ainda não estiver disponível, o worker tenta o download
+pela mesma rotina de mídia; sem sucesso, grava falha recuperável.
+
+### Limites, retry e custos
+
+- `TRANSCRIPTION_MAX_BYTES` (padrão 25 MB) e `TRANSCRIPTION_MAX_DURATION_SECONDS` (padrão 600 s).
+- `TRANSCRIPTION_CONCURRENCY` (2) e `TRANSCRIPTION_TENANT_CONCURRENCY` (1) limitam chamadas
+  simultâneas, isolando custo por organização.
+- `TRANSCRIPTION_TIMEOUT_MS` (60 s), `TRANSCRIPTION_MAX_ATTEMPTS` (3) com backoff linear
+  (`TRANSCRIPTION_RETRY_DELAY_MS`, padrão 1 s). Apenas timeout, conexão, 429 e 5xx são repetidos.
+- `TRANSCRIPTION_LANGUAGE` é opcional; quando ausente, o provedor detecta o idioma.
+- `TRANSCRIPTION_CONVERSION_TIMEOUT_MS` (30 s) e `FFMPEG_PATH` controlam a normalização do áudio.
+- Métricas em log incluem tenant, mensagem, estágio (`conversion`, `provider`, `validation`,
+  `media_download`, `configuration`), provedor/modelo, duração, tentativas e código de erro.
+  Áudio, texto transcrito, credenciais e dados pessoais não são registrados.
+- Erros do provedor são classificados pelo motivo real: formato/conteúdo recusado
+  (`AI_TRANSCRIPTION_FILE_REJECTED`), requisição inválida (`AI_TRANSCRIPTION_INVALID_REQUEST`),
+  autenticação, cota, rate limit, timeout, indisponibilidade e somente
+  `AI_TRANSCRIPTION_MODEL_UNAVAILABLE` quando a própria OpenAI informa que o modelo não existe ou
+  não está acessível.
+- Áudios são enviados ao provedor externo configurado (OpenAI). Esse é o único compartilhamento
+  necessário para o recurso; sem configuração/autorização a transcrição não ocorre.
+
+### Persistência
+
+Migration `20261021190000_audio_transcription`:
+
+- `ai_settings.transcription_enabled`, `transcription_provider`, `transcription_model`;
+- tabela `message_transcriptions` com `message_id` único, estado, texto, idioma, provedor, modelo,
+  tentativas, `retryable`, erro seguro e data da transcrição;
+- índices por `(tenant_id, status)` e `(tenant_id, updated_at)`; exclusão em cascata com mensagem e
+  tenant.
+
+O registro nunca substitui a mensagem, o anexo ou seus metadados.
+
+A migration `20261021200000_transcription_retry_misclassified_model_error` reabre para nova tentativa
+apenas os registros antigos de `FAILED`/`AI_TRANSCRIPTION_MODEL_UNAVAILABLE` produzidos pela
+classificação incorreta de erros de formato. Nenhuma estrutura de tabela é alterada.
+
 ## Persistência e isolamento
 
 Tabela `ai_settings`, criada pela migration `20261021000000_ai_settings`:
@@ -87,6 +210,11 @@ e mantendo a última escrita consistente.
 | GET    | `/api/ai/settings`  | membros           | Estado da configuração, sem segredos           |
 | PUT    | `/api/ai/settings`  | `OWNER`, `ADMIN`  | Cria/atualiza a configuração do tenant         |
 | POST   | `/api/ai/test`      | `OWNER`, `ADMIN`  | Testa a conexão com as credenciais informadas  |
+| GET    | `/api/ai/transcription/catalog` | membros | Provedores, suporte e modelos de STT        |
+| GET    | `/api/ai/transcription/settings` | membros | Estado da transcrição, sem segredos        |
+| PUT    | `/api/ai/transcription/settings` | `OWNER`, `ADMIN` | Salva a configuração de transcrição |
+| POST   | `/api/ai/transcription/test` | `OWNER`, `ADMIN` | Valida credencial e modelo de STT    |
+| POST   | `/api/ai/transcription/messages/:conversationId/:messageId/retry` | membros | Reprocessa falha recuperável |
 | POST   | `/api/ai/formalize` | membros           | Reformula o texto do compositor                |
 | POST   | `/api/ai/sales/analyze` | membros      | Analisa, persiste o contexto e gera recomendações |
 | POST   | `/api/ai/sales/suggest-reply` | membros | Gera uma resposta contextual para o WhatsApp |
@@ -136,10 +264,18 @@ O backend sempre carrega do banco:
 - mensagens reais da conversa, em ordem cronológica.
 
 Limites: até 80 mensagens e 24.000 caracteres de histórico. As mensagens mais recentes têm
-prioridade; quando o limite é atingido, `historyTruncated` é verdadeiro. Mensagens sem texto (mídia,
-áudio, documento, imagem) entram apenas como tipo + indicação de que o conteúdo não foi transcrito;
-o modelo é instruído a não presumir que compreendeu essas mídias. O backend não aceita histórico
-arbitrário enviado pelo frontend.
+prioridade; quando o limite é atingido, `historyTruncated` é verdadeiro. Áudios com transcrição
+`COMPLETED` entram com o campo `transcription` (texto derivado) separado do campo `text` (conteúdo
+digitado), além de `transcriptionStatus`. Áudios pendentes/falhos entram com o estado e a instrução
+de que não foram transcritos; documentos, imagens e figurinhas continuam apenas como tipo. O prompt
+marca `TRANSCRICOES_DE_AUDIO_PENDENTES` e `MIDIAS_SEM_TEXTO`, e o conteúdo derivado é tratado como
+dado não confiável, nunca como instrução de sistema. O backend não aceita histórico arbitrário
+enviado pelo frontend.
+
+A conclusão de uma transcrição é uma mudança relevante de contexto: o `latestTranscriptionAt`
+persistido é comparado ao maior `transcribedAt` concluído da conversa e, se mudou, o estado retorna
+`new_transcription` em `staleReasons`. A análise só é refeita quando o usuário aciona
+**Reanalisar**; não há nova chamada automática (controle de custo/concorrência).
 
 Resposta estruturada da análise (além dos campos da Fase 1, inclui `objective`, `hypotheses`,
 `nextAction` e `leadUpdateSuggestions`):
@@ -291,6 +427,16 @@ conversão, causalidade, dashboards ou métricas agregadas; esses itens permanec
 | ---------------------------- | ----------- | ------- | ------------------------------------------------ |
 | `CREDENTIALS_ENCRYPTION_KEY` | para salvar | —       | >= 32 caracteres; protege WhatsApp e IA          |
 | `AI_TIMEOUT_MS`              | não         | `30000` | Timeout das chamadas aos provedores              |
+| `TRANSCRIPTION_TIMEOUT_MS`   | não         | `60000` | Timeout da chamada de transcrição                |
+| `TRANSCRIPTION_MAX_BYTES`    | não         | `26214400` | Tamanho máximo do áudio enviado               |
+| `TRANSCRIPTION_MAX_DURATION_SECONDS` | não | `600` | Duração máxima quando informada pelo WhatsApp   |
+| `TRANSCRIPTION_CONCURRENCY`  | não         | `2`     | Transcrições simultâneas por processo            |
+| `TRANSCRIPTION_TENANT_CONCURRENCY` | não   | `1`     | Transcrições simultâneas por organização         |
+| `TRANSCRIPTION_MAX_ATTEMPTS` | não         | `3`     | Tentativas por erro transitório                  |
+| `TRANSCRIPTION_RETRY_DELAY_MS` | não       | `1000`  | Base do backoff linear                           |
+| `TRANSCRIPTION_LANGUAGE`     | não         | —       | Idioma ISO opcional; vazio = detecção automática |
+| `TRANSCRIPTION_CONVERSION_TIMEOUT_MS` | não | `30000` | Timeout da conversão OGG/Opus → WAV          |
+| `FFMPEG_PATH`                | não         | `ffmpeg` | Binário usado na conversão de áudio            |
 | `RATE_LIMIT_ENABLED`         | não         | `true`  | Desativa rate limits em testes                   |
 
 As antigas `AI_PROVIDER`, `AI_MODEL`, `AI_API_KEY` e `AI_BASE_URL` permanecem validadas por
@@ -334,3 +480,10 @@ tentar novamente ou enviar a mensagem original.
   por tenant, conversa de outro contato, IA desativada, timeout/rate limit, limite de histórico,
   resposta inválida, concorrência, decisões de recomendação, atualização de etapa/observações,
   follow-ups idempotentes, conclusão/cancelamento/reagendamento e ausência de envio automático).
+- Transcrição: unitários em `backend/test/unit/transcription/` (catálogo, três modelos oficiais,
+  conversão OGG/Opus, classificação de formato versus modelo, adapter OpenAI, timeout,
+  autenticação, resposta inválida, sucesso, idempotência, concorrência, limites, falha transitória
+  com retry e falha definitiva); integração em `backend/test/integration/ai.integration-spec.ts`
+  (configuração, provedor sem suporte, modelo inválido, reutilização da credencial, isolamento e
+  teste sem áudio); frontend em `message-transcription.test.tsx` (estados, texto derivado, retry e
+  ausência de retry permanente) e `ai-settings-tab.test.tsx` (configuração independente).

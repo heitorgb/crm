@@ -39,6 +39,7 @@ import { IntegrationsWebhooksModule } from './modules/integrations/webhooks/inte
 import { LeadsModule } from './modules/leads/leads.module.js';
 import { CustomMenuModule } from './modules/custom-menu/custom-menu.module.js';
 import { AiModule } from './modules/ai/ai.module.js';
+import { TranscriptionModule } from './modules/transcription/transcription.module.js';
 
 @Module({
   imports: [
@@ -87,6 +88,7 @@ import { AiModule } from './modules/ai/ai.module.js';
     LeadsModule,
     CustomMenuModule,
     AiModule,
+    TranscriptionModule,
   ],
   providers: [{ provide: APP_FILTER, useClass: AllExceptionsFilter }],
 })

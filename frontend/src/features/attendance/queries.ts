@@ -222,6 +222,24 @@ export function useSendConversationMessage() {
   });
 }
 
+export function useRetryTranscription() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      conversationId,
+      messageId,
+    }: {
+      conversationId: string;
+      messageId: string;
+    }) => attendanceService.retryTranscription(conversationId, messageId),
+    onSuccess: (_result, variables) => {
+      void queryClient.invalidateQueries({
+        queryKey: attendanceKeys.messages(variables.conversationId),
+      });
+    },
+  });
+}
+
 export function useEditConversationMessage() {
   const queryClient = useQueryClient();
   return useMutation({

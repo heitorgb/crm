@@ -35,6 +35,7 @@ import type {
 } from '@/types/ai';
 import { AiProviderLogo } from './ai-provider-logo';
 import { useAiCatalog, useAiSettings, useSaveAiSettings, useTestAiConnection } from './queries';
+import { TranscriptionSettingsCard } from './transcription-settings-card';
 
 interface Feedback {
   tone: 'success' | 'danger' | 'info';
@@ -92,14 +93,17 @@ export function AiSettingsTab({ canManage }: AiSettingsTabProps) {
   ].join('|');
 
   return (
-    <AiSettingsForm
-      key={key}
-      canManage={canManage}
-      initial={settings.data}
-      catalog={catalog.data}
-      feedback={feedback}
-      onFeedback={setFeedback}
-    />
+    <div className="space-y-6">
+      <AiSettingsForm
+        key={key}
+        canManage={canManage}
+        initial={settings.data}
+        catalog={catalog.data}
+        feedback={feedback}
+        onFeedback={setFeedback}
+      />
+      <TranscriptionSettingsCard canManage={canManage} />
+    </div>
   );
 }
 

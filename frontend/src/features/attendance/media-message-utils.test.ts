@@ -20,6 +20,7 @@ function message(overrides: Partial<ConversationMessage> = {}): ConversationMess
     occurredAt: '2026-10-14T12:00:00.000Z',
     createdAt: '2026-10-14T12:00:00.000Z',
     attachments: [],
+    transcription: null,
     ...overrides,
   };
 }

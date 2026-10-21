@@ -12,6 +12,7 @@ import { PasswordService } from '../../src/modules/auth/password.service.js';
 import { WebhookImageService } from '../../src/modules/integrations/webhooks/webhook-image.service.js';
 import { EvolutionClient } from '../../src/modules/whatsapp/evolution/evolution.client.js';
 import { AiProviderFactory } from '../../src/modules/ai/ai.providers.js';
+import { TranscriptionProviderFactory } from '../../src/modules/transcription/transcription.providers.js';
 
 export const TEST_PASSWORD = 'correct-horse-battery';
 
@@ -27,6 +28,7 @@ export interface TestAppOptions {
   evolution?: unknown;
   imageService?: unknown;
   aiProviderFactory?: unknown;
+  transcriptionProviderFactory?: unknown;
   emailService?: unknown;
 }
 
@@ -42,6 +44,11 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestA
   }
   if (options.aiProviderFactory) {
     builder.overrideProvider(AiProviderFactory).useValue(options.aiProviderFactory);
+  }
+  if (options.transcriptionProviderFactory) {
+    builder.overrideProvider(TranscriptionProviderFactory).useValue(
+      options.transcriptionProviderFactory,
+    );
   }
   if (options.emailService) {
     builder.overrideProvider(EmailService).useValue(options.emailService);

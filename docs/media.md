@@ -28,6 +28,11 @@ Não-imagens (áudio/vídeo/documento) são armazenadas como recebidas, respeita
 - **Receber:** `audioMessage` (notas de voz PTT em OGG/Opus) é armazenado como está e exibido com um
   player próprio dentro do balão, com reproduzir/pausar, posição, tempo e velocidades 1×/1,5×/2×.
   O elemento `<audio>` fornece a reprodução; os controles são responsivos e acessíveis por teclado.
+- **Transcrição:** após o `media.process`, o job `transcription.process` transcreve áudios recebidos
+  por uma API externa configurada em Configurações → IA. O texto aparece abaixo do player,
+  claramente identificado como derivado do áudio, com estados de espera/processamento/falha e nova
+  tentativa manual quando permitida. A reprodução e o arquivo original são preservados. Detalhes,
+  provedores suportados, limites e privacidade em [`ai.md`](./ai.md).
 - **Player:** reprodução e barra ficam alinhadas na primeira linha; tempo, velocidade e download
   ficam na segunda. A barra ocupa toda a largura disponível e permite buscar até o fim do áudio.
 - **Baixar áudio:** o botão usa o arquivo já carregado pela rota autenticada, preservando o nome
@@ -90,6 +95,10 @@ AVATAR_DIMENSION=512
   `metadata.mediaError = 'too_large'` (sem binário) e a UI mostra “Arquivo maior que o permitido”.
 - Falha ao buscar mídia na Evolution: mensagem fica com `metadata.mediaError` (`fetch_failed`) e a UI
   mostra “Mídia indisponível”.
+- O aviso “Arquivo maior que o permitido” em mídia recebida usa `MEDIA_MAX_BYTES` (25 MB) e vale para
+  qualquer mídia (imagem, vídeo, áudio ou documento). Ele não é o limite de transcrição; áudios de
+  voz do WhatsApp normalmente ficam muito abaixo dele. O limite específico de transcrição é
+  `TRANSCRIPTION_MAX_BYTES` e é validado separadamente após a conversão para WAV.
 - O tipo real é validado pela decodificação (sharp), não apenas pelo `Content-Type`.
 - Chaves de armazenamento são geradas (`uuid`), nunca do nome enviado pelo cliente.
 

@@ -9,6 +9,7 @@ import { attachmentPath } from './services/attendance-service';
 import { mediaErrorLabel } from './media-message-utils';
 import { useAttachmentBlob } from './queries';
 import { AudioPlayer } from './audio-player';
+import { MessageTranscription } from './message-transcription';
 
 function useObjectUrl(blob: Blob | undefined): string | null {
   const [url, setUrl] = useState<string | null>(null);
@@ -168,7 +169,10 @@ function MessageAudio({ conversationId, message }: MediaProps) {
   }
 
   return (
-    <AudioPlayer key={url} src={url} fileName={attachment.fileName} />
+    <div className="min-w-0">
+      <AudioPlayer key={url} src={url} fileName={attachment.fileName} />
+      <MessageTranscription message={message} />
+    </div>
   );
 }
 

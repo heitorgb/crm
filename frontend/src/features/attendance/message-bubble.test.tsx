@@ -24,6 +24,7 @@ function buildMessage(
     occurredAt: new Date('2026-01-01T10:00:00.000Z').toISOString(),
     createdAt: new Date('2026-01-01T10:00:00.000Z').toISOString(),
     attachments: [],
+    transcription: null,
     ...overrides,
   };
 }

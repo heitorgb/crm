@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import sharp from 'sharp';
 import { PrismaService } from '../../src/infrastructure/prisma/prisma.service.js';
 import { REFRESH_COOKIE_NAME } from '../../src/modules/auth/auth.constants.js';
 import {
@@ -62,6 +63,144 @@ describe('Profile and settings (integration)', () => {
         headers: authHeaders(tenant),
       });
       expect(me.json().user.name).toBe('Nome Atualizado');
+    });
+  });
+
+  describe('foto de perfil', () => {
+    async function imageBuffer(): Promise<Buffer> {
+      return sharp({
+        create: { width: 900, height: 700, channels: 3, background: '#22c55e' },
+      })
+        .png()
+        .toBuffer();
+    }
+
+    function multipart(file: Buffer, fileName: string, mimeType: string) {
+      const boundary = `----orderup${randomUUID()}`;
+      return {
+        payload: Buffer.concat([
+          Buffer.from(
+            `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${fileName}"\r\nContent-Type: ${mimeType}\r\n\r\n`,
+          ),
+          file,
+          Buffer.from(`\r\n--${boundary}--\r\n`),
+        ]),
+        contentType: `multipart/form-data; boundary=${boundary}`,
+      };
+    }
+
+    it('uploads, serves, replaces and removes the authenticated user avatar', async () => {
+      const tenant = await seedTenant(harness.app, prisma, { name: 'Avatar' });
+      seeded.push(tenant);
+      const body = multipart(await imageBuffer(), 'avatar.png', 'image/png');
+
+      const uploaded = await harness.app.inject({
+        method: 'POST',
+        url: '/api/auth/me/avatar',
+        headers: { ...authHeaders(tenant), 'content-type': body.contentType },
+        payload: body.payload,
+      });
+
+      expect(uploaded.statusCode).toBe(200);
+      expect(uploaded.json().avatarUrl).toMatch(
+        new RegExp(`^/members/${tenant.membershipId}/avatar\\?v=\\d+$`),
+      );
+
+      const image = await harness.app.inject({
+        method: 'GET',
+        url: `/api${uploaded.json().avatarUrl}`,
+        headers: authHeaders(tenant),
+      });
+      expect(image.statusCode).toBe(200);
+      expect(image.headers['content-type']).toContain('image/jpeg');
+
+      const me = await harness.app.inject({
+        method: 'GET',
+        url: '/api/auth/me',
+        headers: authHeaders(tenant),
+      });
+      expect(me.json().user.avatarUrl).toBe(uploaded.json().avatarUrl);
+
+      const replacement = multipart(await imageBuffer(), 'avatar.png', 'image/png');
+      const replaced = await harness.app.inject({
+        method: 'POST',
+        url: '/api/auth/me/avatar',
+        headers: { ...authHeaders(tenant), 'content-type': replacement.contentType },
+        payload: replacement.payload,
+      });
+      expect(replaced.statusCode).toBe(200);
+      expect(replaced.json().avatarUrl).not.toBe(uploaded.json().avatarUrl);
+
+      const removed = await harness.app.inject({
+        method: 'DELETE',
+        url: '/api/auth/me/avatar',
+        headers: authHeaders(tenant),
+      });
+      expect(removed.statusCode).toBe(200);
+      expect(removed.json().avatarUrl).toBeNull();
+
+      const missing = await harness.app.inject({
+        method: 'GET',
+        url: `/api${replaced.json().avatarUrl}`,
+        headers: authHeaders(tenant),
+      });
+      expect(missing.statusCode).toBe(404);
+      expect(missing.json().code).toBe('AVATAR_NOT_FOUND');
+    });
+
+    it('rejects invalid files and requires authentication', async () => {
+      const tenant = await seedTenant(harness.app, prisma, { name: 'AvatarInvalid' });
+      seeded.push(tenant);
+      const body = multipart(Buffer.from('#!/bin/sh\necho pwned'), 'avatar.png', 'image/png');
+
+      const invalid = await harness.app.inject({
+        method: 'POST',
+        url: '/api/auth/me/avatar',
+        headers: { ...authHeaders(tenant), 'content-type': body.contentType },
+        payload: body.payload,
+      });
+      expect(invalid.statusCode).toBe(422);
+      expect(invalid.json().code).toBe('INVALID_AVATAR');
+
+      const anonymous = await harness.app.inject({
+        method: 'POST',
+        url: '/api/auth/me/avatar',
+        headers: { 'content-type': body.contentType },
+        payload: body.payload,
+      });
+      expect(anonymous.statusCode).toBe(401);
+
+      const big = multipart(Buffer.alloc(5_242_881, 1), 'avatar.png', 'image/png');
+      const tooLarge = await harness.app.inject({
+        method: 'POST',
+        url: '/api/auth/me/avatar',
+        headers: { ...authHeaders(tenant), 'content-type': big.contentType },
+        payload: big.payload,
+      });
+      expect(tooLarge.statusCode).toBe(413);
+      expect(tooLarge.json().code).toBe('AVATAR_TOO_LARGE');
+    });
+
+    it('does not expose another tenant avatar through the membership id', async () => {
+      const tenantA = await seedTenant(harness.app, prisma, { name: 'AvatarA' });
+      const tenantB = await seedTenant(harness.app, prisma, { name: 'AvatarB' });
+      seeded.push(tenantA, tenantB);
+      const body = multipart(await imageBuffer(), 'avatar.png', 'image/png');
+
+      await harness.app.inject({
+        method: 'POST',
+        url: '/api/auth/me/avatar',
+        headers: { ...authHeaders(tenantA), 'content-type': body.contentType },
+        payload: body.payload,
+      });
+
+      const crossTenant = await harness.app.inject({
+        method: 'GET',
+        url: `/api/members/${tenantA.membershipId}/avatar`,
+        headers: authHeaders(tenantB),
+      });
+      expect(crossTenant.statusCode).toBe(404);
+      expect(crossTenant.json().code).toBe('AVATAR_NOT_FOUND');
     });
   });
 

@@ -1,8 +1,11 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { Prisma, Role } from '@prisma/client';
 import { TenantContextService } from '../../common/tenant-context/tenant-context.service.js';
 import type { TenantContext } from '../../common/tenant-context/tenant-context.types.js';
+import { userAvatarUrl } from '../../common/user-avatar.js';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service.js';
+import { STORAGE, type StorageService } from '../../infrastructure/storage/storage.types.js';
+import { AvatarNotFoundError } from '../auth/auth.errors.js';
 import { PasswordService } from '../auth/password.service.js';
 import type { CreateMemberDto, UpdateMemberDto } from './dto/member.dto.js';
 import {
@@ -28,6 +31,7 @@ export interface MemberWithUser {
   userId: string;
   name: string;
   email: string;
+  avatarUrl: string | null;
   role: Role;
   active: boolean;
 }
@@ -55,7 +59,7 @@ const MEMBER_WITH_USER_SELECT = {
   userId: true,
   role: true,
   active: true,
-  user: { select: { name: true, email: true } },
+  user: { select: { name: true, email: true, avatarUpdatedAt: true } },
 } satisfies Prisma.TenantUserSelect;
 
 type PrismaMemberWithUser = Prisma.TenantUserGetPayload<{
@@ -68,6 +72,7 @@ export class MembershipsService {
     private readonly prisma: PrismaService,
     private readonly tenantContext: TenantContextService,
     private readonly passwords: PasswordService,
+    @Inject(STORAGE) private readonly storage: StorageService,
   ) {}
 
   async resolveContext(userId: string, tenantId: string): Promise<TenantContext> {
@@ -130,7 +135,7 @@ export class MembershipsService {
         userId: true,
         role: true,
         active: true,
-        user: { select: { name: true, email: true } },
+        user: { select: { name: true, email: true, avatarUpdatedAt: true } },
       },
       orderBy: { createdAt: 'asc' },
     });
@@ -140,9 +145,31 @@ export class MembershipsService {
       userId: member.userId,
       name: member.user.name,
       email: member.user.email,
+      avatarUrl: userAvatarUrl(member.id, member.user.avatarUpdatedAt),
       role: member.role,
       active: member.active,
     }));
+  }
+
+  async readAvatar(membershipId: string): Promise<{ buffer: Buffer; mimeType: string }> {
+    const { tenantId } = this.tenantContext.requireContext();
+    const membership = await this.prisma.tenantUser.findFirst({
+      where: { id: membershipId, tenantId, active: true, user: { active: true } },
+      select: { user: { select: { avatarStorageKey: true } } },
+    });
+
+    if (!membership?.user.avatarStorageKey) {
+      throw new AvatarNotFoundError();
+    }
+
+    try {
+      return {
+        buffer: await this.storage.get(membership.user.avatarStorageKey),
+        mimeType: 'image/jpeg',
+      };
+    } catch {
+      throw new AvatarNotFoundError();
+    }
   }
 
   async createMember(dto: CreateMemberDto): Promise<MemberWithUser> {
@@ -278,6 +305,7 @@ function toMemberWithUser(member: PrismaMemberWithUser): MemberWithUser {
     userId: member.userId,
     name: member.user.name,
     email: member.user.email,
+    avatarUrl: userAvatarUrl(member.id, member.user.avatarUpdatedAt),
     role: member.role,
     active: member.active,
   };

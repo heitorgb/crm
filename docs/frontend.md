@@ -143,7 +143,7 @@ frontend/
   organizações), `/admin/tenants/:id` (gerenciar membros, papéis e ativos) e `/admin/settings`
   (configurações globais, incluindo o preview de links nas mensagens). Ver
   [`tenant-provisioning.md`](./tenant-provisioning.md).
-- Perfil e configurações: `/perfil` (dados pessoais + senha) e `/configuracoes` (abas Organização,
+- Perfil e configurações: `/perfil` (dados pessoais, foto de perfil + senha) e `/configuracoes` (abas Organização,
   Equipe, Aparência, Atendimento, Notificações, WhatsApp e Menu Personalizado). A aba ativa é
   sincronizada com o parâmetro `?tab=` da URL. Ver [`settings.md`](./settings.md) e
   [`custom-menu.md`](./custom-menu.md).

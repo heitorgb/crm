@@ -9,6 +9,13 @@ Complementa [`authentication.md`](./authentication.md) e [`multi-tenancy.md`](./
 
 - **Dados pessoais**: nome editável (`PATCH /api/auth/me`); e-mail de login **não** editável; papel e
   organização atuais em leitura.
+- **Foto de perfil**: avatar circular com fallback de iniciais. Seleção de JPEG/PNG/WebP (até 5 MB),
+  prévia antes de confirmar, envio (`POST /api/auth/me/avatar`, multipart), substituição e remoção
+  (`DELETE /api/auth/me/avatar`). O backend valida o conteúdo real com `sharp`, recorta em quadrado,
+  redimensiona para `AVATAR_DIMENSION` (padrão 512 px), reencoda em JPEG e grava no storage. A URL
+  pública (`/api/members/:membershipId/avatar?v=...`) é autenticada e escopada pelo tenant; o
+  `?v=` funciona como cache busting. A troca atualiza o `auth-store` e aparece imediatamente no
+  header, menu da conta, perfil e equipe, sem novo login.
 - **Senha**: senha atual + nova + confirmação (`POST /api/auth/change-password`). Ao trocar, os
   refresh tokens das **outras sessões** são revogados (`RefreshTokenService.revokeAllForUser`),
   mantendo a sessão atual (cookie `orderup_refresh`). Senha atual incorreta → `INVALID_CURRENT_PASSWORD`
@@ -130,4 +137,3 @@ Disponível apenas para administradores da plataforma (`isPlatformAdmin`), em
 ## Fora de escopo
 
 - Alteração de e-mail, convite por token/e-mail e recuperação de senha (sem infra de e-mail).
-- Avatar/upload de imagem de perfil.

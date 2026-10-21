@@ -10,6 +10,7 @@ export interface Member {
   userId: string;
   name: string;
   email: string;
+  avatarUrl: string | null;
   role: Role;
   active: boolean;
 }

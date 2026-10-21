@@ -110,7 +110,12 @@ export function TeamTab({ canManage }: { canManage: boolean }) {
                   className="min-w-0 space-y-3 rounded-md border border-border p-3"
                 >
                   <div className="flex min-w-0 items-start gap-2">
-                    <UserAvatar name={member.name} className="size-9 shrink-0" />
+                    <UserAvatar
+                      name={member.name}
+                      src={member.avatarUrl}
+                      authenticated
+                      className="size-9 shrink-0"
+                    />
                     <div className="min-w-0 flex-1">
                       <p className="break-words text-sm font-medium text-foreground">
                         {member.name}
@@ -192,7 +197,12 @@ export function TeamTab({ canManage }: { canManage: boolean }) {
                     <TableRow key={member.id}>
                       <TableCell>
                         <div className="flex items-center gap-2">
-                          <UserAvatar name={member.name} className="size-8" />
+                          <UserAvatar
+                            name={member.name}
+                            src={member.avatarUrl}
+                            authenticated
+                            className="size-8"
+                          />
                           <div className="min-w-0">
                             <div className="truncate text-sm font-medium text-foreground">
                               {member.name}

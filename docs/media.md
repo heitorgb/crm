@@ -56,6 +56,20 @@ Provider padrão **`local`** (disco), atrás de uma abstração `StorageService`
 `MessageAttachment.storageKey` guarda a chave principal; `metadata` guarda `width`, `height` e
 `thumbnailKey`. Não há migration nova (campos já existentes).
 
+### Fotos de perfil
+
+Avatares de usuário usam o mesmo `StorageService`, com chave global por usuário (a pessoa pode
+pertencer a vários tenants):
+
+```text
+{STORAGE_LOCAL_DIR}/users/{userId}/avatar/{uuid}.jpg
+```
+
+`User.avatarStorageKey` guarda a referência e `User.avatarUpdatedAt` versiona a URL. A imagem é
+recortada em quadrado (`AVATAR_DIMENSION`, padrão 512 px), reencodada em JPEG e limitada a
+`AVATAR_MAX_BYTES` (padrão 5 MB). O acesso é feito por `GET /api/members/:membershipId/avatar`,
+autenticado e validado contra o tenant atual; a remoção/substituição apaga o arquivo anterior.
+
 ## Variáveis de ambiente
 
 ```env
@@ -65,6 +79,8 @@ MEDIA_MAX_BYTES=26214400            # 25 MB
 MEDIA_IMAGE_MAX_DIMENSION=1600
 MEDIA_IMAGE_QUALITY=80
 MEDIA_THUMBNAIL_DIMENSION=256
+AVATAR_MAX_BYTES=5242880          # 5 MB
+AVATAR_DIMENSION=512
 ```
 
 ## Comportamento e limites

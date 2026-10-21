@@ -1,5 +1,6 @@
-import { useState, type FormEvent } from 'react';
-import { KeyRound, Loader2, UserRound } from 'lucide-react';
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
+import { Camera, Check, KeyRound, Loader2, Trash2, UserRound } from 'lucide-react';
+import { ConfirmDialog } from '@/components/common/confirm-dialog';
 import { PageHeader } from '@/components/common/page-header';
 import { UserAvatar } from '@/components/common/user-avatar';
 import { Badge } from '@/components/ui/badge';
@@ -11,6 +12,7 @@ import { ApiError } from '@/lib/api-client';
 import { useAuthStore } from '@/stores/auth-store';
 import type { Role } from '@/types/auth';
 import { useChangePassword, useUpdateProfile } from '@/features/auth/queries';
+import { useRemoveAvatar, useUploadAvatar } from './queries';
 
 const roleLabel: Record<Role, string> = {
   OWNER: 'Proprietário',
@@ -18,12 +20,23 @@ const roleLabel: Record<Role, string> = {
   USER: 'Usuário',
 };
 
+const AVATAR_MAX_BYTES = 5 * 1024 * 1024;
+const AVATAR_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+
 export function ProfilePage() {
   const session = useAuthStore((state) => state.session);
   const updateProfile = useUpdateProfile();
   const changePassword = useChangePassword();
+  const uploadAvatar = useUploadAvatar();
+  const removeAvatar = useRemoveAvatar();
+  const avatarInputRef = useRef<HTMLInputElement>(null);
 
   const [name, setName] = useState(session?.user.name ?? '');
+  const [avatarFile, setAvatarFile] = useState<File | null>(null);
+  const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
+  const [avatarError, setAvatarError] = useState<string | null>(null);
+  const [avatarSaved, setAvatarSaved] = useState(false);
+  const [removeAvatarOpen, setRemoveAvatarOpen] = useState(false);
   const [profileError, setProfileError] = useState<string | null>(null);
   const [profileSaved, setProfileSaved] = useState(false);
 
@@ -32,6 +45,74 @@ export function ProfilePage() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [passwordSaved, setPasswordSaved] = useState(false);
+
+  useEffect(
+    () => () => {
+      if (avatarPreview) {
+        URL.revokeObjectURL(avatarPreview);
+      }
+    },
+    [avatarPreview],
+  );
+
+  const handleAvatarSelected = (event: ChangeEvent<HTMLInputElement>): void => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    setAvatarError(null);
+    setAvatarSaved(false);
+
+    if (!file) {
+      return;
+    }
+    if (!AVATAR_TYPES.includes(file.type)) {
+      setAvatarError('Selecione uma imagem JPEG, PNG ou WebP.');
+      return;
+    }
+    if (file.size > AVATAR_MAX_BYTES) {
+      setAvatarError('A imagem deve ter no máximo 5 MB.');
+      return;
+    }
+
+    setAvatarFile(file);
+    setAvatarPreview(URL.createObjectURL(file));
+  };
+
+  const handleAvatarUpload = async (): Promise<void> => {
+    if (!avatarFile) {
+      return;
+    }
+    setAvatarError(null);
+    setAvatarSaved(false);
+
+    try {
+      await uploadAvatar.mutateAsync(avatarFile);
+      setAvatarFile(null);
+      setAvatarPreview(null);
+      setAvatarSaved(true);
+    } catch (error) {
+      setAvatarError(
+        error instanceof ApiError ? error.message : 'Não foi possível salvar a foto de perfil.',
+      );
+    }
+  };
+
+  const handleAvatarRemove = async (): Promise<void> => {
+    setAvatarError(null);
+    setAvatarSaved(false);
+
+    try {
+      await removeAvatar.mutateAsync();
+      setAvatarFile(null);
+      setAvatarPreview(null);
+      setRemoveAvatarOpen(false);
+      setAvatarSaved(true);
+    } catch (error) {
+      setAvatarError(
+        error instanceof ApiError ? error.message : 'Não foi possível remover a foto de perfil.',
+      );
+      setRemoveAvatarOpen(false);
+    }
+  };
 
   const handleProfileSubmit = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault();
@@ -97,11 +178,108 @@ export function ProfilePage() {
           </CardHeader>
           <CardContent>
             <form className="space-y-4" onSubmit={(event) => void handleProfileSubmit(event)}>
-              <div className="flex items-center gap-3">
-                <UserAvatar name={session?.user.name ?? '?'} className="size-12" />
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-medium">{session?.user.name}</p>
-                  <p className="truncate text-xs text-muted-foreground">{session?.user.email}</p>
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+                <div className="relative mx-auto shrink-0 sm:mx-0">
+                  <UserAvatar
+                    name={session?.user.name ?? '?'}
+                    src={avatarPreview ?? session?.user.avatarUrl}
+                    authenticated={!avatarPreview}
+                    className="size-20 text-lg"
+                  />
+                  <Button
+                    type="button"
+                    size="icon"
+                    className="absolute -bottom-1 -right-1 size-8 rounded-full shadow-md"
+                    onClick={() => avatarInputRef.current?.click()}
+                    aria-label="Selecionar foto de perfil"
+                  >
+                    <Camera />
+                  </Button>
+                  <input
+                    ref={avatarInputRef}
+                    type="file"
+                    accept={AVATAR_TYPES.join(',')}
+                    className="hidden"
+                    onChange={handleAvatarSelected}
+                  />
+                </div>
+
+                <div className="min-w-0 flex-1 space-y-2 text-center sm:text-left">
+                  <div>
+                    <p className="truncate text-sm font-medium">{session?.user.name}</p>
+                    <p className="truncate text-xs text-muted-foreground">{session?.user.email}</p>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    JPEG, PNG ou WebP, até 5 MB. A imagem é recortada em formato quadrado.
+                  </p>
+                  <div className="flex flex-wrap items-center justify-center gap-2 sm:justify-start">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => avatarInputRef.current?.click()}
+                      disabled={uploadAvatar.isPending}
+                    >
+                      <Camera />
+                      {avatarPreview
+                        ? 'Escolher outra foto'
+                        : session?.user.avatarUrl
+                          ? 'Trocar foto'
+                          : 'Adicionar foto'}
+                    </Button>
+                    {avatarPreview ? (
+                      <>
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={() => void handleAvatarUpload()}
+                          disabled={uploadAvatar.isPending}
+                        >
+                          {uploadAvatar.isPending ? (
+                            <Loader2 className="animate-spin" />
+                          ) : (
+                            <Check />
+                          )}
+                          Salvar foto
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setAvatarFile(null);
+                            setAvatarPreview(null);
+                            setAvatarError(null);
+                          }}
+                          disabled={uploadAvatar.isPending}
+                        >
+                          Cancelar
+                        </Button>
+                      </>
+                    ) : session?.user.avatarUrl ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="text-danger"
+                        onClick={() => setRemoveAvatarOpen(true)}
+                        disabled={removeAvatar.isPending}
+                      >
+                        {removeAvatar.isPending ? (
+                          <Loader2 className="animate-spin" />
+                        ) : (
+                          <Trash2 />
+                        )}
+                        Remover foto
+                      </Button>
+                    ) : null}
+                  </div>
+                  {avatarError ? (
+                    <p className="text-xs font-medium text-danger">{avatarError}</p>
+                  ) : null}
+                  {avatarSaved && !avatarError ? (
+                    <p className="text-xs font-medium text-success">Foto de perfil atualizada.</p>
+                  ) : null}
                 </div>
               </div>
 
@@ -195,6 +373,17 @@ export function ProfilePage() {
           </CardContent>
         </Card>
       </div>
+
+      <ConfirmDialog
+        open={removeAvatarOpen}
+        onOpenChange={setRemoveAvatarOpen}
+        title="Remover foto de perfil"
+        description="A foto personalizada será excluída e o avatar com suas iniciais voltará a ser exibido."
+        confirmLabel="Remover"
+        destructive
+        loading={removeAvatar.isPending}
+        onConfirm={() => void handleAvatarRemove()}
+      />
     </div>
   );
 }

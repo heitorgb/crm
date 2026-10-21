@@ -2,7 +2,9 @@ import type { ConfigService } from '@nestjs/config';
 import type { JwtService } from '@nestjs/jwt';
 import type { TenantContext } from '../../../src/common/tenant-context/tenant-context.types.js';
 import type { Env } from '../../../src/config/env.validation.js';
+import type { MediaProcessingService } from '../../../src/infrastructure/media/media-processing.service.js';
 import type { PrismaService } from '../../../src/infrastructure/prisma/prisma.service.js';
+import type { StorageService } from '../../../src/infrastructure/storage/storage.types.js';
 import { AuthService } from '../../../src/modules/auth/auth.service.js';
 import {
   InvalidCurrentPasswordError,
@@ -31,17 +33,32 @@ function createService() {
     hash: vi.fn(async () => 'new-hash'),
   };
   const refreshTokens = { revokeAllForUser: vi.fn() };
+  const media = {
+    detectImageFormat: vi.fn(),
+    optimizeAvatar: vi.fn(),
+  };
+  const storage = {
+    put: vi.fn(async () => undefined),
+    get: vi.fn(),
+    exists: vi.fn(),
+    delete: vi.fn(async () => undefined),
+  };
+  const config = {
+    get: vi.fn((key: string) => (key === 'AVATAR_MAX_BYTES' ? 5_242_880 : undefined)),
+  };
 
   const service = new AuthService(
     prisma as unknown as PrismaService,
     passwords as unknown as PasswordService,
     refreshTokens as unknown as RefreshTokenService,
     {} as JwtService,
-    {} as ConfigService<Env, true>,
+    config as unknown as ConfigService<Env, true>,
     {} as MembershipsService,
+    media as unknown as MediaProcessingService,
+    storage as unknown as StorageService,
   );
 
-  return { service, prisma, passwords, refreshTokens };
+  return { service, prisma, passwords, refreshTokens, media, storage };
 }
 
 describe('AuthService profile & password', () => {
@@ -54,6 +71,7 @@ describe('AuthService profile & password', () => {
       id: 'user-1',
       name: 'Ana',
       email: 'ana@x.com',
+      avatarUrl: null,
     });
     expect(prisma.user.update).toHaveBeenCalledWith({
       where: { id: 'user-1' },
@@ -107,5 +125,54 @@ describe('AuthService profile & password', () => {
       data: { passwordHash: 'new-hash' },
     });
     expect(refreshTokens.revokeAllForUser).toHaveBeenCalledWith('user-1', 'current-token');
+  });
+
+  it('stores an optimized avatar and removes the previous file', async () => {
+    const { service, prisma, media, storage } = createService();
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'user-1',
+      name: 'Ana',
+      email: 'ana@x.com',
+      active: true,
+      avatarStorageKey: 'users/user-1/avatar/old.jpg',
+      avatarUpdatedAt: null,
+    });
+    media.detectImageFormat.mockResolvedValue('png');
+    media.optimizeAvatar.mockResolvedValue({
+      buffer: Buffer.from('jpeg'),
+      mimeType: 'image/jpeg',
+      extension: 'jpg',
+      width: 512,
+      height: 512,
+      size: 4,
+    });
+    prisma.user.update.mockResolvedValue({
+      id: 'user-1',
+      name: 'Ana',
+      email: 'ana@x.com',
+      avatarStorageKey: 'users/user-1/avatar/new.jpg',
+      avatarUpdatedAt: new Date('2026-10-21T12:00:00.000Z'),
+    });
+
+    const result = await service.updateAvatar(context, Buffer.from('image'));
+
+    expect(media.optimizeAvatar).toHaveBeenCalled();
+    expect(storage.put).toHaveBeenCalledWith(
+      expect.stringMatching(/^users\/user-1\/avatar\/.+\.jpg$/),
+      expect.any(Buffer),
+    );
+    expect(storage.delete).toHaveBeenCalledWith('users/user-1/avatar/old.jpg');
+    expect(result.avatarUrl).toBe(
+      `/members/member-1/avatar?v=${new Date('2026-10-21T12:00:00.000Z').getTime()}`,
+    );
+  });
+
+  it('rejects a file that is not an allowed image', async () => {
+    const { service, media } = createService();
+    media.detectImageFormat.mockResolvedValue('gif');
+
+    await expect(service.updateAvatar(context, Buffer.from('image'))).rejects.toMatchObject({
+      code: 'INVALID_AVATAR',
+    });
   });
 });

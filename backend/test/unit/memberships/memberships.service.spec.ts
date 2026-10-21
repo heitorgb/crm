@@ -68,6 +68,7 @@ function createService(): {
       prisma as unknown as PrismaService,
       tenantContext,
       passwords as unknown as PasswordService,
+      { get: vi.fn(), put: vi.fn(), exists: vi.fn(), delete: vi.fn() },
     ),
     prisma,
     passwords,

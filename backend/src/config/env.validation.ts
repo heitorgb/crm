@@ -101,6 +101,8 @@ const integrationEnvSchema = z.object({
   MEDIA_IMAGE_MAX_DIMENSION: z.coerce.number().int().positive().default(1600),
   MEDIA_IMAGE_QUALITY: z.coerce.number().int().min(1).max(100).default(80),
   MEDIA_THUMBNAIL_DIMENSION: z.coerce.number().int().positive().default(256),
+  AVATAR_MAX_BYTES: z.coerce.number().int().positive().default(5_242_880),
+  AVATAR_DIMENSION: z.coerce.number().int().positive().default(512),
   BILLING_TIMEZONE: z.string().min(1).default('America/Sao_Paulo'),
   BULK_MEDIA_MAX_RECIPIENTS: z.coerce.number().int().positive().default(100),
   BULK_MEDIA_INTERVAL_MS: z.coerce.number().int().min(0).default(1500),

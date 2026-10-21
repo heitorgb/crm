@@ -14,6 +14,10 @@ export interface ProcessedImage {
 
 const MAX_INPUT_PIXELS = 100_000_000;
 
+export const ALLOWED_AVATAR_FORMATS = ['jpeg', 'png', 'webp'] as const;
+
+export type AvatarFormat = (typeof ALLOWED_AVATAR_FORMATS)[number];
+
 @Injectable()
 export class MediaProcessingService {
   constructor(private readonly config: ConfigService<Env, true>) {}
@@ -26,6 +30,40 @@ export class MediaProcessingService {
     } catch {
       return false;
     }
+  }
+
+  /** Detects the real image format from the file contents. */
+  async detectImageFormat(input: Buffer): Promise<string | null> {
+    try {
+      const metadata = await sharp(input, { limitInputPixels: MAX_INPUT_PIXELS }).metadata();
+      return metadata.format ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Square avatar re-encoded as JPEG to keep uploads small and predictable. */
+  async optimizeAvatar(input: Buffer): Promise<ProcessedImage> {
+    const dimension = this.config.get('AVATAR_DIMENSION');
+    const quality = this.config.get('MEDIA_IMAGE_QUALITY');
+
+    const buffer = await sharp(input, { limitInputPixels: MAX_INPUT_PIXELS, failOn: 'none' })
+      .rotate()
+      .resize({ width: dimension, height: dimension, fit: 'cover', position: 'centre' })
+      .flatten({ background: '#ffffff' })
+      .jpeg({ quality, mozjpeg: true })
+      .toBuffer();
+
+    const metadata = await sharp(buffer).metadata();
+
+    return {
+      buffer,
+      mimeType: 'image/jpeg',
+      extension: 'jpg',
+      width: metadata.width ?? 0,
+      height: metadata.height ?? 0,
+      size: buffer.length,
+    };
   }
 
   /** Resizes/re-encodes an image to a reduced JPEG (strips metadata). */

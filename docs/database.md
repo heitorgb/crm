@@ -124,10 +124,13 @@ instâncias WhatsApp (migration `20261020140000_tenant_whatsapp_instance_limit`)
 | `passwordHash` | `text`      | hash Argon2id; nunca a senha |
 | `name`         | `text`      |                         |
 | `active`       | `boolean`   | default `true`; usuário inativo perde acesso |
+| `avatarStorageKey` | `text?` | chave da foto no `StorageService` (migration `20261021020000_user_avatar`) |
+| `avatarUpdatedAt` | `timestamp?` | versão usada no cache busting da URL do avatar |
 | `createdAt`    | `timestamp` |                         |
 | `updatedAt`    | `timestamp` |                         |
 
-`User` é global: uma pessoa pode pertencer a vários tenants.
+`User` é global: uma pessoa pode pertencer a vários tenants. A foto de perfil também é global
+(uma por pessoa), mas o endpoint de leitura valida a membership do tenant atual.
 
 ### `TenantUser` (membership)
 

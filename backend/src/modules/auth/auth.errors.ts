@@ -59,3 +59,25 @@ export class InvalidCurrentPasswordError extends AppException {
     super('INVALID_CURRENT_PASSWORD', 'Current password is incorrect', 400);
   }
 }
+
+export class InvalidAvatarError extends AppException {
+  constructor() {
+    super(
+      'INVALID_AVATAR',
+      'Envie uma imagem JPEG, PNG ou WebP válida para usar como foto de perfil.',
+      422,
+    );
+  }
+}
+
+export class AvatarTooLargeError extends AppException {
+  constructor() {
+    super('AVATAR_TOO_LARGE', 'A imagem deve ter no máximo 5 MB.', 413);
+  }
+}
+
+export class AvatarNotFoundError extends AppException {
+  constructor() {
+    super('AVATAR_NOT_FOUND', 'Este usuário não possui foto de perfil.', 404);
+  }
+}

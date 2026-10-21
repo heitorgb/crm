@@ -1,15 +1,30 @@
 import { useState, type FormEvent } from 'react';
-import { AlertCircle, Loader2, Lock, Mail, Sparkles } from 'lucide-react';
+import {
+  AlertCircle,
+  ArrowRight,
+  Eye,
+  EyeOff,
+  Loader2,
+  Lock,
+  Mail,
+  ShieldCheck,
+  Sparkles,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useLogin } from '@/features/auth/queries';
 import { ApiError } from '@/lib/api-client';
+import { cn } from '@/lib/utils';
+import { LoginShowcase } from './login-showcase';
+
+const fieldClasses =
+  'h-11 rounded-lg border-white/[0.09] bg-white/[0.035] pl-10 text-sm text-[var(--auth-foreground)] shadow-none placeholder:text-[var(--auth-muted)] hover:border-white/[0.16] focus-visible:border-emerald-400/60 focus-visible:ring-2 focus-visible:ring-emerald-400/20 focus-visible:ring-offset-0 disabled:cursor-not-allowed disabled:opacity-60';
 
 export function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [passwordVisible, setPasswordVisible] = useState(false);
   const login = useLogin();
 
   const errorMessage =
@@ -25,112 +40,163 @@ export function LoginPage() {
   };
 
   return (
-    <div className="grid min-h-screen lg:grid-cols-2">
-      <div className="relative hidden flex-col justify-between overflow-hidden bg-[#070A12] p-10 text-white lg:flex">
-        <div className="brand-gradient pointer-events-none absolute -right-24 -top-24 size-72 rounded-full opacity-25 blur-3xl" />
-        <div className="brand-gradient pointer-events-none absolute -bottom-32 -left-16 size-80 rounded-full opacity-20 blur-3xl" />
+    <div className="auth-screen relative min-h-dvh overflow-hidden">
+      <div className="auth-canvas pointer-events-none absolute inset-0" aria-hidden="true" />
 
-        <div className="relative flex items-center gap-3">
-          <img src="/images/logo-orderup.png" alt="OrderUp" className="size-10 rounded-lg" />
-          <div>
-            <p className="text-sm font-semibold">OrderUp</p>
-            <p className="text-xs text-white/60">CRM</p>
-          </div>
-        </div>
+      <div className="relative mx-auto grid min-h-dvh w-full max-w-[1680px] lg:grid-cols-[minmax(0,1.08fr)_minmax(0,0.92fr)]">
+        <LoginShowcase />
 
-        <div className="relative space-y-4">
-          <h2 className="max-w-md text-3xl font-semibold leading-tight">
-            Múltiplos WhatsApps, um chat centralizado e seus contatos.
-          </h2>
-          <p className="max-w-md text-sm text-white/70">
-            Conecte vários números, acompanhe todas as conversas em um só lugar e mantenha o
-            histórico organizado por contato.
-          </p>
-          <ul className="space-y-2 text-sm text-white/80">
-            <li className="flex items-center gap-2">
-              <Sparkles className="size-4 text-emerald-400" /> Vários WhatsApps em um só lugar
-            </li>
-            <li className="flex items-center gap-2">
-              <Sparkles className="size-4 text-emerald-400" /> Isolamento total entre organizações
-            </li>
-            <li className="flex items-center gap-2">
-              <Sparkles className="size-4 text-emerald-400" /> Histórico de conversas por contato
-            </li>
-          </ul>
-        </div>
+        <main className="relative flex min-h-dvh flex-col justify-center px-4 pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-[max(1.5rem,env(safe-area-inset-top))] sm:px-6 lg:px-10 lg:py-12 xl:px-16">
+          <div className="auth-panel-glow pointer-events-none absolute inset-0" aria-hidden="true" />
 
-        <p className="relative text-xs text-white/40">
-          © {new Date().getFullYear()} OrderUp. Todos os direitos reservados.
-        </p>
-      </div>
-
-      <div className="flex items-center justify-center bg-background p-6">
-        <Card className="w-full max-w-sm">
-          <CardContent className="space-y-5 p-6">
-            <div className="flex items-center gap-3 lg:hidden">
-              <img src="/images/logo-orderup.png" alt="OrderUp" className="size-9 rounded-lg" />
+          <div className="relative mx-auto flex w-full max-w-[26rem] flex-col">
+            <div className="mb-8 flex items-center gap-3 lg:hidden">
+              <img
+                src="/images/logo-orderup.png"
+                alt="OrderUp"
+                className="size-11 rounded-xl shadow-[0_10px_30px_-14px_rgba(0,0,0,0.9)] ring-1 ring-white/10"
+              />
               <div>
-                <p className="text-sm font-semibold">OrderUp CRM</p>
-                <p className="text-xs text-muted-foreground">Acesso da equipe</p>
+                <p className="text-base font-semibold tracking-tight">OrderUp CRM</p>
+                <p className="text-xs text-[var(--auth-muted)]">Atendimento omnichannel</p>
               </div>
             </div>
 
-            <div className="space-y-1">
-              <h1 className="text-lg font-semibold">Entrar na sua conta</h1>
-              <p className="text-sm text-muted-foreground">
-                Use as credenciais da sua organização.
-              </p>
+            <div className="mb-5 hidden items-center gap-2 text-[11px] font-medium uppercase tracking-[0.18em] text-[var(--auth-muted)] lg:flex">
+              <ShieldCheck className="size-3.5 text-emerald-400/80" />
+              Acesso seguro
             </div>
 
-            <form className="space-y-4" onSubmit={handleSubmit}>
-              <div className="space-y-1.5">
-                <Label htmlFor="email">E-mail</Label>
-                <div className="relative">
-                  <Mail className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    id="email"
-                    type="email"
-                    autoComplete="email"
-                    required
-                    value={email}
-                    onChange={(event) => setEmail(event.target.value)}
-                    placeholder="voce@empresa.com.br"
-                    className="pl-8"
-                  />
-                </div>
+            <div className="auth-form-surface rounded-2xl p-6 sm:p-8">
+              <div className="space-y-2">
+                <span className="inline-flex items-center gap-2 rounded-full border border-emerald-400/20 bg-emerald-500/[0.08] px-3 py-1 text-[10.5px] font-medium uppercase tracking-[0.14em] text-emerald-300">
+                  <Sparkles className="size-3" />
+                  Bem-vindo de volta
+                </span>
+                <h1 className="text-[1.7rem] font-semibold leading-tight tracking-[-0.025em] sm:text-[1.85rem]">
+                  Entre na sua conta
+                </h1>
+                <p className="text-sm leading-relaxed text-[var(--auth-muted)]">
+                  Acesse o painel da sua organização e continue de onde parou.
+                </p>
               </div>
 
-              <div className="space-y-1.5">
-                <Label htmlFor="password">Senha</Label>
-                <div className="relative">
-                  <Lock className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    id="password"
-                    type="password"
-                    autoComplete="current-password"
-                    required
-                    value={password}
-                    onChange={(event) => setPassword(event.target.value)}
-                    placeholder="••••••••"
-                    className="pl-8"
-                  />
+              <form className="mt-7 space-y-5" onSubmit={handleSubmit}>
+                <div className="space-y-2">
+                  <Label
+                    htmlFor="email"
+                    className="text-[13px] font-medium text-[var(--auth-muted-strong)]"
+                  >
+                    E-mail
+                  </Label>
+                  <div className="group relative">
+                    <Mail
+                      className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-[var(--auth-muted)] transition-colors group-focus-within:text-emerald-300"
+                      aria-hidden="true"
+                    />
+                    <Input
+                      id="email"
+                      type="email"
+                      autoComplete="email"
+                      required
+                      value={email}
+                      onChange={(event) => setEmail(event.target.value)}
+                      placeholder="voce@empresa.com.br"
+                      disabled={login.isPending}
+                      aria-invalid={errorMessage ? true : undefined}
+                      aria-describedby={errorMessage ? 'login-error' : undefined}
+                      className={fieldClasses}
+                    />
+                  </div>
                 </div>
+
+                <div className="space-y-2">
+                  <Label
+                    htmlFor="password"
+                    className="text-[13px] font-medium text-[var(--auth-muted-strong)]"
+                  >
+                    Senha
+                  </Label>
+                  <div className="group relative">
+                    <Lock
+                      className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-[var(--auth-muted)] transition-colors group-focus-within:text-emerald-300"
+                      aria-hidden="true"
+                    />
+                    <Input
+                      id="password"
+                      type={passwordVisible ? 'text' : 'password'}
+                      autoComplete="current-password"
+                      required
+                      value={password}
+                      onChange={(event) => setPassword(event.target.value)}
+                      placeholder="••••••••"
+                      disabled={login.isPending}
+                      aria-invalid={errorMessage ? true : undefined}
+                      aria-describedby={errorMessage ? 'login-error' : undefined}
+                      className={cn(fieldClasses, 'pr-11')}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setPasswordVisible((visible) => !visible)}
+                      aria-label={passwordVisible ? 'Ocultar senha' : 'Mostrar senha'}
+                      aria-pressed={passwordVisible}
+                      aria-controls="password"
+                      className="absolute right-1.5 top-1/2 grid size-8 -translate-y-1/2 place-items-center rounded-md text-[var(--auth-muted)] transition-colors hover:bg-white/[0.06] hover:text-[var(--auth-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/40"
+                    >
+                      {passwordVisible ? (
+                        <EyeOff className="size-4" aria-hidden="true" />
+                      ) : (
+                        <Eye className="size-4" aria-hidden="true" />
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                {errorMessage ? (
+                  <div
+                    id="login-error"
+                    role="alert"
+                    className="flex items-start gap-2.5 rounded-lg border border-red-400/25 bg-red-500/10 px-3 py-2.5 text-xs leading-relaxed text-red-200"
+                  >
+                    <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+                    <span>{errorMessage}</span>
+                  </div>
+                ) : null}
+
+                <Button
+                  type="submit"
+                  disabled={login.isPending}
+                  aria-busy={login.isPending}
+                  className="auth-submit group h-11 w-full rounded-lg border border-emerald-300/20 px-4 text-sm font-semibold text-emerald-950 shadow-none transition-all focus-visible:ring-2 focus-visible:ring-emerald-300/60 focus-visible:ring-offset-0 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {login.isPending ? (
+                    <>
+                      <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                      Entrando...
+                    </>
+                  ) : (
+                    <>
+                      Entrar
+                      <ArrowRight
+                        className="size-4 transition-transform group-hover:translate-x-0.5"
+                        aria-hidden="true"
+                      />
+                    </>
+                  )}
+                </Button>
+              </form>
+
+              <div className="mt-6 flex items-center justify-center gap-2 border-t border-white/[0.06] pt-5 text-[11px] text-[var(--auth-muted)]">
+                <ShieldCheck className="size-3.5 text-emerald-400/80" aria-hidden="true" />
+                Conexão segura · Acesso restrito à equipe
               </div>
+            </div>
 
-              {errorMessage ? (
-                <div className="flex items-start gap-2 rounded-md border border-danger/25 bg-danger/10 p-2.5 text-xs text-danger">
-                  <AlertCircle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-                  <span>{errorMessage}</span>
-                </div>
-              ) : null}
-
-              <Button type="submit" className="w-full" disabled={login.isPending}>
-                {login.isPending ? <Loader2 className="animate-spin" /> : null}
-                Entrar
-              </Button>
-            </form>
-          </CardContent>
-        </Card>
+            <p className="mt-6 text-center text-[11px] leading-relaxed text-[var(--auth-muted)]">
+              © {new Date().getFullYear()} OrderUp CRM. Todos os direitos reservados.
+            </p>
+          </div>
+        </main>
       </div>
     </div>
   );

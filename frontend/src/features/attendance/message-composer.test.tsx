@@ -25,6 +25,32 @@ vi.mock('./use-audio-recorder', () => ({
   }),
 }));
 
+vi.mock('@/features/quick-replies/queries', () => ({
+  useQuickReplies: () => ({
+    data: {
+      data: [
+        {
+          id: 'quick-reply-1',
+          title: 'Boas-vindas',
+          content: 'Olá! Como podemos ajudar?',
+          createdAt: '2026-10-20T10:00:00.000Z',
+          updatedAt: '2026-10-20T10:00:00.000Z',
+        },
+        {
+          id: 'quick-reply-2',
+          title: 'Horário de funcionamento',
+          content: 'Atendemos de segunda a sexta, das 8h às 18h.',
+          createdAt: '2026-10-20T10:00:00.000Z',
+          updatedAt: '2026-10-20T10:00:00.000Z',
+        },
+      ],
+      meta: { page: 1, perPage: 100, total: 2, totalPages: 1 },
+    },
+    isPending: false,
+    isError: false,
+  }),
+}));
+
 const PREVIEW = {
   url: 'https://exemplo.com/artigo',
   title: 'Título da página',
@@ -119,5 +145,39 @@ describe('MessageComposer link preview', () => {
 
     expect(useLinkPreview).not.toHaveBeenCalled();
     expect(screen.queryByLabelText('Remover pré-visualização do link')).toBeNull();
+  });
+});
+
+describe('MessageComposer quick replies', () => {
+  it('filters quick replies by the text after the slash and inserts the selected one', () => {
+    renderComposer();
+    const textarea = screen.getByPlaceholderText('Mensagem');
+
+    fireEvent.change(textarea, { target: { value: '/' } });
+    expect(screen.getByRole('listbox', { name: 'Respostas rápidas' })).toBeTruthy();
+    expect(screen.getByText('Boas-vindas')).toBeTruthy();
+    expect(screen.getByText('Horário de funcionamento')).toBeTruthy();
+
+    fireEvent.change(textarea, { target: { value: '/boas' } });
+    expect(screen.queryByText('Horário de funcionamento')).toBeNull();
+
+    fireEvent.click(screen.getByRole('option', { name: /Boas-vindas/ }));
+
+    expect((textarea as HTMLTextAreaElement).value).toBe('Olá! Como podemos ajudar?');
+    expect(screen.queryByRole('listbox', { name: 'Respostas rápidas' })).toBeNull();
+  });
+
+  it('supports keyboard navigation and inserts with Enter', () => {
+    renderComposer();
+    const textarea = screen.getByPlaceholderText('Mensagem');
+
+    fireEvent.change(textarea, { target: { value: '/' } });
+    fireEvent.keyDown(textarea, { key: 'ArrowDown' });
+    fireEvent.keyDown(textarea, { key: 'Enter' });
+
+    expect((textarea as HTMLTextAreaElement).value).toBe(
+      'Atendemos de segunda a sexta, das 8h às 18h.',
+    );
+    expect(sendMessageMutate).not.toHaveBeenCalled();
   });
 });

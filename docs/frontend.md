@@ -132,24 +132,29 @@ frontend/
   `/vendas/negocios`, `/tarefas` e `/settings/pipelines` (CRUD de pipelines/etapas).
 - Atendimento (conectado à API + Socket.IO): `/atendimento/conversas` (layout estilo WhatsApp Web em
   tela cheia — lista, chat e painel de contato, com rolagem independente, alternância lista/chat no
-  mobile, edição de etiquetas pela própria lista e painel de contato em `Sheet` abaixo de `xl`) e
-  `/mensagens-agendadas` (campanhas e
-  lembretes com recorrência, anexo, prévia e histórico). O gerenciamento de instâncias WhatsApp
-  (conexão por QR code e webhook) fica em **Configurações → WhatsApp** (`/configuracoes?tab=whatsapp`);
-  a rota antiga `/atendimento/whatsapp` redireciona para a nova localização.
+  mobile, edição de etiquetas pela própria lista e painel de contato em `Sheet` abaixo de `xl`).
+  O gerenciamento de instâncias WhatsApp (conexão por QR code e webhook) fica em
+  **Configurações → WhatsApp** (`/configuracoes?tab=whatsapp`); a rota antiga
+  `/atendimento/whatsapp` redireciona para a nova localização.
+- Ferramentas: `/respostas-rapidas` (modelos de mensagem reutilizáveis) e `/mensagens-agendadas`
+  (campanhas e lembretes com recorrência, anexo, prévia e histórico). Ver
+  [`quick-replies.md`](./quick-replies.md) e [`scheduled-messages.md`](./scheduled-messages.md).
 - Administração da plataforma (visível só para `isPlatformAdmin`): `/admin/tenants` (criar/listar
   organizações), `/admin/tenants/:id` (gerenciar membros, papéis e ativos) e `/admin/settings`
   (configurações globais, incluindo o preview de links nas mensagens). Ver
   [`tenant-provisioning.md`](./tenant-provisioning.md).
 - Perfil e configurações: `/perfil` (dados pessoais + senha) e `/configuracoes` (abas Organização,
-  Equipe, Aparência, Atendimento, Notificações e WhatsApp). A aba ativa é sincronizada com o
-  parâmetro `?tab=` da URL. Ver [`settings.md`](./settings.md).
-- Sidebar: Atendimento (Conversas), Contatos, Financeiro (Cobranças), Administração (Organizações
-  e Configurações da plataforma, visíveis só para `isPlatformAdmin`) e Configurações. As entradas
-  ligadas a módulos são filtradas
-  pela disponibilidade real retornada por `GET /api/modules/enabled` (`visibleNavigation`); rotas de
-  módulos desativados redirecionam para `/indisponivel` via `ModuleRoute`. Ver
-  [`modules.md`](./modules.md).
+  Equipe, Aparência, Atendimento, Notificações, WhatsApp e Menu Personalizado). A aba ativa é
+  sincronizada com o parâmetro `?tab=` da URL. Ver [`settings.md`](./settings.md) e
+  [`custom-menu.md`](./custom-menu.md).
+- Sidebar: Atendimento (Conversas), Ferramentas (Respostas rápidas e Mensagens agendadas), Contatos,
+  Financeiro (Cobranças), Administração (Organizações e Configurações da plataforma, visíveis só para
+  `isPlatformAdmin`), grupos do **Menu Personalizado** e Configurações. As entradas ligadas a
+  módulos são filtradas pela disponibilidade real retornada por `GET /api/modules/enabled`
+  (`visibleNavigation`); rotas de módulos desativados redirecionam para `/indisponivel` via
+  `ModuleRoute`. Os grupos personalizados vêm de `GET /api/custom-menu/navigation`, são escopados
+  por tenant e abrem URLs externas em nova aba. Ver [`modules.md`](./modules.md) e
+  [`custom-menu.md`](./custom-menu.md).
 - `/settings/qualification-bot` e `/settings/lead-digest` com formulários orientados a negócio (sem
   pedir prompts técnicos). O bot de qualificação persiste perfis reais por tenant.
 - `ProtectedRoute` preparado para exigir sessão; a persistência real do refresh usa cookie HttpOnly.

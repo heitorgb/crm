@@ -1,13 +1,18 @@
-import { useState, type ReactNode } from 'react';
+import { createElement, useState, type ReactNode } from 'react';
 import { NavLink, useLocation, useMatch } from 'react-router-dom';
-import { ChevronDown, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { ChevronDown, ExternalLink, Folder, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import {
   isNavGroup,
   visibleNavigation,
+  type NavEntry,
   type NavGroup,
   type NavItem,
 } from '@/config/navigation';
+import { menuIcon } from '@/config/menu-icons';
+import { useCustomMenuNavigation } from '@/features/custom-menu/queries';
 import { useEnabledModules } from '@/features/modules/queries';
+import { isSafeExternalUrl } from '@/lib/external-url';
+import type { CustomMenuButton, CustomMenuGroup } from '@/types/custom-menu';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useAuthStore } from '@/stores/auth-store';
 import { useUiStore } from '@/stores/ui-store';
@@ -32,6 +37,25 @@ export function Sidebar({
   const platformAdmin = useAuthStore((state) => state.platformAdmin);
   const enabledModules = useEnabledModules().data;
   const entries = visibleNavigation({ platformAdmin, enabledModules });
+  const customGroups = (useCustomMenuNavigation().data ?? [])
+    .map((group) => ({
+      ...group,
+      buttons: group.buttons.filter((button) => isSafeExternalUrl(button.url)),
+    }))
+    .filter((group) => group.buttons.length > 0);
+
+  const settingsIndex = entries.findIndex(
+    (entry) => !isNavGroup(entry) && entry.to === '/configuracoes',
+  );
+  const leadingEntries = settingsIndex >= 0 ? entries.slice(0, settingsIndex) : entries;
+  const trailingEntries = settingsIndex >= 0 ? entries.slice(settingsIndex) : [];
+
+  const renderEntry = (entry: NavEntry) =>
+    isNavGroup(entry) ? (
+      <SidebarGroup key={`group-${entry.title}`} group={entry} collapsed={collapsed} onNavigate={onNavigate} />
+    ) : (
+      <SidebarLink key={entry.to} item={entry} collapsed={collapsed} onNavigate={onNavigate} />
+    );
 
   return (
     <div
@@ -56,13 +80,16 @@ export function Sidebar({
       </div>
 
       <nav className="flex-1 space-y-1 overflow-x-hidden overflow-y-auto scrollbar-thin px-2 py-3">
-        {entries.map((entry) =>
-          isNavGroup(entry) ? (
-            <SidebarGroup key={entry.title} group={entry} collapsed={collapsed} onNavigate={onNavigate} />
-          ) : (
-            <SidebarLink key={entry.to} item={entry} collapsed={collapsed} onNavigate={onNavigate} />
-          ),
-        )}
+        {leadingEntries.map(renderEntry)}
+        {customGroups.map((group) => (
+          <SidebarCustomGroup
+            key={group.id}
+            group={group}
+            collapsed={collapsed}
+            onNavigate={onNavigate}
+          />
+        ))}
+        {trailingEntries.map(renderEntry)}
       </nav>
 
       {footer ? <div className="border-t border-sidebar-border p-2">{footer}</div> : null}
@@ -89,6 +116,106 @@ export function Sidebar({
         </div>
       ) : null}
     </div>
+  );
+}
+
+function SidebarCustomGroup({
+  group,
+  collapsed,
+  onNavigate,
+}: {
+  group: CustomMenuGroup;
+  collapsed: boolean;
+  onNavigate?: () => void;
+}) {
+  const [open, setOpen] = useState(true);
+
+  if (collapsed) {
+    return (
+      <div className="space-y-1">
+        {group.buttons.map((button) => (
+          <SidebarExternalLink
+            key={button.id}
+            button={button}
+            collapsed
+            onNavigate={onNavigate}
+          />
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground transition-colors hover:text-foreground"
+        aria-expanded={open}
+      >
+        {createElement(menuIcon(group.icon, Folder), {
+          className: 'size-4 shrink-0',
+          'aria-hidden': true,
+        })}
+        <span className="min-w-0 flex-1 truncate text-left">{group.name}</span>
+        <ChevronDown
+          className={cn('size-3.5 shrink-0 transition-transform', !open && '-rotate-90')}
+        />
+      </button>
+      {open ? (
+        <div className="mt-0.5 space-y-0.5 pl-2">
+          {group.buttons.map((button) => (
+            <SidebarExternalLink
+              key={button.id}
+              button={button}
+              onNavigate={onNavigate}
+            />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function SidebarExternalLink({
+  button,
+  collapsed = false,
+  onNavigate,
+}: {
+  button: CustomMenuButton;
+  collapsed?: boolean;
+  onNavigate?: () => void;
+}) {
+  const link = (
+    <a
+      href={button.url.trim()}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={onNavigate}
+      aria-label={collapsed ? button.name : undefined}
+      className={cn(
+        'flex w-full min-w-0 items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium transition-colors',
+        collapsed && 'justify-center px-0',
+        'text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-foreground',
+      )}
+    >
+      {createElement(menuIcon(button.icon, ExternalLink), {
+        className: 'size-4 shrink-0',
+        'aria-hidden': true,
+      })}
+      {!collapsed ? <span className="min-w-0 truncate">{button.name}</span> : null}
+    </a>
+  );
+
+  if (!collapsed) {
+    return link;
+  }
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{link}</TooltipTrigger>
+      <TooltipContent side="right">{button.name}</TooltipContent>
+    </Tooltip>
   );
 }
 

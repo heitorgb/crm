@@ -84,7 +84,8 @@ Módulo NestJS `src/modules/modules/`:
 
 ### Proteção de operações (não apenas da UI)
 
-- `conversations` → `attendance`; `contacts` → `contacts`.
+- `conversations`, `quick-replies` (respostas rápidas) e `scheduled-messages` → `attendance`;
+  `contacts` → `contacts`.
 - `leads` (oportunidades/pipelines) e `tags` (etiquetas) → `crm`.
 - `billing` (cobranças/recorrências) → `billing.charges`.
 - `billing` (settings, lembretes, envio manual) → `billing.collection`.

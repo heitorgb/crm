@@ -49,11 +49,21 @@ Destaques: `Lead` único por `(tenantId, phone)`; `PipelineStage` único por `(p
 ### Atendimento, WhatsApp e digest (Prompt 07)
 
 `WhatsAppInstance`, `Conversation`, `Message`, `MessageAttachment`, `Ticket`,
-`LeadDigestPreference`, `LeadDigestDelivery` e `WebhookEvent` — todas com `tenantId`.
+`LeadDigestPreference`, `LeadDigestDelivery`, `QuickReply` e `WebhookEvent` — todas com `tenantId`.
+`QuickReply` é único por `(tenantId, title)` e guarda modelos de mensagem reutilizáveis no
+atendimento (ver [`quick-replies.md`](./quick-replies.md)).
 Idempotência: `Message` único por `(tenantId, externalMessageId)`, `WebhookEvent` por
 `(provider, externalEventId)` e `LeadDigestDelivery` por `(tenantUserId, periodStart)`.
 Credenciais de instância são criptografadas. Detalhes, retenção e endpoints em
 [`attendance.md`](./attendance.md).
+
+### Menu personalizado
+
+`CustomMenuGroup` e `CustomMenuButton` — ambas com `tenantId`. Grupos têm `name`, `icon`, `active`,
+`position` e timestamps; botões têm `groupId` (FK `ON DELETE CASCADE`), `name`, `url`, `icon`,
+`active`, `position` e timestamps. O botão também carrega `tenantId` para defesa em profundidade e
+índices por tenant/grupo/status/ordem. Migration `20261020230000_custom_menu`. A exclusão do grupo
+remove os botões em cascata. Ver [`custom-menu.md`](./custom-menu.md).
 
 ### Cobranças (controle manual)
 

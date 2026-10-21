@@ -1,17 +1,26 @@
-import { useEffect, useRef, useState, type ChangeEvent } from 'react';
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type KeyboardEvent,
+} from 'react';
 import { Mic, Paperclip, Send, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
+import { useQuickReplies } from '@/features/quick-replies/queries';
 import { ApiError } from '@/lib/api-client';
 import { useDebouncedValue } from '@/lib/use-debounced-value';
 import { useAttendanceStore } from '@/stores/attendance-store';
 import type { ConversationMessage } from '@/types/attendance';
+import type { QuickReply } from '@/types/quick-replies';
 import { messageSnippet } from './attendance-utils';
 import { EmojiPicker } from './emoji-picker';
 import { ComposerLinkPreview } from './link-preview-card';
 import { extractPreviewUrls } from './linkify-text';
 import { MediaPreviewDialog } from './media-preview-dialog';
 import { useSendConversationMedia, useSendConversationMessage } from './queries';
+import { QuickReplyMenu } from './quick-reply-menu';
 import { useAudioRecorder } from './use-audio-recorder';
 
 const MAX_COMPOSER_HEIGHT = 160;
@@ -24,6 +33,29 @@ function formatDuration(totalSeconds: number): string {
   return `${minutes}:${seconds}`;
 }
 
+function quickReplyFilterQuery(draft: string): string | null {
+  const match = /^\/([^\n]*)$/.exec(draft);
+  return match ? match[1].trim() : null;
+}
+
+function normalizeText(value: string): string {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+}
+
+function filterQuickReplies(quickReplies: QuickReply[], query: string): QuickReply[] {
+  const normalizedQuery = normalizeText(query);
+  if (!normalizedQuery) {
+    return quickReplies;
+  }
+
+  return quickReplies.filter((quickReply) =>
+    normalizeText(`${quickReply.title} ${quickReply.content}`).includes(normalizedQuery),
+  );
+}
+
 interface MessageComposerProps {
   conversationId: string;
   replyTo: ConversationMessage | null;
@@ -34,6 +66,7 @@ export function MessageComposer({ conversationId, replyTo, onCancelReply }: Mess
   const [draft, setDraft] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [activeQuickReplyIndex, setActiveQuickReplyIndex] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const selectionRef = useRef({ start: 0, end: 0 });
@@ -45,6 +78,20 @@ export function MessageComposer({ conversationId, replyTo, onCancelReply }: Mess
   const setShowAgentName = useAttendanceStore((state) => state.setShowAgentName);
   const busy = sendMessage.isPending || sendMedia.isPending;
   const canSend = draft.trim().length > 0;
+
+  const quickReplyQuery = quickReplyFilterQuery(draft);
+  const quickReplyMenuOpen = quickReplyQuery !== null;
+  const quickReplies = useQuickReplies(
+    { perPage: 100, sort: 'title', order: 'asc' },
+    { enabled: quickReplyMenuOpen },
+  );
+  const quickReplyItems = quickReplyMenuOpen
+    ? filterQuickReplies(quickReplies.data?.data ?? [], quickReplyQuery)
+    : [];
+  const activeQuickReply =
+    quickReplyItems.length > 0
+      ? Math.min(activeQuickReplyIndex, quickReplyItems.length - 1)
+      : 0;
 
   const candidatePreviewUrl = extractPreviewUrls(draft)[0] ?? null;
   const debouncedPreviewUrl = useDebouncedValue(candidatePreviewUrl, 400);
@@ -146,6 +193,52 @@ export function MessageComposer({ conversationId, replyTo, onCancelReply }: Mess
     setDraft(draft.slice(0, start) + emoji + draft.slice(end));
   };
 
+  const handleQuickReplySelect = (quickReply: QuickReply): void => {
+    const caret = quickReply.content.length;
+    setError(null);
+    setRemovedPreviewUrl(null);
+    setActiveQuickReplyIndex(0);
+    selectionRef.current = { start: caret, end: caret };
+    pendingCaretRef.current = caret;
+    setDraft(quickReply.content);
+    textareaRef.current?.focus();
+  };
+
+  const handleComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
+    if (quickReplyMenuOpen) {
+      if (event.key === 'ArrowDown' && quickReplyItems.length > 0) {
+        event.preventDefault();
+        setActiveQuickReplyIndex((activeQuickReply + 1) % quickReplyItems.length);
+        return;
+      }
+      if (event.key === 'ArrowUp' && quickReplyItems.length > 0) {
+        event.preventDefault();
+        setActiveQuickReplyIndex(
+          (activeQuickReply - 1 + quickReplyItems.length) % quickReplyItems.length,
+        );
+        return;
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setDraft('');
+        setActiveQuickReplyIndex(0);
+        return;
+      }
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        if (quickReplyItems.length > 0) {
+          handleQuickReplySelect(quickReplyItems[activeQuickReply]);
+        }
+        return;
+      }
+    }
+
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      void handleSend();
+    }
+  };
+
   const handleFileSelected = (event: ChangeEvent<HTMLInputElement>): void => {
     const file = event.target.files?.[0];
     event.target.value = '';
@@ -202,7 +295,17 @@ export function MessageComposer({ conversationId, replyTo, onCancelReply }: Mess
   });
 
   return (
-    <div className="border-t border-border bg-card px-2 py-2 sm:px-3 sm:py-3">
+    <div className="relative border-t border-border bg-card px-2 py-2 sm:px-3 sm:py-3">
+      {quickReplyMenuOpen ? (
+        <QuickReplyMenu
+          items={quickReplyItems}
+          activeIndex={activeQuickReply}
+          loading={quickReplies.isPending}
+          error={quickReplies.isError}
+          onSelect={handleQuickReplySelect}
+          onActiveIndexChange={setActiveQuickReplyIndex}
+        />
+      ) : null}
       <input
         ref={fileInputRef}
         type="file"
@@ -301,6 +404,7 @@ export function MessageComposer({ conversationId, replyTo, onCancelReply }: Mess
               if (removedPreviewUrl && !next.includes(removedPreviewUrl)) {
                 setRemovedPreviewUrl(null);
               }
+              setActiveQuickReplyIndex(0);
               setDraft(next);
             }}
             onSelect={(event) => {
@@ -311,12 +415,7 @@ export function MessageComposer({ conversationId, replyTo, onCancelReply }: Mess
             }}
             placeholder="Mensagem"
             className="max-h-40 min-h-[38px] flex-1 resize-none rounded-md border-0 bg-transparent px-2 py-2.5 text-sm shadow-none focus-visible:ring-0"
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' && !event.shiftKey) {
-                event.preventDefault();
-                void handleSend();
-              }
-            }}
+            onKeyDown={handleComposerKeyDown}
           />
           {canSend ? (
             <Button
@@ -342,6 +441,11 @@ export function MessageComposer({ conversationId, replyTo, onCancelReply }: Mess
           )}
         </div>
       )}
+      {!recorder.recording ? (
+        <p className="mt-1 h-4 px-2 text-[11px] text-muted-foreground">
+          {draft.length === 0 ? 'Digite / para usar respostas rápidas.' : ''}
+        </p>
+      ) : null}
       <MediaPreviewDialog
         key={
           pendingFile

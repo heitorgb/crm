@@ -157,6 +157,7 @@ model Tenant {
   customerTags               CustomerTag[]
   conversationTags           ConversationTag[]
   leadTags                   LeadTag[]
+  quickReplies               QuickReply[]
   whatsappInstances          WhatsAppInstance[]
   whatsappAvatars            WhatsAppAvatar[]
   conversations              Conversation[]
@@ -178,6 +179,8 @@ model Tenant {
   leadPipelines              LeadPipeline[]
   leadStages                 LeadStage[]
   leads                      Lead[]
+  customMenuGroups           CustomMenuGroup[]
+  customMenuButtons          CustomMenuButton[]
 
   @@map("tenants")
 }
@@ -371,6 +374,57 @@ model Tag {
   @@unique([tenantId, name])
   @@index([tenantId, createdAt])
   @@map("tags")
+}
+
+model QuickReply {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  title     String
+  content   String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, title])
+  @@index([tenantId, createdAt])
+  @@map("quick_replies")
+}
+
+model CustomMenuGroup {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  name      String
+  icon      String?
+  active    Boolean  @default(true)
+  position  Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  tenant  Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  buttons CustomMenuButton[]
+
+  @@index([tenantId, active, position])
+  @@map("custom_menu_groups")
+}
+
+model CustomMenuButton {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  groupId   String   @map("group_id") @db.Uuid
+  name      String
+  url       String
+  icon      String?
+  active    Boolean  @default(true)
+  position  Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  tenant Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  group  CustomMenuGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, groupId, active, position])
+  @@map("custom_menu_buttons")
 }
 
 model LeadTag {

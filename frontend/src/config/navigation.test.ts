@@ -21,8 +21,37 @@ describe('visibleNavigation', () => {
   it('shows the business entries when their modules are enabled', () => {
     const entries = visibleNavigation({ platformAdmin: false, enabledModules: allModules });
     expect(titles(entries)).toEqual(
-      expect.arrayContaining(['CRM', 'Oportunidades', 'Etiquetas', 'Conversas', 'Contatos', 'Cobranças', 'Webhooks']),
+      expect.arrayContaining([
+        'CRM',
+        'Oportunidades',
+        'Etiquetas',
+        'Conversas',
+        'Ferramentas',
+        'Respostas rápidas',
+        'Mensagens agendadas',
+        'Contatos',
+        'Cobranças',
+        'Webhooks',
+      ]),
     );
+  });
+
+  it('groups tools under Ferramentas instead of the attendance group', () => {
+    const entries = visibleNavigation({ platformAdmin: false, enabledModules: allModules });
+    const attendance = entries.find(
+      (entry): entry is Extract<NavEntry, { items: unknown[] }> =>
+        isNavGroup(entry) && entry.title === 'Atendimento',
+    );
+    const tools = entries.find(
+      (entry): entry is Extract<NavEntry, { items: unknown[] }> =>
+        isNavGroup(entry) && entry.title === 'Ferramentas',
+    );
+
+    expect(attendance?.items.map((item) => item.title)).toEqual(['Conversas']);
+    expect(tools?.items.map((item) => item.title)).toEqual([
+      'Respostas rápidas',
+      'Mensagens agendadas',
+    ]);
   });
 
   it('hides the entry and its group when the module is disabled', () => {
@@ -36,6 +65,20 @@ describe('visibleNavigation', () => {
     expect(titles(entries)).not.toContain('CRM');
     expect(titles(entries)).not.toContain('Oportunidades');
     expect(titles(entries)).not.toContain('Etiquetas');
+    expect(titles(entries)).toContain('Ferramentas');
+    expect(titles(entries)).toContain('Respostas rápidas');
+    expect(titles(entries)).toContain('Mensagens agendadas');
+  });
+
+  it('hides the tools group when the attendance module is disabled', () => {
+    const entries = visibleNavigation({
+      platformAdmin: false,
+      enabledModules: [MODULE_KEYS.CRM, MODULE_KEYS.CONTACTS],
+    });
+
+    expect(titles(entries)).not.toContain('Ferramentas');
+    expect(titles(entries)).not.toContain('Respostas rápidas');
+    expect(titles(entries)).not.toContain('Mensagens agendadas');
   });
 
   it('keeps administrative navigation for platform admins regardless of modules', () => {

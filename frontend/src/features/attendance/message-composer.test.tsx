@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import type { ComponentProps } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MessageComposer } from './message-composer';
 import { useAiSettings, useFormalizeMessage } from '@/features/ai/queries';
@@ -104,12 +105,21 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-function renderComposer() {
-  return render(
+function composer(props: Partial<ComponentProps<typeof MessageComposer>> = {}) {
+  return (
     <TooltipProvider>
-      <MessageComposer conversationId="conversation-1" replyTo={null} onCancelReply={vi.fn()} />
-    </TooltipProvider>,
+      <MessageComposer
+        conversationId="conversation-1"
+        replyTo={null}
+        onCancelReply={vi.fn()}
+        {...props}
+      />
+    </TooltipProvider>
   );
+}
+
+function renderComposer(props: Partial<ComponentProps<typeof MessageComposer>> = {}) {
+  return render(composer(props));
 }
 
 async function typeUrl(value: string): Promise<void> {
@@ -281,6 +291,63 @@ describe('MessageComposer AI formalization', () => {
 
     expect(screen.getByText('O provedor de IA demorou demais para responder.')).toBeTruthy();
     expect((textarea as HTMLTextAreaElement).value).toBe(original);
+    expect(sendMessageMutate).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('MessageComposer copilot insertion', () => {
+  it('inserts a suggestion into an empty composer without sending', async () => {
+    const insertionHandled = vi.fn();
+    const view = renderComposer();
+
+    await act(async () => {
+      view.rerender(
+        composer({
+          insertion: { id: 1, text: 'Claro! Quantas pessoas vão usar o sistema?' },
+          onInsertionHandled: insertionHandled,
+        }),
+      );
+    });
+
+    expect((screen.getByPlaceholderText('Mensagem') as HTMLTextAreaElement).value).toBe(
+      'Claro! Quantas pessoas vão usar o sistema?',
+    );
+    expect(insertionHandled).toHaveBeenCalledTimes(1);
+    expect(sendMessageMutate).not.toHaveBeenCalled();
+  });
+
+  it('never overwrites an existing draft without confirmation', async () => {
+    const view = renderComposer();
+    const textarea = screen.getByPlaceholderText('Mensagem') as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: 'Rascunho atual' } });
+
+    await act(async () => {
+      view.rerender(composer({ insertion: { id: 2, text: 'Resposta do copiloto' } }));
+    });
+
+    expect(screen.getByText(/já tem um rascunho/)).toBeTruthy();
+    expect(textarea.value).toBe('Rascunho atual');
+    expect(sendMessageMutate).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Substituir rascunho' }));
+
+    expect(textarea.value).toBe('Resposta do copiloto');
+    expect(sendMessageMutate).not.toHaveBeenCalled();
+  });
+
+  it('can append the suggestion while preserving the existing draft', async () => {
+    const view = renderComposer();
+    const textarea = screen.getByPlaceholderText('Mensagem') as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: 'Rascunho atual' } });
+
+    await act(async () => {
+      view.rerender(composer({ insertion: { id: 3, text: 'Resposta do copiloto' } }));
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Inserir ao final' }));
+
+    expect(textarea.value).toBe('Rascunho atual\n\nResposta do copiloto');
     expect(sendMessageMutate).not.toHaveBeenCalled();
   });
 });

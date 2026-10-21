@@ -58,6 +58,16 @@ export function LeadBoardPage() {
     () => pipelines.data?.find((item) => item.id === activePipelineId),
     [activePipelineId, pipelines.data],
   );
+  const liveDetailLead = useMemo<LeadCard | null>(() => {
+    if (!detailLead) {
+      return null;
+    }
+    return (
+      board.data?.stages.flatMap((stage) => stage.leads).find((item) => item.id === detailLead.id) ??
+      detailLead
+    );
+  }, [board.data, detailLead]);
+
   const totals = useMemo(() => {
     const stages = board.data?.stages ?? [];
     return {
@@ -216,14 +226,14 @@ export function LeadBoardPage() {
       {selectedPipeline && formLead !== undefined ? (
         <LeadForm key={`${formLead?.id ?? 'new'}-${initialStageId ?? ''}`} open onOpenChange={(open) => { if (!open) setFormLead(undefined); }} pipeline={selectedPipeline} lead={formLead} initialStageId={initialStageId} />
       ) : null}
-      {selectedPipeline && detailLead ? (
+      {selectedPipeline && liveDetailLead ? (
         <LeadDetailSheet
-          key={detailLead.id}
+          key={liveDetailLead.id}
           open
           onOpenChange={(open) => { if (!open) setDetailLead(null); }}
-          lead={detailLead}
+          lead={liveDetailLead}
           pipeline={selectedPipeline}
-          onEdit={() => { setDetailLead(null); setFormLead(detailLead); }}
+          onEdit={() => { setDetailLead(null); setFormLead(liveDetailLead); }}
         />
       ) : null}
       {selectedPipeline ? <PipelineSettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} pipeline={selectedPipeline} /> : null}

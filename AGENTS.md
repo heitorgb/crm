@@ -22,8 +22,9 @@ Status atual (ver `docs/architecture.md` para detalhes):
   ao administrador da plataforma). Ver `docs/modules.md`.
 - **Implementado:** menu personalizado por organização (grupos e atalhos externos com ordem, status
   e ícones). Ver `docs/custom-menu.md`.
-- **Implementado:** configuração de IA por organização (OpenAI, DeepSeek, Anthropic e OpenRouter) e
-  formalização de mensagens no compositor do atendimento. Ver `docs/ai.md`.
+- **Implementado:** configuração de IA por organização (OpenAI, DeepSeek, Anthropic e OpenRouter),
+  formalização de mensagens no compositor do atendimento e Copiloto comercial persistente no detalhe
+  da oportunidade, com próxima ação, follow-ups e sugestões de atualização do lead. Ver `docs/ai.md`.
 - **Implementado:** recuperação de senha por e-mail (Resend), com token de uso único, expiração de
   30 minutos e telas de solicitação/redefinição. Ver `docs/authentication.md`.
 - **Planejado:** autenticação/autorização, módulos de CRM, multi-tenancy com RLS, filas, realtime.

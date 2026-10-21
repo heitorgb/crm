@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-import { render, screen } from '@testing-library/react';
+import { cleanup, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Conversation } from '@/types/attendance';
 import type { LeadCard, LeadPipeline } from '@/types/crm';
 import { LeadDetailSheet } from './lead-detail-sheet';
@@ -33,6 +33,10 @@ vi.mock('@/features/attendance/chat-panel', () => ({
 
 vi.mock('@/features/attendance/start-conversation-dialog', () => ({
   StartConversationDialog: () => null,
+}));
+
+vi.mock('@/features/ai/sales-copilot-panel', () => ({
+  SalesCopilotPanel: () => <div>Copiloto comercial</div>,
 }));
 
 const pipeline: LeadPipeline = {
@@ -90,6 +94,8 @@ const conversation: Conversation = {
   updatedAt: '2026-10-20T12:00:00.000Z',
 };
 
+afterEach(cleanup);
+
 describe('LeadDetailSheet', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -115,7 +121,32 @@ describe('LeadDetailSheet', () => {
     expect(screen.getAllByText('Pagamento').length).toBeGreaterThan(0);
     expect(screen.getByText('Atual')).toBeTruthy();
     expect(screen.getByText('Chat de Ana')).toBeTruthy();
+    expect(screen.getByText('Copiloto comercial')).toBeTruthy();
     expect(screen.getByText('Abrir no atendimento')).toBeTruthy();
+  });
+
+  it('keeps the sheet fixed to the viewport and the content area positioned for the copilot', () => {
+    render(
+      <MemoryRouter>
+        <LeadDetailSheet open onOpenChange={vi.fn()} lead={lead} pipeline={pipeline} onEdit={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    const dialog = screen.getByRole('dialog');
+    expect(dialog.className).toContain('fixed');
+    expect(dialog.className.split(/\s+/)).not.toContain('relative');
+    expect(dialog.className).toContain('overflow-hidden');
+
+    const layout = screen.getByTestId('lead-detail-layout');
+    expect(layout.className.split(/\s+/)).toContain('relative');
+    expect(layout.className.split(/\s+/)).toContain('min-h-0');
+    expect(layout.className).toContain('overflow-hidden');
+    expect(layout.className).toContain('lg:grid-rows-[minmax(0,1fr)]');
+
+    const conversation = screen.getByTestId('conversation-column');
+    expect(conversation.className.split(/\s+/)).toContain('min-h-0');
+    expect(conversation.className.split(/\s+/)).toContain('flex-1');
+    expect(conversation.className.split(/\s+/)).toContain('overflow-hidden');
   });
 });
 

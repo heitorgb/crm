@@ -36,7 +36,7 @@ import {
   QUOTE_HIGHLIGHT_MS,
 } from './attendance-utils';
 import { MessageBubble } from './message-bubble';
-import { MessageComposer } from './message-composer';
+import { MessageComposer, type ComposerInsertion } from './message-composer';
 import { MessageEditor } from './message-editor';
 import { SenderAvatar } from './sender-avatar';
 
@@ -60,6 +60,8 @@ interface ChatPanelProps {
   onReopen: () => void;
   refreshPending: boolean;
   onRefreshGroup: () => void;
+  composerInsertion?: ComposerInsertion | null;
+  onComposerInsertionHandled?: () => void;
 }
 
 export function ChatPanel({
@@ -79,6 +81,8 @@ export function ChatPanel({
   onReopen,
   refreshPending,
   onRefreshGroup,
+  composerInsertion,
+  onComposerInsertionHandled,
 }: ChatPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -226,7 +230,10 @@ export function ChatPanel({
   };
 
   return (
-    <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+    <div
+      data-testid="chat-panel"
+      className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+    >
       <div className="flex items-center gap-2 border-b border-border bg-card px-2 py-2 sm:px-4 sm:py-3">
         {onBack ? (
           <Button
@@ -304,6 +311,7 @@ export function ChatPanel({
       <div
         ref={scrollRef}
         onScroll={handleScroll}
+        data-testid="chat-messages"
         className="chat-wallpaper relative min-h-0 flex-1 overflow-y-auto scrollbar-thin px-3 py-4 sm:px-6"
       >
         {messagesPending ? (
@@ -400,6 +408,8 @@ export function ChatPanel({
           conversationId={conversation.id}
           replyTo={replyTo}
           onCancelReply={() => setReplyTo(null)}
+          insertion={composerInsertion}
+          onInsertionHandled={onComposerInsertionHandled}
         />
       )}
 

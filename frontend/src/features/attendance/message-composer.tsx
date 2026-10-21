@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useRef,
   useState,
@@ -58,25 +59,40 @@ function filterQuickReplies(quickReplies: QuickReply[], query: string): QuickRep
   );
 }
 
+export interface ComposerInsertion {
+  id: number;
+  text: string;
+}
+
 interface MessageComposerProps {
   conversationId: string;
   replyTo: ConversationMessage | null;
   onCancelReply: () => void;
+  insertion?: ComposerInsertion | null;
+  onInsertionHandled?: () => void;
 }
 
-export function MessageComposer({ conversationId, replyTo, onCancelReply }: MessageComposerProps) {
+export function MessageComposer({
+  conversationId,
+  replyTo,
+  onCancelReply,
+  insertion,
+  onInsertionHandled,
+}: MessageComposerProps) {
   const [draft, setDraft] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiBusy, setAiBusy] = useState(false);
   const [undoText, setUndoText] = useState<string | null>(null);
   const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [pendingInsertion, setPendingInsertion] = useState<string | null>(null);
   const [activeQuickReplyIndex, setActiveQuickReplyIndex] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const selectionRef = useRef({ start: 0, end: 0 });
   const pendingCaretRef = useRef<number | null>(null);
   const draftRef = useRef('');
+  const handledInsertionRef = useRef<number | null>(null);
 
   const sendMessage = useSendConversationMessage();
   const sendMedia = useSendConversationMedia();
@@ -128,6 +144,48 @@ export function MessageComposer({ conversationId, replyTo, onCancelReply }: Mess
   useEffect(() => {
     draftRef.current = draft;
   }, [draft]);
+
+  const applyInsertion = useCallback((text: string, mode: 'replace' | 'append'): void => {
+    const normalized = text.trim();
+    if (normalized.length === 0) {
+      return;
+    }
+
+    const current = draftRef.current;
+    const next =
+      mode === 'append' && current.trim().length > 0
+        ? `${current.trimEnd()}\n\n${normalized}`
+        : normalized;
+    const caret = next.length;
+
+    selectionRef.current = { start: caret, end: caret };
+    pendingCaretRef.current = caret;
+    setDraft(next);
+    setPendingInsertion(null);
+    setError(null);
+    setAiError(null);
+    setUndoText(null);
+    setRemovedPreviewUrl(null);
+    textareaRef.current?.focus();
+  }, []);
+
+  useEffect(() => {
+    if (!insertion || handledInsertionRef.current === insertion.id) {
+      return;
+    }
+    handledInsertionRef.current = insertion.id;
+    onInsertionHandled?.();
+
+    const text = insertion.text.trim();
+    if (text.length === 0) {
+      return;
+    }
+    if (draftRef.current.trim().length > 0) {
+      setPendingInsertion(text);
+      return;
+    }
+    applyInsertion(text, 'replace');
+  }, [applyInsertion, insertion, onInsertionHandled]);
 
   useEffect(() => {
     if (pendingCaretRef.current === null) {
@@ -183,6 +241,7 @@ export function MessageComposer({ conversationId, replyTo, onCancelReply }: Mess
         linkPreview,
       });
       setDraft('');
+      setPendingInsertion(null);
       setUndoText(null);
       setAiError(null);
       setRemovedPreviewUrl(null);
@@ -336,6 +395,7 @@ export function MessageComposer({ conversationId, replyTo, onCancelReply }: Mess
         quotedMessageId: replyTo?.id,
       });
       setDraft('');
+      setPendingInsertion(null);
       setUndoText(null);
       setAiError(null);
       setRemovedPreviewUrl(null);
@@ -388,6 +448,41 @@ export function MessageComposer({ conversationId, replyTo, onCancelReply }: Mess
         <p className="mb-2 text-xs font-medium text-danger">
           {error ?? recorder.error ?? aiError}
         </p>
+      ) : null}
+      {pendingInsertion ? (
+        <div
+          role="alert"
+          className="mb-2 space-y-2 rounded-md border border-warning/30 bg-warning/10 p-2.5"
+        >
+          <p className="text-xs font-medium text-foreground">
+            O compositor já tem um rascunho. Como deseja usar a sugestão?
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => applyInsertion(pendingInsertion, 'replace')}
+            >
+              Substituir rascunho
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => applyInsertion(pendingInsertion, 'append')}
+            >
+              Inserir ao final
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              onClick={() => setPendingInsertion(null)}
+            >
+              Cancelar
+            </Button>
+          </div>
+        </div>
       ) : null}
       {replyTo ? (
         <div className="mb-1.5 flex items-start gap-2 rounded-md border-l-4 border-primary bg-surface px-2 py-1.5">

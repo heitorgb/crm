@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { ConversationMessage } from '@/types/attendance';
-import { isMediaMessage, isMediaPending, isViewOnceMessage } from './media-message-utils';
+import {
+  isMediaMessage,
+  isMediaPending,
+  isVideoMessage,
+  isViewOnceMessage,
+} from './media-message-utils';
 
 let sequence = 0;
 
@@ -54,6 +59,51 @@ describe('isViewOnceMessage', () => {
 
   it('does not flag a truly unknown message', () => {
     expect(isViewOnceMessage(message({ type: 'UNKNOWN', metadata: null }))).toBe(false);
+  });
+});
+
+describe('isVideoMessage', () => {
+  it('detects a video by its message type', () => {
+    expect(isVideoMessage(message({ type: 'VIDEO' }))).toBe(true);
+  });
+
+  it('detects a document with a video MIME type', () => {
+    const document = message({
+      type: 'DOCUMENT',
+      attachments: [
+        {
+          id: 'attachment-1',
+          fileName: 'video.mp4',
+          mimeType: 'video/mp4',
+          size: 10,
+          width: null,
+          height: null,
+          hasThumbnail: false,
+        },
+      ],
+    });
+
+    expect(isVideoMessage(document)).toBe(true);
+  });
+
+  it('does not treat other attachments as video', () => {
+    const document = message({
+      type: 'DOCUMENT',
+      attachments: [
+        {
+          id: 'attachment-1',
+          fileName: 'arquivo.pdf',
+          mimeType: 'application/pdf',
+          size: 10,
+          width: null,
+          height: null,
+          hasThumbnail: false,
+        },
+      ],
+    });
+
+    expect(isVideoMessage(document)).toBe(false);
+    expect(isVideoMessage(message({ type: 'STICKER' }))).toBe(false);
   });
 });
 

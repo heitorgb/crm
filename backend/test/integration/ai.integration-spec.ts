@@ -405,6 +405,7 @@ describe('AI settings and formalization (integration)', () => {
     expect(saved.statusCode).toBe(200);
     expect(saved.json()).toMatchObject({
       enabled: true,
+      autoEnabled: false,
       provider: 'OPENAI',
       model: 'whisper-1',
       supported: true,
@@ -420,6 +421,38 @@ describe('AI settings and formalization (integration)', () => {
       where: { tenantId: ownerA.tenantId },
     });
     expect(after.openaiApiKeyEncrypted).toBe(before.openaiApiKeyEncrypted);
+  });
+
+  it('persists the automatic transcription preference across reloads', async () => {
+    await saveSettings(ownerA, {
+      provider: 'OPENAI',
+      model: 'gpt-6-luna',
+      formality: 'FORMAL',
+      apiKey: 'sk-auto-transcription',
+    });
+
+    const enabled = await saveTranscription(ownerA, {
+      enabled: true,
+      autoEnabled: true,
+      provider: 'OPENAI',
+      model: 'whisper-1',
+    });
+    expect(enabled.json()).toMatchObject({ enabled: true, autoEnabled: true });
+
+    const reloaded = await app.inject({
+      method: 'GET',
+      url: '/api/ai/transcription/settings',
+      headers: authHeaders(ownerA),
+    });
+    expect(reloaded.json()).toMatchObject({ enabled: true, autoEnabled: true });
+
+    const disabled = await saveTranscription(ownerA, {
+      enabled: true,
+      autoEnabled: false,
+      provider: 'OPENAI',
+      model: 'whisper-1',
+    });
+    expect(disabled.json()).toMatchObject({ enabled: true, autoEnabled: false });
   });
 
   it('rejects providers without speech-to-text support and invalid models', async () => {

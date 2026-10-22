@@ -5,18 +5,17 @@ import { OpenAiTranscriptionProvider } from './openai-transcription.provider.js'
 import { TranscriptionController } from './transcription.controller.js';
 import { TranscriptionProviderFactory } from './transcription.providers.js';
 import { TranscriptionService } from './transcription.service.js';
-import { TranscriptionSettingsService } from './transcription-settings.service.js';
+import { TranscriptionSettingsModule } from './transcription-settings.module.js';
 
 @Module({
-  imports: [ConversationsModule],
+  imports: [ConversationsModule, TranscriptionSettingsModule],
   controllers: [TranscriptionController],
   providers: [
-    TranscriptionSettingsService,
     TranscriptionService,
     AudioConversionService,
     TranscriptionProviderFactory,
     OpenAiTranscriptionProvider,
   ],
-  exports: [TranscriptionService, TranscriptionSettingsService],
+  exports: [TranscriptionService],
 })
 export class TranscriptionModule {}

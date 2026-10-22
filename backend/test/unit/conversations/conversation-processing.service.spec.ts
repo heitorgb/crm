@@ -2,6 +2,7 @@ import { Logger } from '@nestjs/common';
 import { MessageType } from '@prisma/client';
 import type { TenantContextService } from '../../../src/common/tenant-context/tenant-context.service.js';
 import type { PrismaService } from '../../../src/infrastructure/prisma/prisma.service.js';
+import { JOB_NAMES } from '../../../src/infrastructure/queue/job-queue.types.js';
 import type { JobQueue } from '../../../src/infrastructure/queue/job-queue.types.js';
 import type { RealtimeService } from '../../../src/infrastructure/realtime/realtime.service.js';
 import { ConversationProcessingService } from '../../../src/modules/conversations/conversation-processing.service.js';
@@ -28,6 +29,7 @@ interface Harness {
     markOutboundFailed: ReturnType<typeof vi.fn>;
   };
   queue: { enqueue: ReturnType<typeof vi.fn> };
+  transcriptionSettings: { isAutoEnabled: ReturnType<typeof vi.fn> };
 }
 
 function createHarness(): Harness {
@@ -43,6 +45,7 @@ function createHarness(): Harness {
   };
   const realtime = { emitToTenant: vi.fn(), emitToConversation: vi.fn() };
   const queue = { enqueue: vi.fn().mockResolvedValue(undefined) };
+  const transcriptionSettings = { isAutoEnabled: vi.fn().mockResolvedValue(false) };
 
   const tenantContext = {
     run: <T>(_options: unknown, fn: () => Promise<T>) => fn(),
@@ -55,12 +58,13 @@ function createHarness(): Harness {
     messages as unknown as MessagesService,
     realtime as unknown as RealtimeService,
     {} as never,
+    transcriptionSettings as never,
     { get: vi.fn() } as never,
     {} as never,
     queue as unknown as JobQueue,
   );
 
-  return { service, prisma, evolution, messages, queue };
+  return { service, prisma, evolution, messages, queue, transcriptionSettings };
 }
 
 function seedMessage(
@@ -481,5 +485,32 @@ describe('ConversationProcessingService.dispatch', () => {
 
     expect(messages.persistOutbound).not.toHaveBeenCalled();
     expect(evolution.sendText).not.toHaveBeenCalled();
+  });
+});
+
+describe('ConversationProcessingService.processMedia', () => {
+  it('enqueues automatic transcription only when the preference is enabled', async () => {
+    const harness = createHarness();
+    harness.prisma.message.findFirst.mockResolvedValue({
+      id: 'message-1',
+      type: MessageType.AUDIO,
+      direction: 'INBOUND',
+      metadata: {},
+    });
+    vi.spyOn(harness.service, 'ensureMediaStored').mockResolvedValue('stored');
+
+    await harness.service.processMedia({ tenantId: 'tenant-1', messageId: 'message-1' });
+
+    expect(harness.transcriptionSettings.isAutoEnabled).toHaveBeenCalledWith('tenant-1');
+    expect(harness.queue.enqueue).not.toHaveBeenCalled();
+
+    harness.transcriptionSettings.isAutoEnabled.mockResolvedValue(true);
+    await harness.service.processMedia({ tenantId: 'tenant-1', messageId: 'message-1' });
+
+    expect(harness.queue.enqueue).toHaveBeenCalledWith(
+      JOB_NAMES.TRANSCRIPTION_PROCESS,
+      { tenantId: 'tenant-1', messageId: 'message-1' },
+      { jobId: 'transcription-message-1' },
+    );
   });
 });

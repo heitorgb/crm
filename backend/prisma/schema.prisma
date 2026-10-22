@@ -1202,6 +1202,7 @@ model AiSettings {
   anthropicApiKeyEncrypted  String?     @map("anthropic_api_key_encrypted")
   openrouterApiKeyEncrypted String?     @map("openrouter_api_key_encrypted")
   transcriptionEnabled      Boolean     @default(false) @map("transcription_enabled")
+  transcriptionAutoEnabled  Boolean     @default(false) @map("transcription_auto_enabled")
   transcriptionProvider     AiProvider  @default(OPENAI) @map("transcription_provider")
   transcriptionModel        String      @default("whisper-1") @map("transcription_model")
   createdAt                 DateTime    @default(now()) @map("created_at")

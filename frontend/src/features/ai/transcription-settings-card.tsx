@@ -84,6 +84,7 @@ export function TranscriptionSettingsCard({ canManage }: { canManage: boolean })
   const key = [
     settings.data.updatedAt ?? 'new',
     settings.data.enabled,
+    settings.data.autoEnabled,
     settings.data.provider,
     settings.data.model,
     settings.data.hasCredentials,
@@ -118,6 +119,7 @@ function TranscriptionSettingsForm({
   const testConnection = useTestTranscription();
 
   const [enabled, setEnabled] = useState(initial.enabled);
+  const [autoEnabled, setAutoEnabled] = useState(initial.autoEnabled);
   const [provider, setProvider] = useState<AiProvider>(initial.provider);
   const [model, setModel] = useState(initial.model);
   const [apiKey, setApiKey] = useState('');
@@ -144,6 +146,7 @@ function TranscriptionSettingsForm({
     try {
       await saveSettings.mutateAsync({
         enabled,
+        autoEnabled,
         provider,
         model,
         ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
@@ -275,6 +278,23 @@ function TranscriptionSettingsForm({
               />
             </div>
           </div>
+
+          {enabled ? (
+            <div className="flex items-center justify-between gap-4 rounded-lg border border-border p-3">
+              <div className="min-w-0">
+                <p className="text-sm font-medium">Transcrever automaticamente</p>
+                <p className="text-xs text-muted-foreground">
+                  Desmarcada, a transcrição é solicitada manualmente em cada áudio recebido.
+                </p>
+              </div>
+              <Switch
+                checked={autoEnabled}
+                onCheckedChange={setAutoEnabled}
+                disabled={!canManage || pending}
+                aria-label="Transcrever automaticamente"
+              />
+            </div>
+          ) : null}
 
           <section className="space-y-3 rounded-lg border border-border p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">

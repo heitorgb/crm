@@ -18,6 +18,10 @@ export class UpdateTranscriptionSettingsDto {
   @IsBoolean()
   enabled!: boolean;
 
+  @IsOptional()
+  @IsBoolean()
+  autoEnabled?: boolean;
+
   @IsEnum(AiProvider)
   provider!: AiProvider;
 

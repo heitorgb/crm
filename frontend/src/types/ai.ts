@@ -48,6 +48,7 @@ export type TranscriptionUnavailableReason =
 
 export interface TranscriptionSettings {
   enabled: boolean;
+  autoEnabled: boolean;
   provider: AiProvider;
   model: string;
   supported: boolean;
@@ -61,6 +62,7 @@ export interface TranscriptionSettings {
 
 export interface UpdateTranscriptionSettingsInput {
   enabled: boolean;
+  autoEnabled: boolean;
   provider: AiProvider;
   model: string;
   apiKey?: string;

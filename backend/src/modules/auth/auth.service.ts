@@ -101,7 +101,7 @@ export class AuthService {
     }
 
     const membership = await this.selectMembership(user.id, rotated.tenantId);
-    const session = await this.issueAccess(user, membership);
+    const session = await this.issueAccess(user, membership, rotated.expiresAt);
 
     return {
       ...session,
@@ -285,8 +285,8 @@ export class AuthService {
     membership: UserMembership,
     meta: RequestMetadata,
   ): Promise<IssuedSession> {
-    const session = await this.issueAccess(user, membership);
     const refresh = await this.refreshTokens.issue(user.id, membership.tenantId, meta);
+    const session = await this.issueAccess(user, membership, refresh.expiresAt);
 
     return {
       ...session,
@@ -298,8 +298,15 @@ export class AuthService {
   private async issueAccess(
     user: LoadedUser,
     membership: UserMembership,
+    sessionExpiresAt?: Date,
   ): Promise<Omit<IssuedSession, 'refreshToken' | 'refreshExpiresAt'>> {
-    const expiresIn = this.config.getOrThrow('JWT_ACCESS_TTL_SECONDS');
+    const configuredExpiresIn = this.config.getOrThrow('JWT_ACCESS_TTL_SECONDS');
+    const expiresIn = sessionExpiresAt
+      ? Math.min(
+          configuredExpiresIn,
+          Math.max(1, Math.floor((sessionExpiresAt.getTime() - Date.now()) / 1000)),
+        )
+      : configuredExpiresIn;
 
     const accessToken = await this.jwt.signAsync(
       {

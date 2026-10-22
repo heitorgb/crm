@@ -87,7 +87,7 @@ ausente/ inválido. Nunca commitar `.env`.
 | `REDIS_URL`     | sim                           | —                        |
 | `JWT_ACCESS_SECRET` | sim                       | —                        |
 | `JWT_ACCESS_TTL_SECONDS` | não                   | `900`                    |
-| `REFRESH_TOKEN_TTL_DAYS` | não                   | `30`                     |
+| `REFRESH_TOKEN_TTL_DAYS` | não                   | `1` (24h)                |
 | `AUTH_COOKIE_SECURE` | não                      | `true` em produção       |
 | `AUTH_COOKIE_SAMESITE` | não                    | `lax`                    |
 | `AUTH_COOKIE_DOMAIN` | não                      | —                        |

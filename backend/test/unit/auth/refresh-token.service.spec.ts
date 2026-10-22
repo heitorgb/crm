@@ -94,12 +94,48 @@ function createFakePrisma(): { rows: RefreshTokenRow[]; prisma: PrismaService } 
 }
 
 const config = {
-  getOrThrow: vi.fn((key: keyof Env) => (key === 'REFRESH_TOKEN_TTL_DAYS' ? 30 : undefined)),
+  getOrThrow: vi.fn((key: keyof Env) => (key === 'REFRESH_TOKEN_TTL_DAYS' ? 1 : undefined)),
 } as unknown as ConfigService<Env, true>;
 
 const hash = (token: string): string => createHash('sha256').update(token).digest('hex');
 
 describe('RefreshTokenService', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('issues a refresh token valid for the 24-hour session window', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+    const { prisma } = createFakePrisma();
+    const service = new RefreshTokenService(prisma, config);
+
+    const issued = await service.issue('user-1', 'tenant-1', {});
+
+    expect(issued.expiresAt.toISOString()).toBe('2026-01-02T00:00:00.000Z');
+  });
+
+  it('never extends the session beyond its original expiry when rotating', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+    const { prisma } = createFakePrisma();
+    const service = new RefreshTokenService(prisma, config);
+    const issued = await service.issue('user-1', 'tenant-1', {});
+
+    vi.setSystemTime(new Date('2026-01-01T12:00:00.000Z'));
+    const firstRotation = await service.rotate(issued.token, {});
+    expect(firstRotation.expiresAt.getTime()).toBe(issued.expiresAt.getTime());
+
+    vi.setSystemTime(new Date('2026-01-01T23:59:59.999Z'));
+    const secondRotation = await service.rotate(firstRotation.token, {});
+    expect(secondRotation.expiresAt.getTime()).toBe(issued.expiresAt.getTime());
+
+    vi.setSystemTime(new Date('2026-01-02T00:00:00.001Z'));
+    await expect(service.rotate(secondRotation.token, {})).rejects.toBeInstanceOf(
+      RefreshTokenExpiredError,
+    );
+  });
+
   it('stores only the hash of the issued token', async () => {
     const { rows, prisma } = createFakePrisma();
     const service = new RefreshTokenService(prisma, config);

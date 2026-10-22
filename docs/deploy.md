@@ -63,6 +63,7 @@ Configure em **Settings → Secrets and variables → Actions**:
    CORS_ORIGINS=https://<seu-dominio>
    API_PREFIX=api
    JWT_ACCESS_SECRET=<32+ chars>
+   REFRESH_TOKEN_TTL_DAYS=1        # 24h de sessão desde o login
    CREDENTIALS_ENCRYPTION_KEY=<32+ chars>
    PUBLIC_API_URL=https://<seu-dominio>   # alcançável PELA Evolution API
    RESEND_API_KEY=<chave do Resend>

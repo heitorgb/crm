@@ -43,7 +43,7 @@ const redisEnvSchema = z.object({
 const authEnvSchema = z.object({
   JWT_ACCESS_SECRET: z.string().min(32, 'JWT_ACCESS_SECRET must be at least 32 characters'),
   JWT_ACCESS_TTL_SECONDS: z.coerce.number().int().positive().default(900),
-  REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().positive().default(30),
+  REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().positive().default(1),
   AUTH_COOKIE_SECURE: optionalBoolean,
   AUTH_COOKIE_SAMESITE: z.enum(['lax', 'strict', 'none']).default('lax'),
   AUTH_COOKIE_DOMAIN: optionalEnv(z.string().min(1)),

@@ -95,7 +95,7 @@ export function Sidebar({
         ) : null}
       </div>
 
-      <nav className="flex-1 space-y-1 overflow-x-hidden overflow-y-auto scrollbar-thin px-2 py-3">
+      <nav className="flex-1 space-y-3 overflow-x-hidden overflow-y-auto scrollbar-thin px-2 py-3">
         {leadingEntries.map(renderEntry)}
         {customGroups.map((group) => (
           <SidebarCustomGroup
@@ -264,7 +264,14 @@ function SidebarGroup({
   }
 
   return (
-    <div>
+    <div className="relative">
+      {open ? (
+        <span
+          aria-hidden="true"
+          data-sidebar-rail
+          className="pointer-events-none absolute inset-y-1 left-0 w-0.5 rounded-full bg-primary/30 dark:bg-primary/40"
+        />
+      ) : null}
       <button
         type="button"
         onClick={() => setNavGroupExpanded(group.id, !open)}

@@ -49,7 +49,6 @@ function useMinWidth(query: string): boolean {
 }
 
 export function AttendancePage() {
-  const { connected } = useAttendanceRealtime();
   const [searchParams, setSearchParams] = useSearchParams();
   const isDesktop = useMinWidth('(min-width: 1280px)');
 
@@ -71,6 +70,7 @@ export function AttendancePage() {
   const [tagConversation, setTagConversation] = useState<Conversation | null>(null);
 
   const selectedId = searchParams.get('conversation');
+  const { connected } = useAttendanceRealtime(selectedId);
 
   const instancesQuery = useWhatsAppInstances({ perPage: 100 });
   const conversationsQuery = useConversations({

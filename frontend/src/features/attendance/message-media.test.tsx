@@ -72,6 +72,30 @@ describe('MessageMedia object URL lifecycle', () => {
 
     expect(revokedUrls).not.toContain(image.getAttribute('src'));
   });
+
+  it('reuses the object URL when the message re-renders with the same attachment blob', async () => {
+    const { rerender } = render(
+      <MessageMedia conversationId="conversation-1" message={message} />,
+    );
+
+    const image = await screen.findByAltText('imagem.png');
+    const source = image.getAttribute('src');
+    const createObjectUrl = vi.mocked(URL.createObjectURL);
+    const createdUrls = createObjectUrl.mock.calls.length;
+
+    rerender(
+      <MessageMedia
+        conversationId="conversation-1"
+        message={{ ...message, status: 'DELIVERED' }}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByAltText('imagem.png').getAttribute('src')).toBe(source),
+    );
+    expect(createObjectUrl).toHaveBeenCalledTimes(createdUrls);
+    expect(revokedUrls).not.toContain(source);
+  });
 });
 
 function videoMessage(overrides: Partial<ConversationMessage> = {}): ConversationMessage {

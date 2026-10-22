@@ -313,8 +313,17 @@ CRM (sem dependências novas). A tela é **full-bleed**: `MainContent` deixa de 
   duplicar a bolha. Detalhes em [`billing.md`](./billing.md).
 - **Painel de contato (direita)**: dados do contato/grupo, cliente, assunto e ações. Em telas menores
   vira um `Sheet`; no mobile a lista e o chat se alternam (botão voltar no cabeçalho do chat).
-- **Tempo real**: eventos Socket.IO invalidam as queries; um aviso "Reconectando ao servidor…" é
-  exibido quando o socket cai. `refetchInterval` segue como fallback.
+- **Tempo real**: os eventos Socket.IO são aplicados de forma direcionada pelo `conversationId`
+  do payload. `message.created`/`message.updated` sempre atualizam a lista de conversas, mas só
+  invalidam a conversa e as mensagens quando pertencem à conversa aberta. `conversation.updated`
+  atualiza a lista e, na conversa ativa, invalida as mensagens apenas quando o evento traz
+  `messageId` (processamento de mídia, transcrição e erros de mídia). `connect` ressincroniza
+  lista, contador de não lidas, conversa e mensagens ativas. Um aviso "Reconectando ao servidor…"
+  é exibido quando o socket cai. `refetchInterval` segue como fallback.
+- **Cache de anexos**: blobs de áudio, vídeo, imagem e documentos usam o namespace próprio
+  `['attendance-attachment', ...]`, fora de `['attendance']`. Invalidar a lista, conversas ou
+  mensagens não refaz o download de anexos já carregados, então as URLs `blob:` permanecem
+  estáveis e a reprodução de áudio/vídeo não é reiniciada por eventos de outras conversas.
 - **Não lidas (persistido no servidor)**: o estado de leitura é **compartilhado entre os
   atendentes autorizados do mesmo tenant** e persistido em `Conversation.lastReadAt` (coluna
   `last_read_at`; migração `add_conversation_last_read`, com *backfill* para `last_message_at`/

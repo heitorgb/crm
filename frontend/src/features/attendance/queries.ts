@@ -10,6 +10,7 @@ import {
 
 export const attendanceKeys = {
   all: ['attendance'] as const,
+  conversationLists: ['attendance', 'conversations'] as const,
   conversations: (params: ListConversationsParams) =>
     ['attendance', 'conversations', params] as const,
   conversation: (id: string) => ['attendance', 'conversation', id] as const,
@@ -25,7 +26,8 @@ export const attendanceKeys = {
     messageId: string,
     attachmentId: string,
     variant: 'main' | 'thumb',
-  ) => ['attendance', 'attachment', conversationId, messageId, attachmentId, variant] as const,
+  ) =>
+    ['attendance-attachment', 'attachment', conversationId, messageId, attachmentId, variant] as const,
 };
 
 export function useLinkPreview(url: string | null) {
@@ -177,8 +179,9 @@ export function useMarkConversationRead() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => attendanceService.markRead(id),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: attendanceKeys.all });
+    onSuccess: (conversation, id) => {
+      queryClient.setQueryData(attendanceKeys.conversation(id), conversation);
+      void queryClient.invalidateQueries({ queryKey: attendanceKeys.conversationLists });
       void queryClient.invalidateQueries({ queryKey: attendanceKeys.unreadCount });
     },
   });

@@ -10,7 +10,12 @@ export class AuthCookieService {
   constructor(private readonly config: ConfigService<Env, true>) {}
 
   set(reply: FastifyReply, token: string, expiresAt: Date): void {
-    reply.setCookie(REFRESH_COOKIE_NAME, token, { ...this.baseOptions(), expires: expiresAt });
+    const maxAge = Math.max(0, Math.floor((expiresAt.getTime() - Date.now()) / 1000));
+    reply.setCookie(REFRESH_COOKIE_NAME, token, {
+      ...this.baseOptions(),
+      expires: expiresAt,
+      maxAge,
+    });
   }
 
   clear(reply: FastifyReply): void {

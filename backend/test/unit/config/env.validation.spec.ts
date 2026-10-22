@@ -18,7 +18,7 @@ describe('validateEnv', () => {
     expect(env.AI_TIMEOUT_MS).toBe(30000);
     expect(env.AI_MAX_RETRIES).toBe(2);
     expect(env.JWT_ACCESS_TTL_SECONDS).toBe(900);
-    expect(env.REFRESH_TOKEN_TTL_DAYS).toBe(30);
+    expect(env.REFRESH_TOKEN_TTL_DAYS).toBe(1);
     expect(env.AUTH_COOKIE_SAMESITE).toBe('lax');
     expect(env.AUTH_COOKIE_SECURE).toBeUndefined();
   });

@@ -65,14 +65,17 @@ Claims mínimas:
 - **Reutilização:** apresentar um token já revogado revoga a família inteira e responde
   `REFRESH_TOKEN_REUSE` (401). A revogação do antigo é atômica (`updateMany` condicional) para
   evitar corrida.
-- **Expiração:** `REFRESH_TOKEN_EXPIRED` (401). TTL em `REFRESH_TOKEN_TTL_DAYS` (default 30).
+- **Expiração:** `REFRESH_TOKEN_EXPIRED` (401). A sessão dura `REFRESH_TOKEN_TTL_DAYS` (default 1 = 24h). A rotação **não** estende esse prazo: o novo token herda a expiração absoluta do token original, então a sessão nunca passa de 24h após o login.
+- O access token emitido na rotação é limitado ao tempo restante da sessão (nunca sobrevive ao refresh token).
 
 ## Cookie
 
 - Nome `orderup_refresh`, `HttpOnly`, `Secure` (default `true` em produção), `SameSite` configurável
   (`lax`/`strict`/`none`), `path=/{API_PREFIX}/auth`.
+- Persistente: `Expires`/`Max-Age` iguais à expiração do refresh token (24h por padrão), portanto o
+  cookie sobrevive ao fechamento da aba e do navegador.
 - `SameSite=none` exige `AUTH_COOKIE_SECURE=true` (validado no boot).
-- `logout` limpa o cookie.
+- `logout` revoga o refresh token e limpa o cookie com os mesmos atributos de criação.
 
 ## Guards e autorização
 
@@ -152,8 +155,8 @@ APP_URL                # URL pública do frontend, usada no link
 
 ```text
 JWT_ACCESS_SECRET        # obrigatório, >= 32 chars
-JWT_ACCESS_TTL_SECONDS   # default 900
-REFRESH_TOKEN_TTL_DAYS   # default 30
+JWT_ACCESS_TTL_SECONDS   # default 900 (curto; a sessão é mantida pelo refresh)
+REFRESH_TOKEN_TTL_DAYS   # default 1 (24h de sessão desde o login)
 AUTH_COOKIE_SECURE       # default: true em produção, false fora
 AUTH_COOKIE_SAMESITE     # lax | strict | none (default lax)
 AUTH_COOKIE_DOMAIN       # opcional

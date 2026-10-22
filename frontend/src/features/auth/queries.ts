@@ -117,7 +117,11 @@ export function useSessionSync() {
       return;
     }
 
-    const delay = Math.max(session.expiresAt - Date.now() - REFRESH_SKEW_MS, 0);
+    const remaining = session.expiresAt - Date.now();
+    const delay = Math.max(
+      remaining > REFRESH_SKEW_MS ? remaining - REFRESH_SKEW_MS : remaining + 1000,
+      1000,
+    );
     const timer = window.setTimeout(() => {
       void refreshSession();
     }, delay);

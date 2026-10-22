@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import type { OutgoingHttpHeaders } from 'node:http';
 import { ValidationPipe } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
@@ -75,6 +76,29 @@ describe('Authentication (integration)', () => {
       expect(response.json().accessToken).toEqual(expect.any(String));
       expect(response.json()).not.toHaveProperty('refreshToken');
       expect(refreshCookie(response)?.value).toEqual(expect.any(String));
+    });
+
+    it('sets a persistent HttpOnly refresh cookie for the 24-hour session', async () => {
+      const response = await login(data.userB.email, data.tenantB.id);
+      const cookie = refreshCookie(response);
+      const setCookie = setCookieHeaders(response).find((value) =>
+        value.startsWith(`${REFRESH_COOKIE_NAME}=`),
+      );
+
+      expect(setCookie).toBeDefined();
+      expect(setCookie).toMatch(/HttpOnly/i);
+      expect(setCookie).toContain('Path=/api/auth');
+      expect(setCookie).toMatch(/SameSite=Lax/i);
+      expect(setCookie).toMatch(/Expires=/i);
+      expect(setCookie).toMatch(/Max-Age=86\d{3}/);
+
+      const stored = await prisma.refreshToken.findUnique({
+        where: { tokenHash: createHash('sha256').update(cookie!.value).digest('hex') },
+        select: { expiresAt: true },
+      });
+      const remaining = stored!.expiresAt.getTime() - Date.now();
+      expect(remaining).toBeGreaterThan(23 * 60 * 60 * 1000);
+      expect(remaining).toBeLessThanOrEqual(24 * 60 * 60 * 1000);
     });
 
     it('rejects a wrong password with a generic error', async () => {
@@ -221,6 +245,27 @@ describe('Authentication (integration)', () => {
       expect(refreshCookie(refreshed)?.value).not.toBe(cookie?.value);
     });
 
+    it('does not issue an access token beyond the original session expiry', async () => {
+      const loginResponse = await login(data.userB.email, data.tenantB.id);
+      const cookie = refreshCookie(loginResponse);
+      const sessionExpiresAt = new Date(Date.now() + 10_000);
+
+      await prisma.refreshToken.updateMany({
+        where: { tokenHash: createHash('sha256').update(cookie!.value).digest('hex') },
+        data: { expiresAt: sessionExpiresAt },
+      });
+
+      const refreshed = await refresh(cookie);
+
+      expect(refreshed.statusCode).toBe(200);
+      const payload = jwt.decode(refreshed.json().accessToken) as {
+        iat: number;
+        exp: number;
+      };
+      expect(payload.exp - payload.iat).toBeLessThanOrEqual(10);
+      expect(payload.exp * 1000).toBeLessThanOrEqual(sessionExpiresAt.getTime() + 1000);
+    });
+
     it('rejects an unknown refresh token', async () => {
       const response = await refresh({ name: REFRESH_COOKIE_NAME, value: 'unknown' });
 
@@ -269,6 +314,13 @@ describe('Authentication (integration)', () => {
         cookies: cookie ? { [REFRESH_COOKIE_NAME]: cookie.value } : {},
       });
       expect(logout.statusCode).toBe(204);
+
+      const clearedCookie = setCookieHeaders(logout).find((value) =>
+        value.startsWith(`${REFRESH_COOKIE_NAME}=`),
+      );
+      expect(clearedCookie).toBeDefined();
+      expect(clearedCookie).toMatch(/Expires=Thu, 01 Jan 1970 00:00:00 GMT/i);
+      expect(clearedCookie).toContain('Path=/api/auth');
 
       const afterLogout = await refresh(cookie);
       expect(afterLogout.statusCode).toBe(401);
@@ -340,6 +392,14 @@ describe('Authentication (integration)', () => {
 
 function refreshCookie(response: { cookies: Array<{ name: string; value: string }> }) {
   return response.cookies.find((cookie) => cookie.name === REFRESH_COOKIE_NAME);
+}
+
+function setCookieHeaders(response: { headers: OutgoingHttpHeaders }): string[] {
+  const value = response.headers['set-cookie'];
+  if (!value) {
+    return [];
+  }
+  return Array.isArray(value) ? value.map(String) : [String(value)];
 }
 
 async function seed(prisma: PrismaService): Promise<Seeded> {

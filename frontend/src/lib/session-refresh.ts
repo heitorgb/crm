@@ -6,7 +6,9 @@ const API_PREFIX = '/api';
 
 export const REFRESH_SKEW_MS = 30_000;
 
-let inFlight: Promise<boolean> | null = null;
+export type RefreshResult = 'refreshed' | 'unauthenticated' | 'unavailable';
+
+let inFlight: Promise<RefreshResult> | null = null;
 
 export function toSession(response: AuthSessionResponse, now = Date.now()): AuthSession {
   return { ...response, expiresAt: now + response.expiresIn * 1000 };
@@ -16,7 +18,7 @@ export function sessionExpiresSoon(expiresAt: number | undefined, now = Date.now
   return !expiresAt || expiresAt - now <= REFRESH_SKEW_MS;
 }
 
-async function requestRefresh(): Promise<boolean> {
+async function requestRefresh(): Promise<RefreshResult> {
   try {
     const response = await fetch(`${BASE_URL}${API_PREFIX}/auth/refresh`, {
       method: 'POST',
@@ -26,27 +28,39 @@ async function requestRefresh(): Promise<boolean> {
     });
 
     if (!response.ok) {
-      return false;
+      return response.status === 401 || response.status === 403
+        ? 'unauthenticated'
+        : 'unavailable';
     }
 
     const payload = (await response.json().catch(() => null)) as AuthSessionResponse | null;
     if (!payload?.accessToken) {
-      return false;
+      return 'unavailable';
     }
 
     useAuthStore.getState().setSession(toSession(payload));
-    return true;
+    return 'refreshed';
   } catch {
-    return false;
+    return 'unavailable';
   }
 }
 
-/** Rotates the refresh cookie once, sharing the result across concurrent callers. */
-export async function refreshSession(): Promise<boolean> {
+/**
+ * Rotates the refresh cookie once, sharing the result across concurrent callers.
+ * A network/server failure is not treated as an expired session.
+ */
+export async function refreshSession(): Promise<RefreshResult> {
   if (!inFlight) {
-    inFlight = requestRefresh().finally(() => {
-      inFlight = null;
-    });
+    inFlight = requestRefresh()
+      .then((result) => {
+        if (result === 'unauthenticated') {
+          useAuthStore.getState().clearSession();
+        }
+        return result;
+      })
+      .finally(() => {
+        inFlight = null;
+      });
   }
 
   return inFlight;
@@ -63,11 +77,7 @@ export async function getValidAccessToken(): Promise<string | null> {
     return session.accessToken;
   }
 
-  const refreshed = await refreshSession();
-  if (!refreshed) {
-    useAuthStore.getState().clearSession();
-    return null;
-  }
+  await refreshSession();
 
   return useAuthStore.getState().session?.accessToken ?? null;
 }

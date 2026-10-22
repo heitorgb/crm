@@ -61,7 +61,13 @@ export class RefreshTokenService {
       throw new RefreshTokenReuseError();
     }
 
-    const created = await this.createToken(record.userId, record.tenantId, record.familyId, meta);
+    const created = await this.createToken(
+      record.userId,
+      record.tenantId,
+      record.familyId,
+      meta,
+      record.expiresAt,
+    );
 
     await this.prisma.refreshToken.update({
       where: { id: record.id },
@@ -100,9 +106,10 @@ export class RefreshTokenService {
     tenantId: string,
     familyId: string,
     meta: RequestMetadata,
+    sessionExpiresAt?: Date,
   ): Promise<{ id: string } & IssuedRefreshToken> {
     const token = randomBytes(48).toString('base64url');
-    const expiresAt = this.expiryFromNow();
+    const expiresAt = this.expiryFromNow(sessionExpiresAt);
 
     const { id } = await this.prisma.refreshToken.create({
       data: {
@@ -127,9 +134,13 @@ export class RefreshTokenService {
     });
   }
 
-  private expiryFromNow(): Date {
+  private expiryFromNow(sessionExpiresAt?: Date): Date {
     const ttlDays = this.config.getOrThrow('REFRESH_TOKEN_TTL_DAYS');
-    return new Date(Date.now() + ttlDays * 24 * 60 * 60 * 1000);
+    const ttlExpiresAt = Date.now() + ttlDays * 24 * 60 * 60 * 1000;
+
+    return sessionExpiresAt && sessionExpiresAt.getTime() < ttlExpiresAt
+      ? sessionExpiresAt
+      : new Date(ttlExpiresAt);
   }
 
   private hashToken(token: string): string {

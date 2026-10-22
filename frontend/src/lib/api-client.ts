@@ -30,7 +30,8 @@ function withAuthHeader(headers: HeadersInit | undefined, token: string | null):
 
 /**
  * Authenticated fetch that refreshes the access token proactively and once on a
- * 401, so an expired token never forces the operator to log in again.
+ * 401, so an expired token never forces the operator to log in again. Temporary
+ * network/server failures keep the current session instead of logging out.
  */
 async function apiFetch(path: string, init: RequestInit, auth: boolean): Promise<Response> {
   const url = `${BASE_URL}${API_PREFIX}${path}`;
@@ -47,8 +48,7 @@ async function apiFetch(path: string, init: RequestInit, auth: boolean): Promise
   }
 
   const refreshed = await refreshSession();
-  if (!refreshed) {
-    useAuthStore.getState().clearSession();
+  if (refreshed !== 'refreshed') {
     return response;
   }
 

@@ -29,7 +29,7 @@ export function Header({ onOpenMobileSidebar }: HeaderProps) {
       : [];
 
   return (
-    <header className="sticky top-0 z-30 flex h-14 items-center gap-2 border-b border-border bg-background/85 px-3 backdrop-blur sm:px-4">
+    <header className="sticky top-0 z-30 flex h-14 items-center gap-2 border-b border-border/80 bg-background/80 px-3 backdrop-blur-xl supports-[backdrop-filter]:bg-background/70 sm:px-4">
       {isAttendance ? (
         <div className="flex w-full items-center gap-2 lg:hidden">
           <UserMenu />

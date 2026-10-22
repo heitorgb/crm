@@ -80,11 +80,17 @@ export function Sidebar({
           collapsed && 'justify-center px-0',
         )}
       >
-        <img src="/images/logo-orderup.png" alt="OrderUp" className="size-8 shrink-0 rounded-md" />
+        <img
+          src="/images/logo-orderup.png"
+          alt="OrderUp"
+          className="size-8 shrink-0 rounded-md shadow-xs ring-1 ring-border/70"
+        />
         {!collapsed ? (
           <div className="min-w-0">
-            <p className="truncate text-sm font-semibold leading-tight">OrderUp</p>
-            <p className="truncate text-xs text-muted-foreground">CRM</p>
+            <p className="truncate text-sm font-semibold leading-tight tracking-tight">OrderUp</p>
+            <p className="truncate text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+              CRM
+            </p>
           </div>
         ) : null}
       </div>
@@ -307,7 +313,7 @@ function SidebarLink({
         'flex w-full min-w-0 items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium transition-colors',
         collapsed && 'justify-center px-0',
         isActive
-          ? 'bg-sidebar-accent text-primary'
+          ? 'bg-sidebar-accent font-semibold text-primary shadow-[inset_0_0_0_1px_hsl(var(--primary)/0.12)]'
           : 'text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-foreground',
       )}
     >

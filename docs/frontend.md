@@ -45,24 +45,29 @@ o sucesso, não usa storage persistente e define `Referrer-Policy: no-referrer` 
 
 ## Identidade visual (tokens)
 
-Extraídos de https://orderup.com.br/ (CSS oficial) e adaptados para light/dark. O padrão é **Light**.
+Extraídos de https://orderup.com.br/ (CSS oficial), harmonizados com a tela de login e adaptados
+para light/dark. O padrão é **Light**. A referência completa de princípios, componentes e estados
+está em [`design.md`](./design.md).
 
 | Token                     | Light                    | Dark                      |
 | ------------------------- | ------------------------ | ------------------------- |
-| `background`              | `#F6F7FB`                | `#070A12`                 |
-| `foreground`              | `#0B1020`                | `#E6E8F2`                 |
-| `surface` / `surface-hover` | `#FFFFFF` / `#EEF0F7`  | `#0B1020` / `#121A2E`     |
-| `border`                  | `#E3E6F0`                | `rgba(255,255,255,.08)`   |
-| `muted` / `muted-foreground` | `#F1F3F9` / `#6B7280` | `#131A2B` / `#8A8FA6`     |
-| `brand-primary`           | `#22C55E`                | `#22C55E`                 |
-| `brand-primary-hover`     | `#16A34A`                | `#34D399`                 |
-| `brand-primary-light`     | `#DCFCE7`                | `#123324`                 |
-| `success` / `warning`     | `#16A34A` / `#D97706`    | `#22C55E` / `#FACC15`     |
-| `danger` / `info`         | `#DC2626` / `#06B6D4`    | `#F87171` / `#22D3EE`     |
+| `background`              | `#F5F6FA`                | `#0C0D12`                 |
+| `foreground`              | `#0A0F1E`                | `#F2F4F8`                 |
+| `surface` / `surface-hover` | `#FFFFFF` / `#F2F3F8`  | `#161923` / `#212531`     |
+| `border` / `input`        | `#DEE2ED` / `#D5D9E7`    | `#242733` / `#2C313F`     |
+| `muted` / `muted-foreground` | `#EEF0F6` / `#636B7E` | `#1F232E` / `#97A1B5`     |
+| `brand-primary`           | `#21C45D`                | `#21C45D`                 |
+| `brand-primary-hover`     | `#16A34A`                | `#4DDB81`                 |
+| `brand-primary-strong`    | `#189546`                | `#15843E`                 |
+| `brand-primary-light`     | `#DEFCE9`                | `#163B24`                 |
+| `success` / `warning`     | `#16A34A` / `#D78109`    | `#28BD5F` / `#F5BD14`     |
+| `danger` / `info`         | `#DC2626` / `#0AA6C2`    | `#EC5151` / `#0DD0F2`     |
 
 - Tipografia: **Inter** (sans) e **JetBrains Mono** (mono) — as mesmas do site oficial.
-- Raios: `--radius-sm 8px`, `--radius-md 10px`, `--radius-lg 14px`, `--radius-xl 18px`.
+- Raios: `--radius-sm 6px`, `--radius-md 8px`, `--radius-lg 16px`, `--radius-xl 20px`.
+- Elevação: `shadow-xs`, `shadow-card`, `shadow-lg` e `shadow-overlay`.
 - Gradiente de marca: `linear-gradient(135deg, #22C55E, #06B6D4, #A855F7)` (`.brand-gradient`).
+- CTA primário: gradiente vertical `primary` → `primary-strong` com brilho interno sutil.
 - HEX nunca é espalhado nos componentes: tudo consome tokens em `src/index.css` + `tailwind.config.ts`.
 
 ### Assets

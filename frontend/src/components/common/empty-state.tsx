@@ -19,7 +19,7 @@ export function EmptyState({ icon: Icon, title, description, action, className }
       )}
     >
       {Icon ? (
-        <span className="flex size-11 items-center justify-center rounded-full bg-primary/10 text-primary">
+        <span className="flex size-11 items-center justify-center rounded-full bg-primary/10 text-primary ring-1 ring-inset ring-primary/15">
           <Icon className="size-5" />
         </span>
       ) : null}

@@ -38,6 +38,17 @@ export interface ContactView {
   updatedAt: Date;
 }
 
+export interface ContactListSummary {
+  total: number;
+  primary: number;
+  blocked: number;
+  incomplete: number;
+}
+
+export type ContactListResult = PageResult<ContactView> & {
+  summary?: ContactListSummary;
+};
+
 export interface FindOrCreateContactInput {
   tenantId: string;
   phone: string;
@@ -57,6 +68,13 @@ export interface ImportContactsResult {
 
 const IMPORT_BATCH_SIZE = 500;
 
+const INCOMPLETE_CONTACT_CONDITIONS: Prisma.ContactWhereInput[] = [
+  { phone: null },
+  { email: null },
+  { birthDate: null },
+  { address: null },
+];
+
 const CONTACT_INCLUDE = {
   customer: { select: { name: true } },
 } satisfies Prisma.ContactInclude;
@@ -70,20 +88,44 @@ export class ContactsService {
     private readonly tenantContext: TenantContextService,
   ) {}
 
-  async list(query: ListContactsQueryDto): Promise<PageResult<ContactView>> {
+  async list(query: ListContactsQueryDto): Promise<ContactListResult> {
     const { tenantId } = this.tenantContext.requireContext();
-    const where: Prisma.ContactWhereInput = { tenantId };
+    const summaryWhere = buildContactListWhere({
+      tenantId,
+      customerId: query.customerId,
+      search: query.search,
+      extraFilter: query.extraFilter,
+    });
+    const where = filterContactListWhere(summaryWhere, query.filter);
 
-    if (query.customerId) {
-      where.customerId = query.customerId;
-    }
+    if (query.includeSummary) {
+      const [total, contacts, summaryTotal, primary, blocked, incomplete] =
+        await this.prisma.$transaction([
+          this.prisma.contact.count({ where }),
+          this.prisma.contact.findMany({
+            where,
+            orderBy: { [query.sort]: query.order },
+            skip: skipOf(query.page, query.perPage),
+            take: query.perPage,
+            include: CONTACT_INCLUDE,
+          }),
+          this.prisma.contact.count({ where: summaryWhere }),
+          this.prisma.contact.count({ where: { ...summaryWhere, isPrimary: true } }),
+          this.prisma.contact.count({ where: { ...summaryWhere, isBlocked: true } }),
+          this.prisma.contact.count({
+            where: incompleteContactWhere(summaryWhere),
+          }),
+        ]);
 
-    if (query.search) {
-      where.OR = [
-        { name: { contains: query.search, mode: 'insensitive' } },
-        { email: { contains: query.search, mode: 'insensitive' } },
-        { phone: { contains: query.search, mode: 'insensitive' } },
-      ];
+      return {
+        ...buildPage(contacts.map(toContactView), total, query.page, query.perPage),
+        summary: {
+          total: summaryTotal,
+          primary,
+          blocked,
+          incomplete,
+        },
+      };
     }
 
     const [total, contacts] = await this.prisma.$transaction([
@@ -344,6 +386,65 @@ export class ContactsService {
       throw new ContactCustomerNotFoundError();
     }
   }
+}
+
+function buildContactListWhere(input: {
+  tenantId: string;
+  customerId?: string;
+  search?: string;
+  extraFilter?: ListContactsQueryDto['extraFilter'];
+}): Prisma.ContactWhereInput {
+  const where: Prisma.ContactWhereInput = { tenantId: input.tenantId };
+
+  if (input.customerId) {
+    where.customerId = input.customerId;
+  }
+
+  if (input.search) {
+    where.OR = [
+      { name: { contains: input.search, mode: 'insensitive' } },
+      { email: { contains: input.search, mode: 'insensitive' } },
+      { phone: { contains: input.search, mode: 'insensitive' } },
+    ];
+  }
+
+  if (input.extraFilter === 'with_phone') {
+    where.phone = { not: null };
+  }
+  if (input.extraFilter === 'with_email') {
+    where.email = { not: null };
+  }
+  if (input.extraFilter === 'with_birth_date') {
+    where.birthDate = { not: null };
+  }
+  if (input.extraFilter === 'with_address') {
+    where.address = { not: null };
+  }
+  if (input.extraFilter === 'with_customer') {
+    where.customerId = { not: null };
+  }
+
+  return where;
+}
+
+function filterContactListWhere(
+  where: Prisma.ContactWhereInput,
+  filter: ListContactsQueryDto['filter'],
+): Prisma.ContactWhereInput {
+  if (filter === 'primary') {
+    return { ...where, isPrimary: true };
+  }
+  if (filter === 'blocked') {
+    return { ...where, isBlocked: true };
+  }
+  if (filter === 'incomplete') {
+    return incompleteContactWhere(where);
+  }
+  return where;
+}
+
+function incompleteContactWhere(where: Prisma.ContactWhereInput): Prisma.ContactWhereInput {
+  return { AND: [where, { OR: INCOMPLETE_CONTACT_CONDITIONS }] };
 }
 
 function toContactView(contact: PrismaContact): ContactView {

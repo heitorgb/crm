@@ -1,3 +1,4 @@
+import { Transform } from 'class-transformer';
 import {
   IsBoolean,
   IsEmail,
@@ -15,6 +16,20 @@ import { PaginationQueryDto } from '../../../common/http/pagination.js';
 export const CONTACT_SORT_FIELDS = ['createdAt', 'updatedAt', 'name'] as const;
 
 export type ContactSortField = (typeof CONTACT_SORT_FIELDS)[number];
+
+export const CONTACT_LIST_FILTERS = ['all', 'primary', 'blocked', 'incomplete'] as const;
+
+export type ContactListFilter = (typeof CONTACT_LIST_FILTERS)[number];
+
+export const CONTACT_EXTRA_FILTERS = [
+  'with_phone',
+  'with_email',
+  'with_birth_date',
+  'with_address',
+  'with_customer',
+] as const;
+
+export type ContactExtraFilter = (typeof CONTACT_EXTRA_FILTERS)[number];
 
 export class CreateContactDto {
   @IsOptional()
@@ -111,6 +126,19 @@ export class ListContactsQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsIn(CONTACT_SORT_FIELDS)
   sort: ContactSortField = 'createdAt';
+
+  @IsOptional()
+  @IsIn(CONTACT_LIST_FILTERS)
+  filter: ContactListFilter = 'all';
+
+  @IsOptional()
+  @IsIn(CONTACT_EXTRA_FILTERS)
+  extraFilter?: ContactExtraFilter;
+
+  @IsOptional()
+  @Transform(({ value }) => (value === 'true' ? true : value === 'false' ? false : value))
+  @IsBoolean()
+  includeSummary?: boolean;
 }
 
 export class ResolveContactDto {

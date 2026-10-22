@@ -44,6 +44,26 @@ export interface CustomerDetail extends Omit<Customer, 'contactCount'> {
   contacts: CustomerContact[];
 }
 
+export type ContactFilter = 'all' | 'primary' | 'blocked' | 'incomplete';
+
+export type ContactExtraFilter =
+  | 'with_phone'
+  | 'with_email'
+  | 'with_birth_date'
+  | 'with_address'
+  | 'with_customer';
+
+export interface ContactSummary {
+  total: number;
+  primary: number;
+  blocked: number;
+  incomplete: number;
+}
+
+export interface ContactListResult extends PageResult<Contact> {
+  summary?: ContactSummary;
+}
+
 export interface Contact {
   id: string;
   customerId: string | null;

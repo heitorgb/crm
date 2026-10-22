@@ -8,7 +8,7 @@ import { StatusBadge, type StatusTone } from '@/components/common/status-badge';
 import { UserAvatar } from '@/components/common/user-avatar';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { formatDateTime } from '@/lib/format';
+import { formatDateOnly, formatDateTime } from '@/lib/format';
 import { useConversations } from '@/features/attendance/queries';
 import { StartConversationDialog } from '@/features/attendance/start-conversation-dialog';
 import type { ConversationStatus } from '@/types/attendance';
@@ -119,6 +119,14 @@ export function ContactDetailPage() {
             <div className="flex items-center justify-between">
               <span className="text-muted-foreground">E-mail</span>
               <span className="truncate">{contact.email ?? '—'}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">Nascimento</span>
+              <span>{contact.birthDate ? formatDateOnly(contact.birthDate) : '—'}</span>
+            </div>
+            <div className="flex items-start justify-between gap-3">
+              <span className="shrink-0 text-muted-foreground">Endereço</span>
+              <span className="text-right">{contact.address ?? '—'}</span>
             </div>
             <div className="flex items-center justify-between">
               <span className="text-muted-foreground">Cargo</span>

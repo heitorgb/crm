@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { CustomerStatus, Prisma } from '@prisma/client';
+import { formatDateOnly } from '../../common/dates/date-only.js';
 import { buildPage, skipOf, type PageResult } from '../../common/http/pagination.js';
 import { TenantContextService } from '../../common/tenant-context/tenant-context.service.js';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service.js';
@@ -36,6 +37,8 @@ export interface CustomerContactView {
   name: string;
   email: string | null;
   phone: string | null;
+  birthDate: string | null;
+  address: string | null;
   position: string | null;
   isPrimary: boolean;
   isBlocked: boolean;
@@ -113,6 +116,8 @@ export class CustomersService {
             name: true,
             email: true,
             phone: true,
+            birthDate: true,
+            address: true,
             position: true,
             isPrimary: true,
             isBlocked: true,
@@ -127,7 +132,13 @@ export class CustomersService {
       throw new CustomerNotFoundError();
     }
 
-    return { ...toCustomerBase(customer), contacts: customer.contacts };
+    return {
+      ...toCustomerBase(customer),
+      contacts: customer.contacts.map((contact) => ({
+        ...contact,
+        birthDate: contact.birthDate ? formatDateOnly(contact.birthDate) : null,
+      })),
+    };
   }
 
   async create(dto: CreateCustomerDto): Promise<CustomerDetailView> {

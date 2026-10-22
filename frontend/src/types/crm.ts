@@ -20,6 +20,8 @@ export interface CustomerContact {
   name: string;
   email: string | null;
   phone: string | null;
+  birthDate: string | null;
+  address: string | null;
   position: string | null;
   isPrimary: boolean;
   isBlocked: boolean;
@@ -49,6 +51,8 @@ export interface Contact {
   name: string;
   email: string | null;
   phone: string | null;
+  birthDate: string | null;
+  address: string | null;
   position: string | null;
   avatarUrl: string | null;
   isPrimary: boolean;
@@ -81,6 +85,8 @@ export interface ContactInput {
   name: string;
   email?: string | null;
   phone?: string | null;
+  birthDate?: string | null;
+  address?: string | null;
   position?: string | null;
   isPrimary?: boolean;
   isBlocked?: boolean;

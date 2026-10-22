@@ -5,9 +5,11 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Matches,
   MaxLength,
   MinLength,
 } from 'class-validator';
+import { DATE_ONLY_PATTERN } from '../../../common/dates/date-only.js';
 import { PaginationQueryDto } from '../../../common/http/pagination.js';
 
 export const CONTACT_SORT_FIELDS = ['createdAt', 'updatedAt', 'name'] as const;
@@ -33,6 +35,15 @@ export class CreateContactDto {
   @IsString()
   @MaxLength(40)
   phone?: string;
+
+  @IsOptional()
+  @Matches(DATE_ONLY_PATTERN, { message: 'birthDate deve estar no formato YYYY-MM-DD' })
+  birthDate?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  address?: string | null;
 
   @IsOptional()
   @IsString()
@@ -68,6 +79,15 @@ export class UpdateContactDto {
   @IsString()
   @MaxLength(40)
   phone?: string | null;
+
+  @IsOptional()
+  @Matches(DATE_ONLY_PATTERN, { message: 'birthDate deve estar no formato YYYY-MM-DD' })
+  birthDate?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  address?: string | null;
 
   @IsOptional()
   @IsString()

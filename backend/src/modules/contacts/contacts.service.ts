@@ -1,10 +1,16 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import {
+  formatDateOnly,
+  isValidDateOnly,
+  parseDateOnly,
+} from '../../common/dates/date-only.js';
 import { buildPage, skipOf, type PageResult } from '../../common/http/pagination.js';
 import { TenantContextService } from '../../common/tenant-context/tenant-context.service.js';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service.js';
 import {
   ContactCustomerNotFoundError,
+  ContactInvalidBirthDateError,
   ContactNotFoundError,
   ContactPhoneConflictError,
 } from './contacts.errors.js';
@@ -22,6 +28,8 @@ export interface ContactView {
   name: string;
   email: string | null;
   phone: string | null;
+  birthDate: string | null;
+  address: string | null;
   position: string | null;
   avatarUrl: string | null;
   isPrimary: boolean;
@@ -130,6 +138,8 @@ export class ContactsService {
           name: dto.name.trim(),
           email: normalizeEmail(dto.email),
           phone: normalizePhone(dto.phone),
+          birthDate: normalizeBirthDate(dto.birthDate),
+          address: normalizeNullableString(dto.address),
           position: normalizeNullableString(dto.position),
           isPrimary: dto.isPrimary ?? false,
           isBlocked: dto.isBlocked ?? false,
@@ -156,6 +166,8 @@ export class ContactsService {
     if (dto.name !== undefined) data.name = dto.name.trim();
     if (dto.email !== undefined) data.email = normalizeEmail(dto.email);
     if (dto.phone !== undefined) data.phone = normalizePhone(dto.phone);
+    if (dto.birthDate !== undefined) data.birthDate = normalizeBirthDate(dto.birthDate);
+    if (dto.address !== undefined) data.address = normalizeNullableString(dto.address);
     if (dto.position !== undefined) data.position = normalizeNullableString(dto.position);
     if (dto.isPrimary !== undefined) data.isPrimary = dto.isPrimary;
     if (dto.isBlocked !== undefined) data.isBlocked = dto.isBlocked;
@@ -342,6 +354,8 @@ function toContactView(contact: PrismaContact): ContactView {
     name: contact.name,
     email: contact.email,
     phone: contact.phone,
+    birthDate: contact.birthDate ? formatDateOnly(contact.birthDate) : null,
+    address: contact.address,
     position: contact.position,
     avatarUrl: contact.avatarUrl,
     isPrimary: contact.isPrimary,
@@ -357,6 +371,18 @@ function normalizeEmail(value: string | null | undefined): string | null | undef
 
   const trimmed = value.trim().toLowerCase();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function normalizeBirthDate(value: string | null | undefined): Date | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null || value.trim().length === 0) return null;
+
+  const trimmed = value.trim();
+  if (!isValidDateOnly(trimmed)) {
+    throw new ContactInvalidBirthDateError();
+  }
+
+  return parseDateOnly(trimmed);
 }
 
 function normalizeNullableString(value: string | null | undefined): string | null | undefined {

@@ -116,6 +116,141 @@ describe('Contacts (integration)', () => {
     });
   });
 
+  describe('birth date and address', () => {
+    it('persists and returns the new profile fields as optional data', async () => {
+      const created = await createContact(ownerA, {
+        customerId: customerA,
+        name: 'Maria Silva',
+        birthDate: '1990-02-28',
+        address: 'Rua das Flores, 123, Centro, São Paulo/SP, 01000-000',
+      });
+
+      expect(created.statusCode).toBe(201);
+      expect(created.json()).toMatchObject({
+        birthDate: '1990-02-28',
+        address: 'Rua das Flores, 123, Centro, São Paulo/SP, 01000-000',
+      });
+
+      const detail = await app.inject({
+        method: 'GET',
+        url: `/api/contacts/${created.json().id}`,
+        headers: authHeaders(ownerA),
+      });
+      expect(detail.statusCode).toBe(200);
+      expect(detail.json()).toMatchObject({
+        birthDate: '1990-02-28',
+        address: 'Rua das Flores, 123, Centro, São Paulo/SP, 01000-000',
+      });
+    });
+
+    it('creates contacts without the new fields and clears them on update', async () => {
+      const created = await createContact(ownerA, { name: 'Sem dados extras' });
+      expect(created.statusCode).toBe(201);
+      expect(created.json().birthDate).toBeNull();
+      expect(created.json().address).toBeNull();
+
+      const id = created.json().id as string;
+      const filled = await app.inject({
+        method: 'PATCH',
+        url: `/api/contacts/${id}`,
+        headers: authHeaders(ownerA),
+        payload: { birthDate: '1985-12-31', address: 'Avenida Brasil, 10' },
+      });
+      expect(filled.statusCode).toBe(200);
+      expect(filled.json()).toMatchObject({
+        birthDate: '1985-12-31',
+        address: 'Avenida Brasil, 10',
+      });
+
+      const cleared = await app.inject({
+        method: 'PATCH',
+        url: `/api/contacts/${id}`,
+        headers: authHeaders(ownerA),
+        payload: { birthDate: null, address: null },
+      });
+      expect(cleared.statusCode).toBe(200);
+      expect(cleared.json().birthDate).toBeNull();
+      expect(cleared.json().address).toBeNull();
+    });
+
+    it('preserves the new fields when other data is updated', async () => {
+      const created = await createContact(ownerA, {
+        name: 'Campos preservados',
+        birthDate: '2000-01-15',
+        address: 'Rua A, 1',
+      });
+      const id = created.json().id as string;
+
+      const updated = await app.inject({
+        method: 'PATCH',
+        url: `/api/contacts/${id}`,
+        headers: authHeaders(ownerA),
+        payload: { position: 'Gerente' },
+      });
+
+      expect(updated.statusCode).toBe(200);
+      expect(updated.json()).toMatchObject({
+        position: 'Gerente',
+        birthDate: '2000-01-15',
+        address: 'Rua A, 1',
+      });
+    });
+
+    it('rejects invalid birth dates', async () => {
+      for (const birthDate of ['31/12/1990', '1990-02-31', 'not-a-date']) {
+        const response = await createContact(ownerA, { name: 'Data inválida', birthDate });
+        expect(response.statusCode).toBe(400);
+      }
+    });
+
+    it('keeps legacy contacts without the new fields editable', async () => {
+      const legacy = await prisma.contact.create({
+        data: { tenantId: ownerA.tenantId, name: 'Contato legado' },
+      });
+
+      const detail = await app.inject({
+        method: 'GET',
+        url: `/api/contacts/${legacy.id}`,
+        headers: authHeaders(ownerA),
+      });
+      expect(detail.statusCode).toBe(200);
+      expect(detail.json()).toMatchObject({ birthDate: null, address: null });
+
+      const updated = await app.inject({
+        method: 'PATCH',
+        url: `/api/contacts/${legacy.id}`,
+        headers: authHeaders(ownerA),
+        payload: { name: 'Contato legado editado' },
+      });
+      expect(updated.statusCode).toBe(200);
+      expect(updated.json()).toMatchObject({
+        name: 'Contato legado editado',
+        birthDate: null,
+        address: null,
+      });
+    });
+
+    it('includes the new fields in the customer contacts response', async () => {
+      await createContact(ownerA, {
+        customerId: customerA,
+        name: 'Contato do cliente',
+        birthDate: '1992-06-10',
+        address: 'Rua B, 20',
+      });
+
+      const detail = await app.inject({
+        method: 'GET',
+        url: `/api/customers/${customerA}`,
+        headers: authHeaders(ownerA),
+      });
+      expect(detail.statusCode).toBe(200);
+      expect(detail.json().contacts[0]).toMatchObject({
+        birthDate: '1992-06-10',
+        address: 'Rua B, 20',
+      });
+    });
+  });
+
   describe('blocking', () => {
     it('defaults new contacts to unblocked', async () => {
       const created = await createContact(ownerA, { name: 'Normal' });

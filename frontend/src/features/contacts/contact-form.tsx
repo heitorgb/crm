@@ -21,6 +21,8 @@ interface EditableContact {
   name: string;
   email: string | null;
   phone: string | null;
+  birthDate: string | null;
+  address: string | null;
   position: string | null;
   isPrimary: boolean;
   isBlocked?: boolean;
@@ -43,6 +45,8 @@ export function ContactForm({ open, onOpenChange, contact, customerId }: Contact
   const [name, setName] = useState(contact?.name ?? '');
   const [email, setEmail] = useState(contact?.email ?? '');
   const [phone, setPhone] = useState(contact?.phone ?? '');
+  const [birthDate, setBirthDate] = useState(contact?.birthDate ?? '');
+  const [address, setAddress] = useState(contact?.address ?? '');
   const [position, setPosition] = useState(contact?.position ?? '');
   const [isPrimary, setIsPrimary] = useState(contact?.isPrimary ?? false);
   const [isBlocked, setIsBlocked] = useState(contact?.isBlocked ?? false);
@@ -66,6 +70,8 @@ export function ContactForm({ open, onOpenChange, contact, customerId }: Contact
       name: name.trim(),
       email: email.trim().length > 0 ? email.trim() : null,
       phone: phone.trim(),
+      birthDate: birthDate.trim().length > 0 ? birthDate : null,
+      address: address.trim().length > 0 ? address.trim() : null,
       position: position.trim().length > 0 ? position.trim() : null,
       isPrimary,
       isBlocked,
@@ -90,7 +96,7 @@ export function ContactForm({ open, onOpenChange, contact, customerId }: Contact
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-h-[90vh] max-w-lg overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{isEditing ? 'Editar contato' : 'Novo contato'}</DialogTitle>
         </DialogHeader>
@@ -118,6 +124,25 @@ export function ContactForm({ open, onOpenChange, contact, customerId }: Contact
               />
             </FormField>
           </div>
+
+          <FormField id="contact-birth-date" label="Data de nascimento">
+            <Input
+              id="contact-birth-date"
+              type="date"
+              value={birthDate}
+              onChange={(event) => setBirthDate(event.target.value)}
+            />
+          </FormField>
+
+          <FormField id="contact-address" label="Endereço">
+            <Input
+              id="contact-address"
+              value={address}
+              maxLength={500}
+              onChange={(event) => setAddress(event.target.value)}
+              placeholder="Rua, número, complemento, bairro, cidade, estado e CEP"
+            />
+          </FormField>
 
           <FormField id="contact-position" label="Cargo / observação">
             <Input

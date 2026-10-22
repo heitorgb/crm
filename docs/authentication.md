@@ -47,13 +47,18 @@ A tela de login usa os mecanismos nativos do navegador, sem armazenar credenciai
 
 - E-mail: `autocomplete="username"`.
 - Senha: `autocomplete="current-password"`.
-- Formulário: `name="login"` e `autocomplete="on"`.
+- Formulário: `name="login"`, `method="post"`, `action="/api/auth/login"` e `autocomplete="on"`.
 
-A opção **"Lembrar senha"** registra apenas a preferência do usuário (booleano em
-`localStorage`, chave `orderup.remember-password`). Ela não armazena e-mail ou senha e não altera a
-sessão, os cookies ou a validade dos tokens. O salvamento e o preenchimento automático continuam
-sob controle do navegador e das políticas do dispositivo; não há como a aplicação obrigar ou
-impedir esses comportamentos.
+A opção **"Lembrar senha"** vale para o login atual e não é persistida entre visitas. Quando
+marcada, após uma autenticação bem-sucedida o frontend entrega as credenciais ao gerenciador nativo
+via Credential Management API (`navigator.credentials.store` com `PasswordCredential`), quando a
+API está disponível em contexto seguro (Chromium/Edge). Quando desmarcada, essa chamada não é
+feita. Em navegadores sem a API (por exemplo, Firefox e Safari), o salvamento depende das
+heurísticas nativas do próprio navegador.
+
+A aplicação não armazena e-mail ou senha em `localStorage`, `sessionStorage` ou cookies próprios, e
+o checkbox não altera a sessão, os cookies ou a validade dos tokens. O preenchimento automático de
+credenciais já salvas continua permitido nos dois estados.
 
 ## Access token (JWT)
 

@@ -16,6 +16,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useLogin } from '@/features/auth/queries';
 import { ApiError } from '@/lib/api-client';
+import { storePasswordCredential } from '@/lib/password-credentials';
 import { cn } from '@/lib/utils';
 import { LoginShowcase } from './login-showcase';
 import {
@@ -25,30 +26,16 @@ import {
   authSubmitClasses,
 } from './auth-styles';
 
-const REMEMBER_PASSWORD_KEY = 'orderup.remember-password';
-
-function readRememberPassword(): boolean {
-  try {
-    return window.localStorage.getItem(REMEMBER_PASSWORD_KEY) === 'true';
-  } catch {
-    return false;
-  }
-}
-
-function writeRememberPassword(value: boolean): void {
-  try {
-    window.localStorage.setItem(REMEMBER_PASSWORD_KEY, String(value));
-  } catch {
-    return;
-  }
-}
-
 export function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [passwordVisible, setPasswordVisible] = useState(false);
-  const [rememberPassword, setRememberPassword] = useState(readRememberPassword);
-  const login = useLogin();
+  const [rememberPassword, setRememberPassword] = useState(false);
+  const login = useLogin((input) => {
+    if (rememberPassword) {
+      void storePasswordCredential(input.email, input.password);
+    }
+  });
 
   const errorMessage =
     login.error instanceof ApiError
@@ -107,6 +94,8 @@ export function LoginPage() {
               <form
                 id="login-form"
                 name="login"
+                method="post"
+                action="/api/auth/login"
                 autoComplete="on"
                 className="mt-7 space-y-5"
                 onSubmit={handleSubmit}
@@ -191,10 +180,7 @@ export function LoginPage() {
                         name="remember-password"
                         type="checkbox"
                         checked={rememberPassword}
-                        onChange={(event) => {
-                          setRememberPassword(event.target.checked);
-                          writeRememberPassword(event.target.checked);
-                        }}
+                        onChange={(event) => setRememberPassword(event.target.checked)}
                         disabled={login.isPending}
                         className="size-4 shrink-0 cursor-pointer rounded border border-white/20 bg-white/[0.04] accent-emerald-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/40 focus-visible:ring-offset-0 disabled:cursor-not-allowed disabled:opacity-60"
                       />

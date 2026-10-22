@@ -145,6 +145,7 @@ const transcriptionCatalog: TranscriptionCatalog = {
 
 const transcriptionSettings: TranscriptionSettings = {
   enabled: false,
+  autoEnabled: false,
   provider: 'OPENAI',
   model: 'whisper-1',
   supported: true,
@@ -270,10 +271,36 @@ describe('AiSettingsTab', () => {
 
     expect(state.saveTranscription).toHaveBeenCalledWith({
       enabled: true,
+      autoEnabled: false,
       provider: 'OPENAI',
       model: 'whisper-1',
     });
     expect(await screen.findByText('Configuração de transcrição salva.')).toBeTruthy();
+  });
+
+  it('shows automatic transcription only after enabling it and saves the preference', async () => {
+    render(<AiSettingsTab canManage />);
+
+    expect(
+      screen.queryByRole('switch', { name: /transcrever automaticamente/i }),
+    ).toBeNull();
+
+    fireEvent.click(screen.getByRole('switch', { name: /ativar transcrição de áudio/i }));
+
+    const automatic = screen.getByRole('switch', { name: /transcrever automaticamente/i });
+    expect(automatic.getAttribute('aria-checked')).toBe('false');
+
+    fireEvent.click(automatic);
+    expect(automatic.getAttribute('aria-checked')).toBe('true');
+
+    fireEvent.click(screen.getByRole('button', { name: /salvar transcrição/i }));
+
+    expect(state.saveTranscription).toHaveBeenCalledWith({
+      enabled: true,
+      autoEnabled: true,
+      provider: 'OPENAI',
+      model: 'whisper-1',
+    });
   });
 
   it('requires an explicit action to remove the stored credential', () => {

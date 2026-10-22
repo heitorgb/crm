@@ -646,12 +646,15 @@ Binários (imagem/áudio/vídeo/PDF) não vão para o PostgreSQL. A tabela `Mess
 
 ### Transcrição de áudio
 
-Áudios recebidos (exceto view-once) recebem um registro em `message_transcriptions` com estado
-`PENDING` no webhook. O `media.process` baixa e grava o áudio pelo mecanismo autenticado da Evolution
-e enfileira `transcription.process`; o webhook nunca espera a API externa. A UI do balão mostra a
-transcrição concluída, os estados de espera/processamento, falhas recuperáveis com **Tentar
-transcrever novamente** e indisponibilidade por configuração. O texto é apresentado como conteúdo
-derivado do áudio, sem confundir com mensagem digitada, e a mídia original continua reproduzível.
+Com **Transcrever automaticamente** ativa, áudios recebidos (exceto view-once) recebem um registro em
+`message_transcriptions` com estado `PENDING` no webhook. O `media.process` baixa e grava o áudio
+pelo mecanismo autenticado da Evolution e enfileira `transcription.process`; o webhook nunca espera
+a API externa. Com a opção desmarcada, nenhum registro/job é criado automaticamente e o balão oferece
+**Transcrever este áudio** para a solicitação manual. A UI mostra a transcrição concluída, os estados
+de espera/processamento, falhas recuperáveis com **Tentar transcrever novamente** e
+indisponibilidade por configuração. Com a transcrição principal desativada, a ação manual também não
+aparece. O texto é apresentado como conteúdo derivado do áudio, sem confundir com mensagem digitada,
+e a mídia original continua reproduzível.
 
 Configuração, provedores compatíveis, limites, privacidade e uso no Copiloto estão em
 [`ai.md`](./ai.md). A transcrição não altera o fluxo de recebimento: se estiver pendente ou

@@ -23,6 +23,7 @@ import {
 
 const SETTINGS_SELECT = {
   transcriptionEnabled: true,
+  transcriptionAutoEnabled: true,
   transcriptionProvider: true,
   transcriptionModel: true,
   openaiApiKeyEncrypted: true,
@@ -43,6 +44,7 @@ export type TranscriptionUnavailableReason =
 
 export interface TranscriptionSettingsView {
   enabled: boolean;
+  autoEnabled: boolean;
   provider: AiProvider;
   model: string;
   supported: boolean;
@@ -80,6 +82,7 @@ export class TranscriptionSettingsService {
 
   async save(dto: UpdateTranscriptionSettingsDto): Promise<TranscriptionSettingsView> {
     const { tenantId } = this.tenantContext.requireContext();
+    const autoEnabled = dto.autoEnabled ?? false;
 
     if (!isTranscriptionProviderSupported(dto.provider)) {
       throw new TranscriptionProviderUnsupportedError(
@@ -104,12 +107,14 @@ export class TranscriptionSettingsService {
         model: defaultModelFor(AiProvider.OPENAI),
         formality: AiFormality.PROFESSIONAL,
         transcriptionEnabled: dto.enabled,
+        transcriptionAutoEnabled: autoEnabled,
         transcriptionProvider: dto.provider,
         transcriptionModel: dto.model,
         ...(encryptedKey ? { openaiApiKeyEncrypted: encryptedKey } : {}),
       },
       update: {
         transcriptionEnabled: dto.enabled,
+        transcriptionAutoEnabled: autoEnabled,
         transcriptionProvider: dto.provider,
         transcriptionModel: dto.model,
         ...(encryptedKey ? { openaiApiKeyEncrypted: encryptedKey } : {}),
@@ -118,6 +123,15 @@ export class TranscriptionSettingsService {
     });
 
     return this.toView(row);
+  }
+
+  async isAutoEnabled(tenantId: string): Promise<boolean> {
+    const row = await this.prisma.aiSettings.findUnique({
+      where: { tenantId },
+      select: { transcriptionEnabled: true, transcriptionAutoEnabled: true },
+    });
+
+    return row?.transcriptionEnabled === true && row.transcriptionAutoEnabled === true;
   }
 
   async getForExecution(): Promise<ResolvedTranscriptionSettings> {
@@ -203,6 +217,7 @@ export class TranscriptionSettingsService {
 
     return {
       enabled: row.transcriptionEnabled,
+      autoEnabled: row.transcriptionAutoEnabled,
       provider,
       model: row.transcriptionModel,
       supported: providerSupported,
@@ -241,6 +256,7 @@ function credentialEncrypted(
 function emptyView(): TranscriptionSettingsView {
   return {
     enabled: false,
+    autoEnabled: false,
     provider: AiProvider.OPENAI,
     model: defaultTranscriptionModel(AiProvider.OPENAI),
     supported: true,

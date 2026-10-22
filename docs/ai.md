@@ -28,6 +28,10 @@ sempre feita no backend no momento da formalização.
 - Chave **Ativar IA no atendimento**.
 - **Testar conexão** usa as credenciais digitadas ou as já armazenadas, sem salvar alterações.
 - **Salvar configurações** persiste a configuração do tenant.
+- **Ativar transcrição de áudio** controla o recurso inteiro (automático e manual).
+- **Transcrever automaticamente** aparece somente com o recurso ativado e começa desmarcada.
+  Marcada, transcreve cada áudio recebido; desmarcada, o áudio exibe a ação manual
+  **Transcrever este áudio** no atendimento.
 - Credenciais existentes nunca são exibidas; deixar o campo vazio mantém a credencial atual.
   A remoção exige a ação explícita **Remover credencial** seguida de salvar.
 
@@ -107,7 +111,8 @@ no mesmo campo criptografado. Outra empresa nunca acessa essa credencial (escopo
 
 - `GET /api/ai/transcription/catalog` — provedores, suporte e modelos oficiais.
 - `GET /api/ai/transcription/settings` — estado sem segredos (`available`, `reason`, `hasCredentials`).
-- `PUT /api/ai/transcription/settings` — ativa/desativa, escolhe provedor/modelo (`OWNER`/`ADMIN`).
+- `PUT /api/ai/transcription/settings` — ativa/desativa, define a transcrição automática e escolhe
+  provedor/modelo (`OWNER`/`ADMIN`).
 - `POST /api/ai/transcription/test` — valida credencial/modelo via `GET /v1/models/{model}`, sem
   enviar áudio (`OWNER`/`ADMIN`, 8 req/min).
 - `POST /api/ai/transcription/messages/:conversationId/:messageId/retry` — nova tentativa manual
@@ -115,27 +120,31 @@ no mesmo campo criptografado. Outra empresa nunca acessa essa credencial (escopo
 
 Estados expostos: `NOT_APPLICABLE`, `PENDING`, `PROCESSING`, `COMPLETED`, `FAILED`. `FAILED` inclui
 `retryable`/`canRetry`; falhas definitivas (formato, tamanho, duração, autenticação, modelo) não
-oferecem nova tentativa. Áudios recebidos enquanto a transcrição estava desativada ficam
-`NOT_APPLICABLE`, mas passam a oferecer **Transcrever este áudio** depois que a configuração fica
-disponível; o backend revalida a configuração antes de enfileirar.
+oferecem nova tentativa. Registros antigos em `NOT_APPLICABLE` por configuração continuam
+oferecendo **Transcrever este áudio** depois que a configuração fica disponível; o backend revalida
+a configuração antes de enfileirar. Com a configuração principal desativada, nem a transcrição
+automática nem a ação manual ficam disponíveis.
 
-Áudios recebidos **antes da existência do registro** de transcrição não aparecem silenciosamente
-como apenas player: a UI mostra “Transcrição não realizada para este áudio” e oferece
-**Transcrever este áudio**. O endpoint de retry cria o registro `PENDING` com a configuração atual do
-tenant e enfileira o job determinístico; mensagens já concluídas não são repetidas. Não existe
-varredura automática de todo o histórico — a recuperação é manual, por mensagem, e continua sujeita
-aos limites, idempotência e à disponibilidade da mídia original.
+Com **Transcrever automaticamente** desmarcada, o áudio recebido não cria registro nem job. A UI
+mostra “Transcrição não realizada para este áudio” e oferece **Transcrever este áudio**; o clique
+usa o mesmo endpoint de retry, exibe carregamento e atualiza o balão com o resultado ou o erro.
+Áudios recebidos **antes da existência do registro** de transcrição seguem o mesmo caminho. O
+endpoint de retry cria o registro `PENDING` com a configuração atual do tenant e enfileira o job
+determinístico; mensagens já concluídas não são repetidas. Não existe varredura automática de todo
+o histórico — a recuperação é manual, por mensagem, e continua sujeita aos limites, idempotência e
+à disponibilidade da mídia original.
 
 O evento `message.updated` é emitido também em falha e em `NOT_APPLICABLE`, para que o balão saia de
 “aguardando” mesmo quando a transcrição não puder ser concluída.
 
 ### Fluxo assíncrono
 
-1. O webhook da Evolution persiste a mensagem pelo fluxo existente e cria o registro `PENDING`
-   apenas para áudio recebido (não view-once). O processamento principal do webhook não espera a
-   transcrição.
+1. O webhook da Evolution persiste a mensagem pelo fluxo existente e, somente com a transcrição
+   automática ativa, cria o registro `PENDING` para áudio recebido (não view-once). O processamento
+   principal do webhook não espera a transcrição.
 2. O job `media.process` baixa a mídia pela Evolution (`getBase64FromMediaMessage`), grava no storage
-   e então enfileira `transcription.process`. Não há requisição a URL arbitrária do webhook.
+   e, se a transcrição automática estiver ativa, enfileira `transcription.process`. Não há
+   requisição a URL arbitrária do webhook.
 3. O worker valida configuração, estado, formato, tamanho e duração, lê o arquivo do storage,
    converte OGG/Opus para WAV quando necessário e chama a API externa com timeout.
 4. O resultado é normalizado, limitado a 20.000 caracteres e salvo em `message_transcriptions`,
@@ -144,8 +153,9 @@ O evento `message.updated` é emitido também em falha e em `NOT_APPLICABLE`, pa
    existente, sem polling agressivo.
 
 O job usa `jobId` estável por mensagem, transição atômica de estado e verificação de `COMPLETED`
-para impedir chamadas duplicadas. Se o anexo ainda não estiver disponível, o worker tenta o download
-pela mesma rotina de mídia; sem sucesso, grava falha recuperável.
+para impedir chamadas duplicadas — inclusive em atualizações realtime e re-renderizações do chat. Se
+o anexo ainda não estiver disponível, o worker tenta o download pela mesma rotina de mídia; sem
+sucesso, grava falha recuperável. A transcrição manual reutiliza esse mesmo job e fluxo.
 
 ### Limites, retry e custos
 
@@ -183,12 +193,17 @@ A migration `20261021200000_transcription_retry_misclassified_model_error` reabr
 apenas os registros antigos de `FAILED`/`AI_TRANSCRIPTION_MODEL_UNAVAILABLE` produzidos pela
 classificação incorreta de erros de formato. Nenhuma estrutura de tabela é alterada.
 
+A migration `20261021210000_transcription_auto_settings` adiciona
+`ai_settings.transcription_auto_enabled`, com padrão `false`. Ela é independente da chave principal:
+o valor só produz efeito quando `transcription_enabled` também está ativo.
+
 ## Persistência e isolamento
 
 Tabela `ai_settings`, criada pela migration `20261021000000_ai_settings`:
 
 - `tenant_id` é **único** (uma configuração por organização).
 - Provedor, modelo, formalidade e ativação.
+- Transcrição: ativação principal, preferência de transcrição automática, provedor e modelo.
 - Credenciais separadas por provedor, sempre criptografadas:
   `openai_api_key_encrypted`, `deepseek_api_key_encrypted`,
   `anthropic_api_key_encrypted`, `openrouter_api_key_encrypted`.

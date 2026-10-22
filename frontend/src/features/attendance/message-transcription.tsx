@@ -1,18 +1,31 @@
 import { AlertCircle, Clock, Loader2, Mic, RotateCcw } from 'lucide-react';
+import { useTranscriptionSettings } from '@/features/ai/queries';
 import { Button } from '@/components/ui/button';
+import { ApiError } from '@/lib/api-client';
 import { cn } from '@/lib/utils';
 import type { ConversationMessage } from '@/types/attendance';
 import { useRetryTranscription } from './queries';
 
 export function MessageTranscription({ message }: { message: ConversationMessage }) {
   const retry = useRetryTranscription();
+  const transcriptionSettings = useTranscriptionSettings();
   const transcription = message.transcription;
+  const canRequestTranscription = transcriptionSettings.data?.enabled === true;
 
   if (message.type !== 'AUDIO' || message.direction !== 'INBOUND') {
     return null;
   }
 
+  const retryErrorMessage =
+    retry.error instanceof ApiError
+      ? retry.error.message
+      : 'Não foi possível iniciar a transcrição. Verifique a configuração de áudio.';
+
   if (!transcription) {
+    if (!canRequestTranscription) {
+      return null;
+    }
+
     return (
       <div className="mt-2 space-y-1">
         <p className="text-[11px] italic text-muted-foreground">
@@ -37,7 +50,7 @@ export function MessageTranscription({ message }: { message: ConversationMessage
         </Button>
         {retry.isError ? (
           <p role="alert" className="text-[11px] text-danger">
-            Não foi possível iniciar a transcrição. Verifique a configuração de áudio.
+            {retryErrorMessage}
           </p>
         ) : null}
       </div>
@@ -87,7 +100,7 @@ export function MessageTranscription({ message }: { message: ConversationMessage
             {transcription.errorMessage ?? 'Não foi possível transcrever este áudio.'}
           </span>
         </p>
-        {transcription.canRetry ? (
+        {transcription.canRetry && canRequestTranscription ? (
           <Button
             type="button"
             variant="ghost"
@@ -106,7 +119,7 @@ export function MessageTranscription({ message }: { message: ConversationMessage
         ) : null}
         {retry.isError ? (
           <p role="alert" className="text-[11px] text-danger">
-            Não foi possível solicitar uma nova transcrição.
+            {retryErrorMessage}
           </p>
         ) : null}
       </div>
@@ -119,7 +132,7 @@ export function MessageTranscription({ message }: { message: ConversationMessage
         <p className="text-[11px] italic text-muted-foreground">
           Transcrição de áudio não disponível por configuração.
         </p>
-        {transcription.canRetry ? (
+        {transcription.canRetry && canRequestTranscription ? (
           <>
             <p className="text-[11px] text-muted-foreground">
               A transcrição pode ter sido ativada depois que este áudio foi recebido.
@@ -143,7 +156,7 @@ export function MessageTranscription({ message }: { message: ConversationMessage
             </Button>
             {retry.isError ? (
               <p role="alert" className="text-[11px] text-danger">
-                Ative a transcrição e configure a credencial OpenAI antes de tentar novamente.
+                {retryErrorMessage}
               </p>
             ) : null}
           </>

@@ -61,6 +61,7 @@ function createHarness(): Harness {
     {} as unknown as WhatsAppDirectoryService,
     messages as unknown as MessagesService,
     realtime as unknown as RealtimeService,
+    { isAutoEnabled: vi.fn().mockResolvedValue(false) } as never,
     { get: vi.fn(() => false) } as unknown as ConfigService<Env, true>,
     queue as unknown as JobQueue,
   );

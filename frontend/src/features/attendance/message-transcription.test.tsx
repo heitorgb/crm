@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import type { ConversationMessage, MessageTranscription } from '@/types/attendance';
 
 const retry = vi.hoisted(() => vi.fn());
+const settingsState = vi.hoisted(() => ({ enabled: true }));
 
 vi.mock('./queries', () => ({
   useRetryTranscription: () => ({
@@ -11,6 +12,10 @@ vi.mock('./queries', () => ({
     isPending: false,
     isError: false,
   }),
+}));
+
+vi.mock('@/features/ai/queries', () => ({
+  useTranscriptionSettings: () => ({ data: { enabled: settingsState.enabled } }),
 }));
 
 import { MessageTranscription as MessageTranscriptionBlock } from './message-transcription';
@@ -63,6 +68,7 @@ function transcription(overrides: Partial<MessageTranscription> = {}): MessageTr
 
 beforeEach(() => {
   retry.mockClear();
+  settingsState.enabled = true;
 });
 
 afterEach(cleanup);
@@ -178,6 +184,36 @@ describe('MessageTranscription', () => {
       conversationId: 'conversation-1',
       messageId: 'message-1',
     });
+  });
+
+  it('hides the manual action when audio transcription is disabled', () => {
+    settingsState.enabled = false;
+    const withoutState = { ...message(transcription()), transcription: null };
+
+    render(<MessageTranscriptionBlock message={withoutState} />);
+
+    expect(screen.queryByText('Transcrever este áudio')).toBeNull();
+    expect(screen.queryByText('Transcrição não realizada para este áudio.')).toBeNull();
+  });
+
+  it('hides the retry action when audio transcription is disabled', () => {
+    settingsState.enabled = false;
+
+    render(
+      <MessageTranscriptionBlock
+        message={message(
+          transcription({
+            status: 'NOT_APPLICABLE',
+            text: null,
+            canRetry: true,
+            retryable: false,
+            errorCode: 'AI_TRANSCRIPTION_DISABLED',
+          }),
+        )}
+      />,
+    );
+
+    expect(screen.queryByText('Transcrever este áudio')).toBeNull();
   });
 
   it('does not render anything for outbound audio', () => {

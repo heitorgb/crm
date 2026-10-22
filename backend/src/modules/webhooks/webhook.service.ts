@@ -29,6 +29,7 @@ import { JOB_NAMES, JOB_QUEUE, type JobQueue } from '../../infrastructure/queue/
 import { RealtimeService } from '../../infrastructure/realtime/realtime.service.js';
 import { ContactsService } from '../contacts/contacts.service.js';
 import { MessagesService, type QuotedMessageInfo } from '../conversations/messages.service.js';
+import { TranscriptionSettingsService } from '../transcription/transcription-settings.service.js';
 import { WhatsAppDirectoryService } from '../whatsapp/whatsapp-directory.service.js';
 import {
   WhatsAppInstancesService,
@@ -53,6 +54,7 @@ export class WebhookService {
     private readonly directory: WhatsAppDirectoryService,
     private readonly messages: MessagesService,
     private readonly realtime: RealtimeService,
+    private readonly transcriptionSettings: TranscriptionSettingsService,
     private readonly config: ConfigService<Env, true>,
     @Inject(JOB_QUEUE) private readonly queue: JobQueue,
   ) {}
@@ -334,21 +336,23 @@ export class WebhookService {
       });
     }
 
-    // The row is created immediately so the chat can show "aguardando". The
-    // background worker decides whether transcription is enabled/compatible.
-    // It is best-effort: a transcription bookkeeping failure must never break
-    // the normal message receipt.
+    // With automatic transcription enabled, the row is created immediately so
+    // the chat can show "aguardando". Without it, no row is created and the
+    // audio exposes a manual action. It is best-effort: a transcription
+    // bookkeeping failure must never break the normal message receipt.
     if (type === MessageType.AUDIO && direction === MessageDirection.INBOUND && !isViewOnce) {
       try {
-        await this.prisma.messageTranscription.upsert({
-          where: { messageId: persisted.id },
-          create: {
-            tenantId: instance.tenantId,
-            messageId: persisted.id,
-            status: 'PENDING',
-          },
-          update: {},
-        });
+        if (await this.transcriptionSettings.isAutoEnabled(instance.tenantId)) {
+          await this.prisma.messageTranscription.upsert({
+            where: { messageId: persisted.id },
+            create: {
+              tenantId: instance.tenantId,
+              messageId: persisted.id,
+              status: 'PENDING',
+            },
+            update: {},
+          });
+        }
       } catch (error) {
         this.logger.warn(
           `Failed to create transcription state for message ${persisted.id}: ${

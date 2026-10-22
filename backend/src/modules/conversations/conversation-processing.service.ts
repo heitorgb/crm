@@ -23,6 +23,7 @@ import {
 } from '../../infrastructure/queue/job-queue.types.js';
 import { RealtimeService } from '../../infrastructure/realtime/realtime.service.js';
 import { STORAGE, type StorageService } from '../../infrastructure/storage/storage.types.js';
+import { TranscriptionSettingsService } from '../transcription/transcription-settings.service.js';
 import {
   EvolutionClient,
   EvolutionRequestError,
@@ -151,6 +152,7 @@ export class ConversationProcessingService implements OnModuleInit {
     private readonly messages: MessagesService,
     private readonly realtime: RealtimeService,
     private readonly media: MediaProcessingService,
+    private readonly transcriptionSettings: TranscriptionSettingsService,
     private readonly config: ConfigService<Env, true>,
     @Inject(STORAGE) private readonly storage: StorageService,
     @Inject(JOB_QUEUE) private readonly queue: JobQueue,
@@ -779,11 +781,13 @@ export class ConversationProcessingService implements OnModuleInit {
 
       if (isTranscribableAudio(message)) {
         try {
-          await this.queue.enqueue(
-            JOB_NAMES.TRANSCRIPTION_PROCESS,
-            { tenantId, messageId },
-            { jobId: `transcription-${messageId}` },
-          );
+          if (await this.transcriptionSettings.isAutoEnabled(tenantId)) {
+            await this.queue.enqueue(
+              JOB_NAMES.TRANSCRIPTION_PROCESS,
+              { tenantId, messageId },
+              { jobId: `transcription-${messageId}` },
+            );
+          }
         } catch (error) {
           this.logger.warn(
             `Failed to enqueue transcription for message ${messageId}: ${

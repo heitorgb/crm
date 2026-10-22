@@ -145,12 +145,8 @@ export function LoginShowcase() {
 
       <PreviewCards />
 
-      <footer className="relative flex items-center justify-between gap-4 border-t border-white/[0.06] pt-5 text-[11px] text-[var(--auth-muted)]">
+      <footer className="relative flex items-center gap-4 border-t border-white/[0.06] pt-5 text-[11px] text-[var(--auth-muted)]">
         <span>© {new Date().getFullYear()} OrderUp CRM</span>
-        <span className="flex items-center gap-1.5">
-          <ShieldCheck className="size-3.5 text-emerald-400/80" />
-          Dados isolados por organização
-        </span>
       </footer>
     </section>
   );

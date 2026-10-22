@@ -1,54 +1,78 @@
+import { useState } from 'react';
 import { KeyRound, Settings2 } from 'lucide-react';
 import { StatusBadge } from '@/components/common/status-badge';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Skeleton } from '@/components/ui/skeleton';
-import type { AiCatalog, AiSettings } from '@/types/ai';
+import { cn } from '@/lib/utils';
+import type { AiCatalog, AiProvider, AiSettings } from '@/types/ai';
+import { AiCredentialDialog } from './ai-credential-dialog';
 import { AiProviderLogo } from './ai-provider-logo';
 import { useTranscriptionCatalog, useTranscriptionSettings } from './queries';
+
+interface Feedback {
+  tone: 'success' | 'danger' | 'info';
+  message: string;
+}
 
 interface AiCredentialsTabProps {
   canManage: boolean;
   catalog: AiCatalog;
   settings: AiSettings;
-  onManage: (section: 'copilot' | 'transcription') => void;
 }
 
-export function AiCredentialsTab({
-  canManage,
-  catalog,
-  settings,
-  onManage,
-}: AiCredentialsTabProps) {
+export function AiCredentialsTab({ canManage, catalog, settings }: AiCredentialsTabProps) {
   const transcription = useTranscriptionSettings();
   const transcriptionCatalog = useTranscriptionCatalog();
+  const [managingProvider, setManagingProvider] = useState<AiProvider | null>(null);
+  const [feedback, setFeedback] = useState<Feedback | null>(null);
+
   const transcriptionProvider = transcription.data?.provider ?? null;
   const credentialPolicy = transcriptionCatalog.data?.credentialPolicy.description;
+  const managingDefinition = catalog.providers.find((item) => item.id === managingProvider);
+  const managingUsage = managingProvider
+    ? [
+        settings.provider === managingProvider ? 'Copiloto' : null,
+        transcriptionProvider === managingProvider ? 'Transcrição' : null,
+      ].filter((item): item is string => item !== null)
+    : [];
+  const managingTestModel =
+    managingProvider === settings.provider
+      ? settings.model
+      : (managingDefinition?.models[0]?.id ?? '');
 
   return (
-    <Card>
-      <CardHeader>
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <CardTitle className="flex items-center gap-2">
-              <KeyRound className="size-4 text-primary" />
-              Credenciais de IA
-            </CardTitle>
-            <CardDescription>
-              Status das credenciais por provedor e pelos recursos que as utilizam. As chaves são
-              armazenadas criptografadas e nunca são exibidas.
-            </CardDescription>
+    <>
+      <Card>
+        <CardHeader>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <KeyRound className="size-4 text-primary" />
+                Credenciais de IA
+              </CardTitle>
+              <CardDescription>
+                Status das credenciais por provedor e pelos recursos que as utilizam. As chaves são
+                armazenadas criptografadas e nunca são exibidas.
+              </CardDescription>
+            </div>
           </div>
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {transcription.isPending ? (
-          <div className="space-y-2">
-            <Skeleton className="h-14 w-full" />
-            <Skeleton className="h-14 w-full" />
-          </div>
-        ) : (
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {feedback ? (
+            <p
+              role={feedback.tone === 'danger' ? 'alert' : 'status'}
+              className={cn(
+                'text-xs font-medium',
+                feedback.tone === 'success' && 'text-success',
+                feedback.tone === 'danger' && 'text-danger',
+                feedback.tone === 'info' && 'text-muted-foreground',
+              )}
+            >
+              {feedback.message}
+            </p>
+          ) : null}
+
           <div className="space-y-2">
             {catalog.providers.map((provider) => {
               const configured = settings.configuredProviders.includes(provider.id);
@@ -79,13 +103,16 @@ export function AiCredentialsTab({
                     <StatusBadge tone={configured ? 'success' : 'secondary'}>
                       {configured ? 'Configurada' : 'Não configurada'}
                     </StatusBadge>
-                    {canManage && (usedByCopilot || usedByTranscription) ? (
+                    {canManage ? (
                       <Button
                         type="button"
                         variant="outline"
                         size="sm"
                         aria-label={`Gerenciar credencial ${provider.label}`}
-                        onClick={() => onManage(usedByCopilot ? 'copilot' : 'transcription')}
+                        onClick={() => {
+                          setFeedback(null);
+                          setManagingProvider(provider.id);
+                        }}
                       >
                         <Settings2 />
                         Gerenciar
@@ -96,26 +123,43 @@ export function AiCredentialsTab({
               );
             })}
           </div>
-        )}
 
-        {transcription.isError ? (
-          <p className="text-xs font-medium text-danger">
-            Não foi possível carregar o status das credenciais de transcrição.
-          </p>
-        ) : null}
+          {transcription.isError ? (
+            <p className="text-xs font-medium text-danger">
+              Não foi possível carregar o status das credenciais de transcrição.
+            </p>
+          ) : null}
 
-        <div className="space-y-1.5 rounded-lg border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
-          <p>
-            As credenciais são independentes por provedor. A transcrição reutiliza a credencial
-            OpenAI já salva para o Copiloto.
-          </p>
-          {credentialPolicy ? <p>{credentialPolicy}</p> : null}
-          <p>
-            Para adicionar, substituir ou remover uma chave, abra a sub-aba do recurso
-            correspondente. Nenhuma chave completa é exibida nesta tela.
-          </p>
-        </div>
-      </CardContent>
-    </Card>
+          <div className="space-y-1.5 rounded-lg border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
+            <p>
+              As credenciais são independentes por provedor. A transcrição reutiliza a credencial
+              OpenAI já salva para o Copiloto.
+            </p>
+            {credentialPolicy ? <p>{credentialPolicy}</p> : null}
+            <p>
+              Nenhuma chave completa é exibida. Deixar o campo vazio mantém a credencial atual.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
+      {managingDefinition ? (
+        <AiCredentialDialog
+          key={managingDefinition.id}
+          open
+          onOpenChange={(open) => {
+            if (!open) {
+              setManagingProvider(null);
+            }
+          }}
+          provider={managingDefinition.id}
+          definition={managingDefinition}
+          configured={settings.configuredProviders.includes(managingDefinition.id)}
+          testModel={managingTestModel}
+          usedBy={managingUsage}
+          onRemoved={(message) => setFeedback({ tone: 'success', message })}
+        />
+      ) : null}
+    </>
   );
 }

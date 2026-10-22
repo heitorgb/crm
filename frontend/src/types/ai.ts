@@ -100,6 +100,11 @@ export interface UpdateAiSettingsInput {
   clearCredentials?: boolean;
 }
 
+export interface UpdateAiCredentialInput {
+  apiKey?: string;
+  clearCredentials?: boolean;
+}
+
 export interface TestAiConnectionInput {
   provider: AiProvider;
   model: string;

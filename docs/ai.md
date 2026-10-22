@@ -24,23 +24,25 @@ sempre feita no backend no momento da formalização.
 A aba IA é dividida em três sub-abas, com o conteúdo e os indicadores de status preservados em cada
 recurso:
 
-- **Copiloto IA** — provedor (**OpenAI**, **DeepSeek**, **Anthropic** ou **OpenRouter**), modelo
-  (três opções recomendadas por provedor), nível de formalidade (**Profissional**, **Formal** ou
-  **Muito formal**) e chave **Ativar IA no atendimento**. A credencial do provedor selecionado é
-  gerenciada nesta sub-aba.
+- **Copiloto IA** — a ativação aparece primeiro e controla a edição dos demais campos. Em seguida
+  vêm o provedor (**OpenAI**, **DeepSeek**, **Anthropic** ou **OpenRouter**) em seletor compacto, o
+  modelo (três opções recomendadas por provedor) em destaque e o nível de formalidade
+  (**Profissional**, **Formal** ou **Muito formal**). Desativar o recurso mantém provedor, modelo,
+  formalidade e credenciais salvos; apenas bloqueia a edição até nova ativação.
 - **Transcrição** — **Ativar transcrição de áudio** controla o recurso inteiro (automático e
   manual), além de provedor, modelo e **Transcrever automaticamente**. Esta opção aparece somente
   com o recurso ativado e começa desmarcada: marcada, transcreve cada áudio recebido; desmarcada, o
   áudio exibe a ação manual **Transcrever este áudio** no atendimento.
 - **Credenciais** — visão centralizada do status por provedor e dos recursos que utilizam cada
-  chave, com atalho para gerenciar a credencial do Copiloto ou da transcrição. A transcrição
-  reutiliza a credencial OpenAI já salva; as demais credenciais permanecem independentes por
-  provedor.
+  chave. Cada linha abre um diálogo de gerenciamento com cadastro/substituição da chave, teste de
+  conexão, remoção confirmada e feedback da operação. O status da lista é atualizado após o sucesso.
+  A transcrição reutiliza a credencial OpenAI já salva; as demais credenciais permanecem
+  independentes por provedor, e uma chave compartilhada é sinalizada no diálogo.
 
 **Testar conexão** usa as credenciais digitadas ou as já armazenadas, sem salvar alterações.
 **Salvar configurações** e **Salvar transcrição** persistem cada seção de forma independente.
 Credenciais existentes nunca são exibidas; deixar o campo vazio mantém a credencial atual. A remoção
-exige a ação explícita **Remover credencial** seguida de salvar. Alterações ainda não salvas são
+exige confirmação explícita no diálogo da sub-aba Credenciais. Alterações ainda não salvas são
 preservadas ao alternar entre as sub-abas.
 
 Leitura disponível para todos os membros; escrita e teste restritos a `OWNER`/`ADMIN`.
@@ -232,6 +234,7 @@ e mantendo a última escrita consistente.
 | GET    | `/api/ai/catalog`   | membros           | Provedores, modelos e níveis de formalidade    |
 | GET    | `/api/ai/settings`  | membros           | Estado da configuração, sem segredos           |
 | PUT    | `/api/ai/settings`  | `OWNER`, `ADMIN`  | Cria/atualiza a configuração do tenant         |
+| PUT    | `/api/ai/credentials/:provider` | `OWNER`, `ADMIN` | Salva ou remove a credencial de um provedor sem alterar a configuração ativa |
 | POST   | `/api/ai/test`      | `OWNER`, `ADMIN`  | Testa a conexão com as credenciais informadas  |
 | GET    | `/api/ai/transcription/catalog` | membros | Provedores, suporte e modelos de STT        |
 | GET    | `/api/ai/transcription/settings` | membros | Estado da transcrição, sem segredos        |

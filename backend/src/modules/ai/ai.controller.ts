@@ -1,9 +1,11 @@
+import { AiProvider } from '@prisma/client';
 import {
   Body,
   Controller,
   Get,
   HttpCode,
   Param,
+  ParseEnumPipe,
   ParseUUIDPipe,
   Patch,
   Post,
@@ -19,7 +21,12 @@ import { RequireModule } from '../modules/require-module.decorator.js';
 import { AI_FORMALITIES, AI_PROVIDERS } from './ai.models.js';
 import { AiService } from './ai.service.js';
 import { AiSettingsService } from './ai-settings.service.js';
-import { FormalizeMessageDto, TestAiConnectionDto, UpdateAiSettingsDto } from './dto/ai.dto.js';
+import {
+  FormalizeMessageDto,
+  TestAiConnectionDto,
+  UpdateAiCredentialDto,
+  UpdateAiSettingsDto,
+} from './dto/ai.dto.js';
 import {
   AnalyzeSalesOpportunityDto,
   CreateSalesFollowUpDto,
@@ -59,6 +66,15 @@ export class AiController {
   @Put('settings')
   saveSettings(@Body() dto: UpdateAiSettingsDto) {
     return this.settings.save(dto);
+  }
+
+  @Roles('OWNER', 'ADMIN')
+  @Put('credentials/:provider')
+  saveCredential(
+    @Param('provider', new ParseEnumPipe(AiProvider)) provider: AiProvider,
+    @Body() dto: UpdateAiCredentialDto,
+  ) {
+    return this.settings.saveCredential(provider, dto);
   }
 
   @Roles('OWNER', 'ADMIN')

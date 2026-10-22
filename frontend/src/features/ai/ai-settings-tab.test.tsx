@@ -16,6 +16,9 @@ const state = vi.hoisted(() => ({
     model: 'gpt-6-luna',
     message: 'Conexão validada com sucesso.',
   })),
+  saveCredential: vi.fn(
+    async (_args: { provider: string; input: Record<string, unknown> }) => undefined,
+  ),
   saveTranscription: vi.fn(async (_input: Record<string, unknown>) => undefined),
   testTranscription: vi.fn(async () => ({
     ok: true,
@@ -162,6 +165,7 @@ vi.mock('./queries', () => ({
   useAiSettings: () => ({ data: settings, isPending: false, isError: false }),
   useSaveAiSettings: () => ({ mutateAsync: state.save, isPending: false }),
   useTestAiConnection: () => ({ mutateAsync: state.test, isPending: false }),
+  useSaveAiCredential: () => ({ mutateAsync: state.saveCredential, isPending: false }),
   useTranscriptionCatalog: () => ({
     data: transcriptionCatalog,
     isPending: false,
@@ -196,6 +200,7 @@ if (!('ResizeObserver' in globalThis)) {
 beforeEach(() => {
   state.save.mockClear();
   state.test.mockClear();
+  state.saveCredential.mockClear();
   state.saveTranscription.mockClear();
   state.testTranscription.mockClear();
 });
@@ -207,7 +212,7 @@ function openSection(name: RegExp): void {
 }
 
 describe('AiSettingsTab', () => {
-  it('organizes the AI settings into copilot, transcription and credentials sub-tabs', () => {
+  it('organizes the settings into sub-tabs and places activation before the provider', () => {
     render(<AiSettingsTab canManage />);
 
     expect(screen.getByRole('tab', { name: /copiloto ia/i })).toBeTruthy();
@@ -215,12 +220,27 @@ describe('AiSettingsTab', () => {
     expect(screen.getByRole('tab', { name: /credenciais/i })).toBeTruthy();
 
     const copilotPanel = screen.getByRole('tabpanel');
-    expect(within(copilotPanel).getByText('Inteligência Artificial')).toBeTruthy();
-    expect(within(copilotPanel).getByText('Credencial configurada')).toBeTruthy();
-    expect(within(copilotPanel).getAllByText('OpenAI').length).toBeGreaterThan(0);
-    expect(within(copilotPanel).getAllByText('DeepSeek').length).toBeGreaterThan(0);
-    expect(within(copilotPanel).getAllByText('Anthropic').length).toBeGreaterThan(0);
-    expect(within(copilotPanel).getAllByText('OpenRouter').length).toBeGreaterThan(0);
+    expect(within(copilotPanel).getByText('Copiloto IA')).toBeTruthy();
+    expect(within(copilotPanel).getByText('Ativar IA no atendimento')).toBeTruthy();
+    expect(within(copilotPanel).getByText('Provedor')).toBeTruthy();
+    expect(within(copilotPanel).getByText('Modelo do Copiloto')).toBeTruthy();
+    expect(within(copilotPanel).getByText('Nível de formalidade')).toBeTruthy();
+    expect(within(copilotPanel).queryByText('Credenciais')).toBeNull();
+    expect(within(copilotPanel).queryByLabelText('Chave da API')).toBeNull();
+    expect(within(copilotPanel).queryByText('Modelos GPT.')).toBeNull();
+    expect(within(copilotPanel).getByText('Rápido.')).toBeTruthy();
+
+    const activation = within(copilotPanel).getByText('Ativar IA no atendimento');
+    const provider = within(copilotPanel).getByText('Provedor');
+    expect(
+      activation.compareDocumentPosition(provider) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it('shows transcription settings only in the transcription sub-tab', () => {
+    render(<AiSettingsTab canManage />);
+
+    const copilotPanel = screen.getByRole('tabpanel');
     expect(within(copilotPanel).queryByText('Transcrição de áudio')).toBeNull();
 
     openSection(/transcrição/i);
@@ -228,22 +248,93 @@ describe('AiSettingsTab', () => {
     const transcriptionPanel = screen.getByRole('tabpanel');
     expect(within(transcriptionPanel).getByText('Transcrição de áudio')).toBeTruthy();
     expect(within(transcriptionPanel).getAllByText('Sem suporte').length).toBeGreaterThan(0);
-    expect(within(transcriptionPanel).getAllByRole('img', { name: 'OpenAI' }).length).toBeGreaterThan(
-      0,
-    );
-    expect(within(transcriptionPanel).getAllByRole('img', { name: 'DeepSeek' }).length).toBeGreaterThan(
-      0,
-    );
-    expect(
-      within(transcriptionPanel).getAllByRole('img', { name: 'Anthropic' }).length,
-    ).toBeGreaterThan(0);
-    expect(
-      within(transcriptionPanel).getAllByRole('img', { name: 'OpenRouter' }).length,
-    ).toBeGreaterThan(0);
     expect(within(transcriptionPanel).queryByText('Inteligência Artificial')).toBeNull();
+    expect(within(transcriptionPanel).queryByText('Copiloto IA')).toBeNull();
   });
 
-  it('shows the credential status and the feature associated with each provider', () => {
+  it('disables copilot fields while the activation is off and restores them', () => {
+    render(<AiSettingsTab canManage />);
+
+    const activation = screen.getByRole('switch', { name: /ativar ia no atendimento/i });
+    fireEvent.click(activation);
+
+    expect(activation.getAttribute('aria-checked')).toBe('false');
+    expect(activation.hasAttribute('disabled')).toBe(false);
+
+    const provider = screen.getByRole('button', { name: /provedor openai/i });
+    const model = screen.getByRole('combobox', { name: /modelo de ia/i });
+    const formality = screen.getByRole('button', { name: /^formal/i });
+
+    expect((provider as HTMLButtonElement).disabled).toBe(true);
+    expect((model as HTMLButtonElement).disabled).toBe(true);
+    expect((formality as HTMLButtonElement).disabled).toBe(true);
+    expect(provider.getAttribute('aria-pressed')).toBe('true');
+    expect(model.textContent).toContain('GPT-6 Luna');
+
+    fireEvent.click(activation);
+
+    expect((screen.getByRole('button', { name: /provedor openai/i }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+    expect(
+      (screen.getByRole('combobox', { name: /modelo de ia/i }) as HTMLButtonElement).disabled,
+    ).toBe(false);
+    expect((screen.getByRole('button', { name: /^formal/i }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+  });
+
+  it('saves the disabled state without clearing the stored configuration', () => {
+    render(<AiSettingsTab canManage />);
+
+    fireEvent.click(screen.getByRole('switch', { name: /ativar ia no atendimento/i }));
+    fireEvent.click(screen.getByRole('button', { name: /salvar configurações/i }));
+
+    expect(state.save).toHaveBeenCalledWith({
+      provider: 'OPENAI',
+      model: 'gpt-6-luna',
+      formality: 'PROFESSIONAL',
+      enabled: false,
+    });
+    const input = state.save.mock.calls[0][0];
+    expect(input).not.toHaveProperty('apiKey');
+    expect(input).not.toHaveProperty('clearCredentials');
+  });
+
+  it('updates the model options when the provider changes', () => {
+    render(<AiSettingsTab canManage />);
+
+    fireEvent.click(screen.getByRole('button', { name: /provedor deepseek/i }));
+
+    expect(screen.getByRole('button', { name: /provedor deepseek/i }).getAttribute('aria-pressed')).toBe(
+      'true',
+    );
+
+    const saveButton = screen.getByRole('button', { name: /salvar configurações/i });
+    expect((saveButton as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(saveButton);
+
+    expect(state.save).toHaveBeenCalledWith({
+      provider: 'DEEPSEEK',
+      model: 'deepseek-flash',
+      formality: 'PROFESSIONAL',
+      enabled: true,
+    });
+  });
+
+  it('tests the connection with the stored credential', async () => {
+    render(<AiSettingsTab canManage />);
+
+    fireEvent.click(screen.getByRole('button', { name: /testar conexão/i }));
+
+    expect(state.test).toHaveBeenCalledWith({
+      provider: 'OPENAI',
+      model: 'gpt-6-luna',
+    });
+    expect(await screen.findByText('Conexão validada com sucesso.')).toBeTruthy();
+  });
+
+  it('shows the credential status and opens the dialog for the selected provider', () => {
     render(<AiSettingsTab canManage />);
 
     openSection(/credenciais/i);
@@ -259,73 +350,123 @@ describe('AiSettingsTab', () => {
     expect(
       within(credentialsPanel).getByRole('button', { name: /gerenciar credencial openai/i }),
     ).toBeTruthy();
+
+    fireEvent.click(
+      within(credentialsPanel).getByRole('button', { name: /gerenciar credencial openai/i }),
+    );
+
+    const dialog = screen.getByRole('dialog', { name: /gerenciar credencial · openai/i });
+    expect(within(dialog).getByText('Credencial configurada')).toBeTruthy();
+    expect(within(dialog).getByText('Compartilhada')).toBeTruthy();
+    expect(within(dialog).getByText(/afeta os recursos: Copiloto e Transcrição/i)).toBeTruthy();
+    expect(within(dialog).getByLabelText('Chave da API').getAttribute('type')).toBe('password');
+    expect((within(dialog).getByLabelText('Chave da API') as HTMLInputElement).value).toBe('');
+
+    fireEvent.click(within(dialog).getByRole('button', { name: /cancelar/i }));
+
+    expect(screen.getByRole('tab', { name: /copiloto ia/i }).getAttribute('aria-selected')).toBe(
+      'false',
+    );
+    expect(screen.getByRole('tab', { name: /credenciais/i }).getAttribute('aria-selected')).toBe(
+      'true',
+    );
   });
 
-  it('opens the related section from the credential summary', () => {
+  it('saves a new credential from the dialog', async () => {
     render(<AiSettingsTab canManage />);
 
     openSection(/credenciais/i);
     fireEvent.click(screen.getByRole('button', { name: /gerenciar credencial openai/i }));
 
+    const dialog = screen.getByRole('dialog', { name: /gerenciar credencial · openai/i });
+    const save = within(dialog).getByRole('button', { name: /salvar credencial/i });
+    expect((save as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.change(within(dialog).getByLabelText('Chave da API'), {
+      target: { value: 'sk-new-key' },
+    });
+    fireEvent.click(save);
+
+    expect(state.saveCredential).toHaveBeenCalledWith({
+      provider: 'OPENAI',
+      input: { apiKey: 'sk-new-key' },
+    });
+    expect(await screen.findByText('Credencial salva.')).toBeTruthy();
+  });
+
+  it('tests a credential from the dialog', async () => {
+    render(<AiSettingsTab canManage />);
+
+    openSection(/credenciais/i);
+    fireEvent.click(screen.getByRole('button', { name: /gerenciar credencial openai/i }));
+
+    const dialog = screen.getByRole('dialog', { name: /gerenciar credencial · openai/i });
+    fireEvent.change(within(dialog).getByLabelText('Chave da API'), {
+      target: { value: 'sk-typed' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: /testar conexão/i }));
+
+    expect(state.test).toHaveBeenCalledWith({
+      provider: 'OPENAI',
+      model: 'gpt-6-luna',
+      apiKey: 'sk-typed',
+    });
+    expect(await screen.findByText('Conexão validada com sucesso.')).toBeTruthy();
+  });
+
+  it('requires confirmation before removing a credential', async () => {
+    render(<AiSettingsTab canManage />);
+
+    openSection(/credenciais/i);
+    fireEvent.click(screen.getByRole('button', { name: /gerenciar credencial openai/i }));
+
+    const dialog = screen.getByRole('dialog', { name: /gerenciar credencial · openai/i });
+    fireEvent.click(within(dialog).getByRole('button', { name: /remover credencial/i }));
+
+    const confirm = screen.getByRole('dialog', {
+      name: /remover credencial de openai/i,
+    });
+    fireEvent.click(within(confirm).getByRole('button', { name: /^remover$/i }));
+
+    expect(state.saveCredential).toHaveBeenCalledWith({
+      provider: 'OPENAI',
+      input: { clearCredentials: true },
+    });
+    expect(await screen.findByText('Credencial removida.')).toBeTruthy();
     expect(
-      screen.getByRole('tab', { name: /copiloto ia/i }).getAttribute('aria-selected'),
-    ).toBe('true');
+      screen.queryByRole('dialog', { name: /gerenciar credencial · openai/i }),
+    ).toBeNull();
+  });
+
+  it('manages the credential of a provider that is not configured yet', () => {
+    render(<AiSettingsTab canManage />);
+
+    openSection(/credenciais/i);
+    fireEvent.click(screen.getByRole('button', { name: /gerenciar credencial deepseek/i }));
+
+    const dialog = screen.getByRole('dialog', { name: /gerenciar credencial · deepseek/i });
+    expect(within(dialog).getByText('Credencial não configurada')).toBeTruthy();
+    expect(within(dialog).queryByRole('button', { name: /remover credencial/i })).toBeNull();
+    expect(
+      (within(dialog).getByRole('button', { name: /salvar credencial/i }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
   });
 
   it('keeps unsaved copilot changes when navigating between sub-tabs', () => {
     render(<AiSettingsTab canManage />);
 
-    fireEvent.change(screen.getByLabelText('Chave da API'), {
-      target: { value: 'sk-draft-key' },
-    });
+    fireEvent.click(screen.getByRole('button', { name: /provedor deepseek/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^formal/i }));
 
     openSection(/credenciais/i);
     openSection(/transcrição/i);
     openSection(/copiloto ia/i);
 
-    expect((screen.getByLabelText('Chave da API') as HTMLInputElement).value).toBe('sk-draft-key');
-  });
-
-  it('saves without overwriting the stored credential when the field is empty', async () => {
-    render(<AiSettingsTab canManage />);
-
-    fireEvent.click(screen.getByRole('button', { name: /salvar configurações/i }));
-
-    expect(state.save).toHaveBeenCalledTimes(1);
-    const input = state.save.mock.calls[0][0];
-    expect(input).toMatchObject({
-      provider: 'OPENAI',
-      model: 'gpt-6-luna',
-      formality: 'PROFESSIONAL',
-      enabled: true,
-    });
-    expect(input).not.toHaveProperty('apiKey');
-    expect(input).not.toHaveProperty('clearCredentials');
-    expect((await screen.findByRole('status')).textContent).toBe('Configurações de IA salvas.');
-  });
-
-  it('sends a typed credential when replacing the stored one', () => {
-    render(<AiSettingsTab canManage />);
-
-    fireEvent.change(screen.getByLabelText('Chave da API'), {
-      target: { value: 'sk-new-key' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: /salvar configurações/i }));
-
-    expect(state.save).toHaveBeenCalledWith(expect.objectContaining({ apiKey: 'sk-new-key' }));
-  });
-
-  it('tests the connection with the current form values', async () => {
-    render(<AiSettingsTab canManage />);
-
-    fireEvent.click(screen.getByRole('button', { name: /testar conexão/i }));
-
-    expect(state.test).toHaveBeenCalledWith({
-      provider: 'OPENAI',
-      model: 'gpt-6-luna',
-      apiKey: undefined,
-    });
-    expect(await screen.findByText('Conexão validada com sucesso.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /provedor deepseek/i }).getAttribute('aria-pressed')).toBe(
+      'true',
+    );
+    expect(screen.getByRole('button', { name: /^formal/i }).getAttribute('aria-pressed')).toBe('true');
   });
 
   it('saves the independent transcription configuration', async () => {
@@ -368,14 +509,5 @@ describe('AiSettingsTab', () => {
       provider: 'OPENAI',
       model: 'whisper-1',
     });
-  });
-
-  it('requires an explicit action to remove the stored credential', () => {
-    render(<AiSettingsTab canManage />);
-
-    fireEvent.click(screen.getByRole('button', { name: /remover credencial/i }));
-    fireEvent.click(screen.getByRole('button', { name: /salvar configurações/i }));
-
-    expect(state.save).toHaveBeenCalledWith(expect.objectContaining({ clearCredentials: true }));
   });
 });

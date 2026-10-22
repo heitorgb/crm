@@ -82,12 +82,10 @@ export function TranscriptionSettingsCard({ canManage }: { canManage: boolean })
   }
 
   const key = [
-    settings.data.updatedAt ?? 'new',
     settings.data.enabled,
     settings.data.autoEnabled,
     settings.data.provider,
     settings.data.model,
-    settings.data.hasCredentials,
   ].join('|');
 
   return (

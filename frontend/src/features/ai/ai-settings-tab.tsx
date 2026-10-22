@@ -1,21 +1,9 @@
 import { useState, type FormEvent } from 'react';
-import {
-  Check,
-  KeyRound,
-  Loader2,
-  Mic,
-  PlugZap,
-  Save,
-  ShieldCheck,
-  Sparkles,
-  Trash2,
-} from 'lucide-react';
+import { Check, KeyRound, Loader2, Mic, PlugZap, Save, Sparkles } from 'lucide-react';
 import { FormField } from '@/components/common/form-field';
 import { StatusBadge } from '@/components/common/status-badge';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
 import {
   Select,
   SelectContent,
@@ -28,13 +16,7 @@ import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ApiError } from '@/lib/api-client';
 import { cn } from '@/lib/utils';
-import type {
-  AiCatalog,
-  AiFormality,
-  AiProvider,
-  AiSettings,
-  UpdateAiSettingsInput,
-} from '@/types/ai';
+import type { AiCatalog, AiFormality, AiProvider, AiSettings } from '@/types/ai';
 import { AiCredentialsTab } from './ai-credentials-tab';
 import { AiProviderLogo } from './ai-provider-logo';
 import { useAiCatalog, useAiSettings, useSaveAiSettings, useTestAiConnection } from './queries';
@@ -99,13 +81,10 @@ export function AiSettingsTab({ canManage }: AiSettingsTabProps) {
   }
 
   const key = [
-    settings.data.updatedAt ?? 'new',
     settings.data.provider,
     settings.data.model,
     settings.data.formality,
     settings.data.enabled,
-    settings.data.hasCredentials,
-    settings.data.configuredProviders.join(','),
   ].join('|');
 
   return (
@@ -133,6 +112,7 @@ export function AiSettingsTab({ canManage }: AiSettingsTabProps) {
           catalog={catalog.data}
           feedback={feedback}
           onFeedback={setFeedback}
+          onOpenCredentials={() => setActiveSection('credentials')}
         />
       </TabsContent>
       <TabsContent value="transcription" forceMount hidden={activeSection !== 'transcription'}>
@@ -143,7 +123,6 @@ export function AiSettingsTab({ canManage }: AiSettingsTabProps) {
           canManage={canManage}
           catalog={catalog.data}
           settings={settings.data}
-          onManage={setActiveSection}
         />
       </TabsContent>
     </Tabs>
@@ -156,12 +135,14 @@ function AiSettingsForm({
   catalog,
   feedback,
   onFeedback,
+  onOpenCredentials,
 }: {
   canManage: boolean;
   initial: AiSettings;
   catalog: AiCatalog;
   feedback: Feedback | null;
   onFeedback: (feedback: Feedback | null) => void;
+  onOpenCredentials: () => void;
 }) {
   const saveSettings = useSaveAiSettings();
   const testConnection = useTestAiConnection();
@@ -170,46 +151,26 @@ function AiSettingsForm({
   const [model, setModel] = useState(initial.model);
   const [formality, setFormality] = useState<AiFormality>(initial.formality);
   const [enabled, setEnabled] = useState(initial.enabled);
-  const [apiKey, setApiKey] = useState('');
-  const [clearCredentials, setClearCredentials] = useState(false);
 
   const providerDefinition =
     catalog.providers.find((item) => item.id === provider) ?? catalog.providers[0];
   const selectedModel = providerDefinition.models.find((item) => item.id === model);
   const credentialConfigured = initial.configuredProviders.includes(provider);
-  const hasCredential = apiKey.trim().length > 0 || (credentialConfigured && !clearCredentials);
-  const canTest =
-    canManage && !saveSettings.isPending && !testConnection.isPending && hasCredential;
   const pending = saveSettings.isPending || testConnection.isPending;
+  const fieldsDisabled = !canManage || pending || !enabled;
+  const canTest = canManage && !pending && credentialConfigured && Boolean(model);
 
   const handleProviderChange = (nextProvider: AiProvider): void => {
+    if (fieldsDisabled) {
+      return;
+    }
     const definition = catalog.providers.find((item) => item.id === nextProvider);
     if (!definition) {
       return;
     }
     setProvider(nextProvider);
     setModel(definition.models[0]?.id ?? '');
-    setApiKey('');
-    setClearCredentials(false);
     onFeedback(null);
-  };
-
-  const buildInput = (): UpdateAiSettingsInput => {
-    const input: UpdateAiSettingsInput = {
-      provider,
-      model,
-      formality,
-      enabled,
-    };
-
-    if (apiKey.trim().length > 0) {
-      input.apiKey = apiKey.trim();
-    }
-    if (clearCredentials) {
-      input.clearCredentials = true;
-    }
-
-    return input;
   };
 
   const handleTest = async (): Promise<void> => {
@@ -218,7 +179,6 @@ function AiSettingsForm({
       const result = await testConnection.mutateAsync({
         provider,
         model,
-        apiKey: apiKey.trim() || undefined,
       });
       onFeedback({ tone: 'success', message: result.message });
     } catch (error) {
@@ -237,9 +197,12 @@ function AiSettingsForm({
     onFeedback(null);
 
     try {
-      await saveSettings.mutateAsync(buildInput());
-      setApiKey('');
-      setClearCredentials(false);
+      await saveSettings.mutateAsync({
+        provider,
+        model,
+        formality,
+        enabled,
+      });
       onFeedback({ tone: 'success', message: 'Configurações de IA salvas.' });
     } catch (error) {
       onFeedback({
@@ -259,11 +222,11 @@ function AiSettingsForm({
           <div>
             <CardTitle className="flex items-center gap-2">
               <Sparkles className="size-4 text-primary" />
-              Inteligência Artificial
+              Copiloto IA
             </CardTitle>
             <CardDescription>
-              A IA auxilia os atendentes a corrigir e formalizar mensagens antes do envio pelo
-              WhatsApp. Nenhuma mensagem é enviada automaticamente.
+              Configuração do provedor, modelo e formalidade usados na formalização de mensagens e
+              no Copiloto comercial.
             </CardDescription>
           </div>
           <StatusBadge
@@ -276,9 +239,25 @@ function AiSettingsForm({
 
       <CardContent>
         <form className="space-y-6" onSubmit={(event) => void handleSubmit(event)}>
+          <div className="flex items-center justify-between gap-4 rounded-lg border border-border p-4">
+            <div className="min-w-0">
+              <p className="text-sm font-medium">Ativar IA no atendimento</p>
+              <p className="text-xs text-muted-foreground">
+                Controla o botão de formalização e o Copiloto. Desativar não remove provedor,
+                modelo nem credenciais.
+              </p>
+            </div>
+            <Switch
+              checked={enabled}
+              onCheckedChange={setEnabled}
+              disabled={!canManage || pending}
+              aria-label="Ativar IA no atendimento"
+            />
+          </div>
+
           <section className="space-y-2">
             <p className="text-sm font-medium">Provedor</p>
-            <div className="grid gap-3 sm:grid-cols-3">
+            <div className="flex flex-wrap gap-2">
               {catalog.providers.map((item) => {
                 const selected = item.id === provider;
                 return (
@@ -286,34 +265,45 @@ function AiSettingsForm({
                     key={item.id}
                     type="button"
                     onClick={() => handleProviderChange(item.id)}
+                    aria-label={`Provedor ${item.label}`}
                     aria-pressed={selected}
-                    disabled={!canManage || pending}
+                    disabled={fieldsDisabled}
                     className={cn(
-                      'flex h-full min-w-0 items-start gap-3 rounded-lg border p-3 text-left transition-colors',
+                      'inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium transition-colors',
+                      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
                       selected
-                        ? 'border-primary bg-primary/5'
-                        : 'border-border hover:bg-surface-hover',
-                      !canManage && 'cursor-default',
+                        ? 'border-primary bg-primary/5 text-foreground'
+                        : 'border-border text-muted-foreground hover:bg-surface-hover',
+                      fieldsDisabled && 'cursor-not-allowed opacity-60 hover:bg-transparent',
                     )}
                   >
-                    <AiProviderLogo provider={item.id} className="mt-0.5 size-5" />
-                    <span className="min-w-0 flex-1">
-                      <span className="block text-sm font-medium">{item.label}</span>
-                      <span className="mt-1 block text-xs text-muted-foreground">
-                        {item.description}
-                      </span>
-                    </span>
-                    {selected ? <Check className="mt-0.5 size-4 shrink-0 text-primary" /> : null}
+                    <AiProviderLogo provider={item.id} className="size-4" />
+                    {item.label}
+                    {selected ? <Check className="size-4 text-primary" /> : null}
                   </button>
                 );
               })}
             </div>
           </section>
 
-          <div className="grid gap-4 sm:grid-cols-2">
-            <FormField id="ai-model" label="Modelo" required>
-              <Select value={model} onValueChange={setModel} disabled={!canManage || pending}>
-                <SelectTrigger id="ai-model" aria-label="Modelo de IA">
+          <section className="space-y-2 rounded-lg border border-primary/20 bg-primary/[0.04] p-4">
+            <FormField
+              id="ai-model"
+              label="Modelo do Copiloto"
+              required
+              description="Define o modelo usado para reformular mensagens e analisar oportunidades."
+            >
+              <Select
+                key={provider}
+                value={model}
+                onValueChange={setModel}
+                disabled={fieldsDisabled}
+              >
+                <SelectTrigger
+                  id="ai-model"
+                  aria-label="Modelo de IA"
+                  className="h-10 w-full bg-surface sm:max-w-md"
+                >
                   <SelectValue placeholder="Selecione um modelo" />
                 </SelectTrigger>
                 <SelectContent>
@@ -324,26 +314,11 @@ function AiSettingsForm({
                   ))}
                 </SelectContent>
               </Select>
-              {selectedModel ? (
-                <p className="text-xs text-muted-foreground">{selectedModel.description}</p>
-              ) : null}
             </FormField>
-
-            <div className="flex items-center justify-between gap-4 rounded-lg border border-border p-3">
-              <div className="min-w-0">
-                <p className="text-sm font-medium">Ativar IA no atendimento</p>
-                <p className="text-xs text-muted-foreground">
-                  O botão de formalização só aparece quando a configuração está ativa e completa.
-                </p>
-              </div>
-              <Switch
-                checked={enabled}
-                onCheckedChange={setEnabled}
-                disabled={!canManage || pending}
-                aria-label="Ativar IA no atendimento"
-              />
-            </div>
-          </div>
+            {selectedModel ? (
+              <p className="text-xs text-muted-foreground">{selectedModel.description}</p>
+            ) : null}
+          </section>
 
           <section className="space-y-2">
             <p className="text-sm font-medium">Nível de formalidade</p>
@@ -356,13 +331,14 @@ function AiSettingsForm({
                     type="button"
                     onClick={() => setFormality(item.id)}
                     aria-pressed={selected}
-                    disabled={!canManage || pending}
+                    disabled={fieldsDisabled}
                     className={cn(
                       'min-w-0 rounded-lg border p-3 text-left transition-colors',
+                      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
                       selected
                         ? 'border-primary bg-primary/5'
                         : 'border-border hover:bg-surface-hover',
-                      !canManage && 'cursor-default',
+                      fieldsDisabled && 'cursor-not-allowed opacity-60 hover:bg-transparent',
                     )}
                   >
                     <span className="flex items-center gap-2 text-sm font-medium">
@@ -378,78 +354,19 @@ function AiSettingsForm({
             </div>
           </section>
 
-          <section className="space-y-4 rounded-lg border border-border p-4">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2 text-sm font-medium">
-                <KeyRound className="size-4 text-muted-foreground" />
-                Credenciais
-              </div>
-              {credentialConfigured ? (
-                <Badge variant="success">
-                  <ShieldCheck />
-                  Credencial configurada
-                </Badge>
-              ) : (
-                <Badge variant="warning">Credencial não configurada</Badge>
-              )}
-            </div>
-
-            <FormField
-              id="ai-api-key"
-              label={providerDefinition.credentialLabel}
-              description={
-                credentialConfigured
-                  ? 'Já existe uma credencial salva. Deixe o campo vazio para mantê-la.'
-                  : 'A credencial é armazenada criptografada e nunca é exibida novamente.'
-              }
-            >
-              <Input
-                id="ai-api-key"
-                type="password"
-                value={apiKey}
-                onChange={(event) => {
-                  setApiKey(event.target.value);
-                  if (event.target.value.trim().length > 0) {
-                    setClearCredentials(false);
-                  }
-                }}
-                placeholder={credentialConfigured ? '••••••••' : 'Informe a credencial'}
-                autoComplete="new-password"
-                disabled={!canManage || pending}
-              />
-            </FormField>
-
-            {credentialConfigured && canManage ? (
-              <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    setClearCredentials((value) => !value);
-                    setApiKey('');
-                    onFeedback(
-                      clearCredentials
-                        ? null
-                        : {
-                            tone: 'info',
-                            message: 'A credencial será removida ao salvar.',
-                          },
-                    );
-                  }}
-                  disabled={pending}
-                >
-                  <Trash2 />
-                  {clearCredentials ? 'Cancelar remoção' : 'Remover credencial'}
+          {enabled && !credentialConfigured ? (
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-warning/30 bg-warning/10 p-3">
+              <p className="text-xs font-medium text-warning">
+                Configure a credencial de {providerDefinition.label} para habilitar o Copiloto.
+              </p>
+              {canManage ? (
+                <Button type="button" variant="outline" size="sm" onClick={onOpenCredentials}>
+                  <KeyRound />
+                  Abrir credenciais
                 </Button>
-                {clearCredentials ? (
-                  <span className="text-xs font-medium text-danger">
-                    A credencial será removida ao salvar.
-                  </span>
-                ) : null}
-              </div>
-            ) : null}
-          </section>
+              ) : null}
+            </div>
+          ) : null}
 
           {!canManage ? (
             <p className="text-xs text-muted-foreground">

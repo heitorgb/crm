@@ -3,6 +3,7 @@ import type {
   AiCatalog,
   AiConnectionTestResult,
   AiFormalizationResult,
+  AiProvider,
   AiSettings,
   AnalyzeSalesOpportunityInput,
   CreateSalesFollowUpInput,
@@ -16,6 +17,7 @@ import type {
   TranscriptionCatalog,
   TranscriptionConnectionTestResult,
   TranscriptionSettings,
+  UpdateAiCredentialInput,
   UpdateAiSettingsInput,
   UpdateSalesFollowUpInput,
   UpdateSalesRecommendationInput,
@@ -29,6 +31,12 @@ export const aiService = {
 
   saveSettings: (input: UpdateAiSettingsInput) =>
     apiRequest<AiSettings>('/ai/settings', { method: 'PUT', body: input }),
+
+  saveCredential: (provider: AiProvider, input: UpdateAiCredentialInput) =>
+    apiRequest<AiSettings>(`/ai/credentials/${provider}`, {
+      method: 'PUT',
+      body: input,
+    }),
 
   testConnection: (input: TestAiConnectionInput) =>
     apiRequest<AiConnectionTestResult>('/ai/test', {

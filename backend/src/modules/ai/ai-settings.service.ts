@@ -12,7 +12,7 @@ import {
   AiNotConfiguredError,
 } from './ai.errors.js';
 import { AI_PROVIDERS, defaultModelFor, isModelSupported } from './ai.models.js';
-import type { UpdateAiSettingsDto } from './dto/ai.dto.js';
+import type { UpdateAiCredentialDto, UpdateAiSettingsDto } from './dto/ai.dto.js';
 
 const SETTINGS_SELECT = {
   provider: true,
@@ -118,6 +118,44 @@ export class AiSettingsService {
       enabled: dto.enabled ?? true,
     };
     applyCredentialCreate(create, dto.provider, encryptedKey, dto.clearCredentials === true);
+
+    const row = await this.prisma.aiSettings.upsert({
+      where: { tenantId },
+      update,
+      create,
+      select: SETTINGS_SELECT,
+    });
+
+    return toView(row);
+  }
+
+  async saveCredential(
+    provider: AiProvider,
+    dto: UpdateAiCredentialDto,
+  ): Promise<AiSettingsView> {
+    const { tenantId } = this.tenantContext.requireContext();
+    const apiKey = dto.apiKey?.trim();
+    const clear = dto.clearCredentials === true;
+
+    if (!apiKey && !clear) {
+      return this.get();
+    }
+    if (apiKey && !this.encryption.available) {
+      throw new AiEncryptionUnavailableError();
+    }
+
+    const encryptedKey = apiKey ? this.encryption.encrypt(apiKey) : null;
+    const update: Prisma.AiSettingsUpdateInput = {};
+    applyCredentialUpdate(update, provider, encryptedKey, clear);
+
+    const create: Prisma.AiSettingsCreateInput = {
+      tenant: { connect: { id: tenantId } },
+      provider: AiProvider.OPENAI,
+      model: defaultModelFor(AiProvider.OPENAI),
+      formality: AiFormality.PROFESSIONAL,
+      enabled: true,
+    };
+    applyCredentialCreate(create, provider, encryptedKey, clear);
 
     const row = await this.prisma.aiSettings.upsert({
       where: { tenantId },

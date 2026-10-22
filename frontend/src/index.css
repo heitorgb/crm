@@ -193,7 +193,7 @@
 
   .auth-panel-glow {
     background-image: radial-gradient(
-      ellipse 75% 55% at 70% 0%,
+      ellipse min(34.5vw, 580px) 55% at calc(50% + min(36.2vw, 608px)) 0%,
       rgba(34, 197, 94, 0.09),
       transparent 68%
     );

@@ -52,13 +52,12 @@ export function LoginPage() {
   return (
     <div className="auth-screen relative min-h-dvh overflow-hidden">
       <div className="auth-canvas pointer-events-none absolute inset-0" aria-hidden="true" />
+      <div className="auth-panel-glow pointer-events-none absolute inset-0" aria-hidden="true" />
 
       <div className="relative mx-auto grid min-h-dvh w-full max-w-[1680px] lg:grid-cols-[minmax(0,1.08fr)_minmax(0,0.92fr)]">
         <LoginShowcase />
 
         <main className="relative flex min-h-dvh flex-col justify-center px-4 pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-[max(1.5rem,env(safe-area-inset-top))] sm:px-6 lg:px-10 lg:py-12 xl:px-16">
-          <div className="auth-panel-glow pointer-events-none absolute inset-0" aria-hidden="true" />
-
           <div className="relative mx-auto flex w-full max-w-[26rem] flex-col">
             <div className="mb-8 flex items-center gap-3 lg:hidden">
               <img
@@ -70,11 +69,6 @@ export function LoginPage() {
                 <p className="text-base font-semibold tracking-tight">OrderUp CRM</p>
                 <p className="text-xs text-[var(--auth-muted)]">Atendimento omnichannel</p>
               </div>
-            </div>
-
-            <div className="mb-5 hidden items-center gap-2 text-[11px] font-medium uppercase tracking-[0.18em] text-[var(--auth-muted)] lg:flex">
-              <ShieldCheck className="size-3.5 text-emerald-400/80" />
-              Acesso seguro
             </div>
 
             <div className="auth-form-surface rounded-2xl p-6 sm:p-8">

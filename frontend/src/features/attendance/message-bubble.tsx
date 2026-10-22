@@ -32,8 +32,8 @@ import {
   readMessageContacts,
   readQuotedMessage,
 } from './attendance-utils';
+import { ExpandableText } from './expandable-text';
 import { MessageLinkPreview } from './link-preview-card';
-import { LinkifiedText } from './linkified-text';
 import { MessageContact } from './message-contact';
 import { isMediaMessage, isViewOnceMessage } from './media-message-utils';
 import { MessageMedia } from './message-media';
@@ -298,7 +298,7 @@ export function MessageBubble({
             <MessageContact contacts={contacts} whatsappInstanceId={whatsappInstanceId} />
           ) : (
             <>
-              <LinkifiedText
+              <ExpandableText
                 text={message.content ?? `[${message.type.toLowerCase()}]`}
                 className="whitespace-pre-wrap [overflow-wrap:anywhere]"
               />
@@ -307,7 +307,7 @@ export function MessageBubble({
           )}
           {isMedia && message.content ? (
             <div className="px-1.5">
-              <LinkifiedText
+              <ExpandableText
                 text={message.content}
                 className="whitespace-pre-wrap pt-1 [overflow-wrap:anywhere]"
               />

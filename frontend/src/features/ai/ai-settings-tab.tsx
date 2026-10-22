@@ -116,7 +116,10 @@ export function AiSettingsTab({ canManage }: AiSettingsTabProps) {
         />
       </TabsContent>
       <TabsContent value="transcription" forceMount hidden={activeSection !== 'transcription'}>
-        <TranscriptionSettingsCard canManage={canManage} />
+        <TranscriptionSettingsCard
+          canManage={canManage}
+          onOpenCredentials={() => setActiveSection('credentials')}
+        />
       </TabsContent>
       <TabsContent value="credentials" forceMount hidden={activeSection !== 'credentials'}>
         <AiCredentialsTab

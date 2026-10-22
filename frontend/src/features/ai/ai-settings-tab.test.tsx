@@ -250,6 +250,20 @@ describe('AiSettingsTab', () => {
     expect(within(transcriptionPanel).getAllByText('Sem suporte').length).toBeGreaterThan(0);
     expect(within(transcriptionPanel).queryByText('Inteligência Artificial')).toBeNull();
     expect(within(transcriptionPanel).queryByText('Copiloto IA')).toBeNull();
+    expect(within(transcriptionPanel).queryByLabelText('Chave da API OpenAI')).toBeNull();
+    expect(within(transcriptionPanel).queryByText('Credencial OpenAI disponível')).toBeNull();
+  });
+
+  it('tests the stored transcription credential', async () => {
+    render(<AiSettingsTab canManage />);
+
+    openSection(/transcrição/i);
+    fireEvent.click(screen.getByRole('button', { name: /testar credencial/i }));
+
+    expect(state.testTranscription).toHaveBeenCalledTimes(1);
+    expect(
+      await screen.findByText('Credencial e modelo de transcrição validados com sucesso.'),
+    ).toBeTruthy();
   });
 
   it('disables copilot fields while the activation is off and restores them', () => {
@@ -485,18 +499,28 @@ describe('AiSettingsTab', () => {
     expect(await screen.findByText('Configuração de transcrição salva.')).toBeTruthy();
   });
 
-  it('shows automatic transcription only after enabling it and saves the preference', async () => {
+  it('disables transcription fields while it is off and saves the automatic preference', async () => {
     render(<AiSettingsTab canManage />);
 
     openSection(/transcrição/i);
-    expect(
-      screen.queryByRole('switch', { name: /transcrever automaticamente/i }),
-    ).toBeNull();
 
-    fireEvent.click(screen.getByRole('switch', { name: /ativar transcrição de áudio/i }));
-
+    const activation = screen.getByRole('switch', { name: /ativar transcrição de áudio/i });
     const automatic = screen.getByRole('switch', { name: /transcrever automaticamente/i });
+    const provider = screen.getByRole('button', {
+      name: /provedor de transcrição openai/i,
+    });
+    const model = screen.getByRole('combobox', { name: /modelo de transcrição/i });
+
     expect(automatic.getAttribute('aria-checked')).toBe('false');
+    expect((automatic as HTMLButtonElement).disabled).toBe(true);
+    expect((provider as HTMLButtonElement).disabled).toBe(true);
+    expect((model as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.click(activation);
+
+    expect((automatic as HTMLButtonElement).disabled).toBe(false);
+    expect((provider as HTMLButtonElement).disabled).toBe(false);
+    expect((model as HTMLButtonElement).disabled).toBe(false);
 
     fireEvent.click(automatic);
     expect(automatic.getAttribute('aria-checked')).toBe('true');

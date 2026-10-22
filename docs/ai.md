@@ -29,10 +29,12 @@ recurso:
   modelo (três opções recomendadas por provedor) em destaque e o nível de formalidade
   (**Profissional**, **Formal** ou **Muito formal**). Desativar o recurso mantém provedor, modelo,
   formalidade e credenciais salvos; apenas bloqueia a edição até nova ativação.
-- **Transcrição** — **Ativar transcrição de áudio** controla o recurso inteiro (automático e
-  manual), além de provedor, modelo e **Transcrever automaticamente**. Esta opção aparece somente
-  com o recurso ativado e começa desmarcada: marcada, transcreve cada áudio recebido; desmarcada, o
-  áudio exibe a ação manual **Transcrever este áudio** no atendimento.
+- **Transcrição** — a ativação aparece primeiro e controla a edição dos demais campos. Com o
+  recurso desativado, provedor, modelo e a preferência de transcrição automática permanecem
+  visíveis, mas desabilitados, preservando os valores salvos. O provedor usa seletor compacto e o
+  modelo fica em destaque. **Transcrever automaticamente** começa desmarcada: marcada, transcreve
+  cada áudio recebido; desmarcada, o áudio exibe a ação manual **Transcrever este áudio** no
+  atendimento.
 - **Credenciais** — visão centralizada do status por provedor e dos recursos que utilizam cada
   chave. Cada linha abre um diálogo de gerenciamento com cadastro/substituição da chave, teste de
   conexão, remoção confirmada e feedback da operação. O status da lista é atualizado após o sucesso.
@@ -114,7 +116,7 @@ Se ele não estiver disponível, o estado é `FAILED` com
 
 A transcrição reutiliza `ai_settings.openai_api_key_encrypted`, a mesma credencial OpenAI já usada
 pela IA de texto. Não existe segunda cópia da chave. Se a organização usa outro provedor de texto e
-ainda não possui chave OpenAI, a própria seção de transcrição permite cadastrá-la; a chave é gravada
+ainda não possui chave OpenAI, ela pode ser cadastrada na sub-aba **Credenciais**; a chave é gravada
 no mesmo campo criptografado. Outra empresa nunca acessa essa credencial (escopo por `tenantId`).
 
 ### Configuração e endpoints

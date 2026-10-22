@@ -1,11 +1,10 @@
 import { useState, type FormEvent } from 'react';
-import { Check, KeyRound, Loader2, Mic, PlugZap, Save, ShieldCheck } from 'lucide-react';
+import { Check, KeyRound, Loader2, Mic, PlugZap, Save } from 'lucide-react';
 import { FormField } from '@/components/common/form-field';
 import { StatusBadge } from '@/components/common/status-badge';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
 import {
   Select,
   SelectContent,
@@ -44,7 +43,13 @@ const REASON_LABELS: Record<TranscriptionUnavailableReason, string> = {
   unreadable_credentials: 'Credencial ilegível',
 };
 
-export function TranscriptionSettingsCard({ canManage }: { canManage: boolean }) {
+export function TranscriptionSettingsCard({
+  canManage,
+  onOpenCredentials,
+}: {
+  canManage: boolean;
+  onOpenCredentials: () => void;
+}) {
   const catalog = useTranscriptionCatalog();
   const settings = useTranscriptionSettings();
   const [feedback, setFeedback] = useState<Feedback | null>(null);
@@ -96,6 +101,7 @@ export function TranscriptionSettingsCard({ canManage }: { canManage: boolean })
       catalog={catalog.data}
       feedback={feedback}
       onFeedback={setFeedback}
+      onOpenCredentials={onOpenCredentials}
     />
   );
 }
@@ -106,12 +112,14 @@ function TranscriptionSettingsForm({
   catalog,
   feedback,
   onFeedback,
+  onOpenCredentials,
 }: {
   canManage: boolean;
   initial: TranscriptionSettings;
   catalog: TranscriptionCatalog;
   feedback: Feedback | null;
   onFeedback: (feedback: Feedback | null) => void;
+  onOpenCredentials: () => void;
 }) {
   const saveSettings = useSaveTranscriptionSettings();
   const testConnection = useTestTranscription();
@@ -120,15 +128,23 @@ function TranscriptionSettingsForm({
   const [autoEnabled, setAutoEnabled] = useState(initial.autoEnabled);
   const [provider, setProvider] = useState<AiProvider>(initial.provider);
   const [model, setModel] = useState(initial.model);
-  const [apiKey, setApiKey] = useState('');
 
   const providerDefinition =
     catalog.providers.find((item) => item.id === provider) ?? catalog.providers[0];
   const selectedModel = providerDefinition?.models.find((item) => item.id === model);
   const pending = saveSettings.isPending || testConnection.isPending;
-  const hasCredential = apiKey.trim().length > 0 || initial.hasCredentials;
+  const fieldsDisabled = !canManage || pending || !enabled;
+  const canTest =
+    canManage &&
+    !pending &&
+    initial.hasCredentials &&
+    Boolean(model) &&
+    Boolean(providerDefinition?.supported);
 
   const handleProviderChange = (nextProvider: AiProvider): void => {
+    if (fieldsDisabled) {
+      return;
+    }
     const definition = catalog.providers.find((item) => item.id === nextProvider);
     if (!definition?.supported) {
       return;
@@ -147,9 +163,7 @@ function TranscriptionSettingsForm({
         autoEnabled,
         provider,
         model,
-        ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
       });
-      setApiKey('');
       onFeedback({ tone: 'success', message: 'Configuração de transcrição salva.' });
     } catch (error) {
       onFeedback({
@@ -205,47 +219,73 @@ function TranscriptionSettingsForm({
       </CardHeader>
       <CardContent>
         <form className="space-y-6" onSubmit={(event) => void handleSubmit(event)}>
+          <div className="flex items-center justify-between gap-4 rounded-lg border border-border p-4">
+            <div className="min-w-0">
+              <p className="text-sm font-medium">Ativar transcrição de áudio</p>
+              <p className="text-xs text-muted-foreground">
+                Desativada, a mensagem e o áudio continuam disponíveis normalmente e as
+                preferências salvas são mantidas.
+              </p>
+            </div>
+            <Switch
+              checked={enabled}
+              onCheckedChange={setEnabled}
+              disabled={!canManage || pending}
+              aria-label="Ativar transcrição de áudio"
+            />
+          </div>
+
           <section className="space-y-2">
             <p className="text-sm font-medium">Provedor de transcrição</p>
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="flex flex-wrap gap-2">
               {catalog.providers.map((item) => {
                 const selected = item.id === provider;
+                const unavailable = fieldsDisabled || !item.supported;
                 return (
                   <button
                     key={item.id}
                     type="button"
                     onClick={() => handleProviderChange(item.id)}
+                    aria-label={`Provedor de transcrição ${item.label}`}
                     aria-pressed={selected}
-                    disabled={!canManage || pending || !item.supported}
+                    disabled={unavailable}
                     className={cn(
-                      'flex h-full min-w-0 items-start gap-3 rounded-lg border p-3 text-left transition-colors',
+                      'inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium transition-colors',
+                      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
                       selected
-                        ? 'border-primary bg-primary/5'
-                        : 'border-border hover:bg-surface-hover',
-                      !item.supported && 'cursor-not-allowed opacity-60 hover:bg-transparent',
+                        ? 'border-primary bg-primary/5 text-foreground'
+                        : 'border-border text-muted-foreground hover:bg-surface-hover',
+                      unavailable && 'cursor-not-allowed opacity-60 hover:bg-transparent',
                     )}
                   >
-                    <AiProviderLogo provider={item.id} className="mt-0.5 size-5" />
-                    <span className="min-w-0 flex-1">
-                      <span className="flex items-center gap-2 text-sm font-medium">
-                        {item.label}
-                        {!item.supported ? <Badge variant="secondary">Sem suporte</Badge> : null}
-                      </span>
-                      <span className="mt-1 block text-xs text-muted-foreground">
-                        {item.supported ? item.description : item.unsupportedReason}
-                      </span>
-                    </span>
-                    {selected ? <Check className="mt-0.5 size-4 shrink-0 text-primary" /> : null}
+                    <AiProviderLogo provider={item.id} className="size-4" />
+                    {item.label}
+                    {!item.supported ? <Badge variant="secondary">Sem suporte</Badge> : null}
+                    {selected ? <Check className="size-4 text-primary" /> : null}
                   </button>
                 );
               })}
             </div>
           </section>
 
-          <div className="grid gap-4 sm:grid-cols-2">
-            <FormField id="transcription-model" label="Modelo de transcrição" required>
-              <Select value={model} onValueChange={setModel} disabled={!canManage || pending}>
-                <SelectTrigger id="transcription-model" aria-label="Modelo de transcrição">
+          <section className="space-y-2 rounded-lg border border-primary/20 bg-primary/[0.04] p-4">
+            <FormField
+              id="transcription-model"
+              label="Modelo de transcrição"
+              required
+              description="Define o modelo usado para transcrever os áudios recebidos."
+            >
+              <Select
+                key={provider}
+                value={model}
+                onValueChange={setModel}
+                disabled={fieldsDisabled || !providerDefinition?.supported}
+              >
+                <SelectTrigger
+                  id="transcription-model"
+                  aria-label="Modelo de transcrição"
+                  className="h-10 w-full bg-surface sm:max-w-md"
+                >
                   <SelectValue placeholder="Selecione um modelo" />
                 </SelectTrigger>
                 <SelectContent>
@@ -256,83 +296,45 @@ function TranscriptionSettingsForm({
                   ))}
                 </SelectContent>
               </Select>
-              {selectedModel ? (
-                <p className="text-xs text-muted-foreground">{selectedModel.description}</p>
-              ) : null}
             </FormField>
+            {selectedModel ? (
+              <p className="text-xs text-muted-foreground">{selectedModel.description}</p>
+            ) : null}
+          </section>
 
-            <div className="flex items-center justify-between gap-4 rounded-lg border border-border p-3">
-              <div className="min-w-0">
-                <p className="text-sm font-medium">Ativar transcrição de áudio</p>
-                <p className="text-xs text-muted-foreground">
-                  Desativada, a mensagem e o áudio continuam disponíveis normalmente.
-                </p>
-              </div>
-              <Switch
-                checked={enabled}
-                onCheckedChange={setEnabled}
-                disabled={!canManage || pending}
-                aria-label="Ativar transcrição de áudio"
-              />
+          <div
+            className={cn(
+              'flex items-center justify-between gap-4 rounded-lg border border-border p-4',
+              fieldsDisabled && 'opacity-60',
+            )}
+          >
+            <div className="min-w-0">
+              <p className="text-sm font-medium">Transcrever automaticamente</p>
+              <p className="text-xs text-muted-foreground">
+                Desmarcada, a transcrição é solicitada manualmente em cada áudio recebido.
+              </p>
             </div>
+            <Switch
+              checked={autoEnabled}
+              onCheckedChange={setAutoEnabled}
+              disabled={fieldsDisabled}
+              aria-label="Transcrever automaticamente"
+            />
           </div>
 
-          {enabled ? (
-            <div className="flex items-center justify-between gap-4 rounded-lg border border-border p-3">
-              <div className="min-w-0">
-                <p className="text-sm font-medium">Transcrever automaticamente</p>
-                <p className="text-xs text-muted-foreground">
-                  Desmarcada, a transcrição é solicitada manualmente em cada áudio recebido.
-                </p>
-              </div>
-              <Switch
-                checked={autoEnabled}
-                onCheckedChange={setAutoEnabled}
-                disabled={!canManage || pending}
-                aria-label="Transcrever automaticamente"
-              />
+          {enabled && !initial.hasCredentials ? (
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-warning/30 bg-warning/10 p-3">
+              <p className="text-xs font-medium text-warning">
+                Configure a credencial OpenAI para habilitar a transcrição.
+              </p>
+              {canManage ? (
+                <Button type="button" variant="outline" size="sm" onClick={onOpenCredentials}>
+                  <KeyRound />
+                  Abrir credenciais
+                </Button>
+              ) : null}
             </div>
           ) : null}
-
-          <section className="space-y-3 rounded-lg border border-border p-4">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2 text-sm font-medium">
-                <KeyRound className="size-4 text-muted-foreground" />
-                Credencial
-              </div>
-              {hasCredential ? (
-                <Badge variant="success">
-                  <ShieldCheck />
-                  Credencial OpenAI disponível
-                </Badge>
-              ) : (
-                <Badge variant="warning">Credencial OpenAI não configurada</Badge>
-              )}
-            </div>
-            <p className="text-xs text-muted-foreground">
-              A transcrição reutiliza a credencial OpenAI já salva. Nenhuma chave adicional é
-              armazenada; se ela ainda não existir, informe-a abaixo.
-            </p>
-            <FormField
-              id="transcription-api-key"
-              label="Chave da API OpenAI"
-              description={
-                initial.hasCredentials
-                  ? 'Já existe uma credencial OpenAI salva. Deixe o campo vazio para mantê-la.'
-                  : 'A credencial é armazenada criptografada e nunca é exibida novamente.'
-              }
-            >
-              <Input
-                id="transcription-api-key"
-                type="password"
-                value={apiKey}
-                onChange={(event) => setApiKey(event.target.value)}
-                placeholder={initial.hasCredentials ? '••••••••' : 'Informe a credencial'}
-                autoComplete="new-password"
-                disabled={!canManage || pending}
-              />
-            </FormField>
-          </section>
 
           {!canManage ? (
             <p className="text-xs text-muted-foreground">
@@ -360,7 +362,7 @@ function TranscriptionSettingsForm({
                 type="button"
                 variant="outline"
                 onClick={() => void handleTest()}
-                disabled={pending || !initial.hasCredentials}
+                disabled={!canTest}
               >
                 {testConnection.isPending ? <Loader2 className="animate-spin" /> : <PlugZap />}
                 Testar credencial

@@ -21,19 +21,27 @@ sempre feita no backend no momento da formalização.
 
 ## Aba IA (Configurações)
 
-- Provedor: **OpenAI**, **DeepSeek**, **Anthropic** ou **OpenRouter**.
-- Modelo: três opções recomendadas por provedor.
-- Credenciais: chave da API específica do provedor selecionado.
-- Nível de formalidade: **Profissional**, **Formal** ou **Muito formal**.
-- Chave **Ativar IA no atendimento**.
-- **Testar conexão** usa as credenciais digitadas ou as já armazenadas, sem salvar alterações.
-- **Salvar configurações** persiste a configuração do tenant.
-- **Ativar transcrição de áudio** controla o recurso inteiro (automático e manual).
-- **Transcrever automaticamente** aparece somente com o recurso ativado e começa desmarcada.
-  Marcada, transcreve cada áudio recebido; desmarcada, o áudio exibe a ação manual
-  **Transcrever este áudio** no atendimento.
-- Credenciais existentes nunca são exibidas; deixar o campo vazio mantém a credencial atual.
-  A remoção exige a ação explícita **Remover credencial** seguida de salvar.
+A aba IA é dividida em três sub-abas, com o conteúdo e os indicadores de status preservados em cada
+recurso:
+
+- **Copiloto IA** — provedor (**OpenAI**, **DeepSeek**, **Anthropic** ou **OpenRouter**), modelo
+  (três opções recomendadas por provedor), nível de formalidade (**Profissional**, **Formal** ou
+  **Muito formal**) e chave **Ativar IA no atendimento**. A credencial do provedor selecionado é
+  gerenciada nesta sub-aba.
+- **Transcrição** — **Ativar transcrição de áudio** controla o recurso inteiro (automático e
+  manual), além de provedor, modelo e **Transcrever automaticamente**. Esta opção aparece somente
+  com o recurso ativado e começa desmarcada: marcada, transcreve cada áudio recebido; desmarcada, o
+  áudio exibe a ação manual **Transcrever este áudio** no atendimento.
+- **Credenciais** — visão centralizada do status por provedor e dos recursos que utilizam cada
+  chave, com atalho para gerenciar a credencial do Copiloto ou da transcrição. A transcrição
+  reutiliza a credencial OpenAI já salva; as demais credenciais permanecem independentes por
+  provedor.
+
+**Testar conexão** usa as credenciais digitadas ou as já armazenadas, sem salvar alterações.
+**Salvar configurações** e **Salvar transcrição** persistem cada seção de forma independente.
+Credenciais existentes nunca são exibidas; deixar o campo vazio mantém a credencial atual. A remoção
+exige a ação explícita **Remover credencial** seguida de salvar. Alterações ainda não salvas são
+preservadas ao alternar entre as sub-abas.
 
 Leitura disponível para todos os membros; escrita e teste restritos a `OWNER`/`ADMIN`.
 

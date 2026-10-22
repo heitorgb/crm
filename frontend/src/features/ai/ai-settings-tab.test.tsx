@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import type {
   AiCatalog,
   AiSettings,
@@ -202,23 +202,88 @@ beforeEach(() => {
 
 afterEach(cleanup);
 
+function openSection(name: RegExp): void {
+  fireEvent.mouseDown(screen.getByRole('tab', { name }));
+}
+
 describe('AiSettingsTab', () => {
-  it('shows the configured integration and the four providers', () => {
+  it('organizes the AI settings into copilot, transcription and credentials sub-tabs', () => {
     render(<AiSettingsTab canManage />);
 
-    expect(screen.getByText('Inteligência Artificial')).toBeTruthy();
-    expect(screen.getAllByText('Pronta para uso').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('OpenAI').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('DeepSeek').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Anthropic').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('OpenRouter').length).toBeGreaterThan(0);
-    expect(screen.getByText('Transcrição de áudio')).toBeTruthy();
-    expect(screen.getAllByText('Sem suporte').length).toBeGreaterThan(0);
-    expect(screen.getAllByRole('img', { name: 'OpenAI' }).length).toBeGreaterThan(0);
-    expect(screen.getAllByRole('img', { name: 'DeepSeek' }).length).toBeGreaterThan(0);
-    expect(screen.getAllByRole('img', { name: 'Anthropic' }).length).toBeGreaterThan(0);
-    expect(screen.getAllByRole('img', { name: 'OpenRouter' }).length).toBeGreaterThan(0);
-    expect(screen.getByText('Credencial configurada')).toBeTruthy();
+    expect(screen.getByRole('tab', { name: /copiloto ia/i })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: /transcrição/i })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: /credenciais/i })).toBeTruthy();
+
+    const copilotPanel = screen.getByRole('tabpanel');
+    expect(within(copilotPanel).getByText('Inteligência Artificial')).toBeTruthy();
+    expect(within(copilotPanel).getByText('Credencial configurada')).toBeTruthy();
+    expect(within(copilotPanel).getAllByText('OpenAI').length).toBeGreaterThan(0);
+    expect(within(copilotPanel).getAllByText('DeepSeek').length).toBeGreaterThan(0);
+    expect(within(copilotPanel).getAllByText('Anthropic').length).toBeGreaterThan(0);
+    expect(within(copilotPanel).getAllByText('OpenRouter').length).toBeGreaterThan(0);
+    expect(within(copilotPanel).queryByText('Transcrição de áudio')).toBeNull();
+
+    openSection(/transcrição/i);
+
+    const transcriptionPanel = screen.getByRole('tabpanel');
+    expect(within(transcriptionPanel).getByText('Transcrição de áudio')).toBeTruthy();
+    expect(within(transcriptionPanel).getAllByText('Sem suporte').length).toBeGreaterThan(0);
+    expect(within(transcriptionPanel).getAllByRole('img', { name: 'OpenAI' }).length).toBeGreaterThan(
+      0,
+    );
+    expect(within(transcriptionPanel).getAllByRole('img', { name: 'DeepSeek' }).length).toBeGreaterThan(
+      0,
+    );
+    expect(
+      within(transcriptionPanel).getAllByRole('img', { name: 'Anthropic' }).length,
+    ).toBeGreaterThan(0);
+    expect(
+      within(transcriptionPanel).getAllByRole('img', { name: 'OpenRouter' }).length,
+    ).toBeGreaterThan(0);
+    expect(within(transcriptionPanel).queryByText('Inteligência Artificial')).toBeNull();
+  });
+
+  it('shows the credential status and the feature associated with each provider', () => {
+    render(<AiSettingsTab canManage />);
+
+    openSection(/credenciais/i);
+
+    const credentialsPanel = screen.getByRole('tabpanel');
+    expect(within(credentialsPanel).getByText('Credenciais de IA')).toBeTruthy();
+    expect(within(credentialsPanel).getAllByText('Configurada').length).toBeGreaterThan(0);
+    expect(within(credentialsPanel).getAllByText('Copiloto').length).toBeGreaterThan(0);
+    expect(within(credentialsPanel).getAllByText('Transcrição').length).toBeGreaterThan(0);
+    expect(
+      within(credentialsPanel).getByText(/transcrição reutiliza a credencial OpenAI/i),
+    ).toBeTruthy();
+    expect(
+      within(credentialsPanel).getByRole('button', { name: /gerenciar credencial openai/i }),
+    ).toBeTruthy();
+  });
+
+  it('opens the related section from the credential summary', () => {
+    render(<AiSettingsTab canManage />);
+
+    openSection(/credenciais/i);
+    fireEvent.click(screen.getByRole('button', { name: /gerenciar credencial openai/i }));
+
+    expect(
+      screen.getByRole('tab', { name: /copiloto ia/i }).getAttribute('aria-selected'),
+    ).toBe('true');
+  });
+
+  it('keeps unsaved copilot changes when navigating between sub-tabs', () => {
+    render(<AiSettingsTab canManage />);
+
+    fireEvent.change(screen.getByLabelText('Chave da API'), {
+      target: { value: 'sk-draft-key' },
+    });
+
+    openSection(/credenciais/i);
+    openSection(/transcrição/i);
+    openSection(/copiloto ia/i);
+
+    expect((screen.getByLabelText('Chave da API') as HTMLInputElement).value).toBe('sk-draft-key');
   });
 
   it('saves without overwriting the stored credential when the field is empty', async () => {
@@ -266,6 +331,7 @@ describe('AiSettingsTab', () => {
   it('saves the independent transcription configuration', async () => {
     render(<AiSettingsTab canManage />);
 
+    openSection(/transcrição/i);
     fireEvent.click(screen.getByRole('switch', { name: /ativar transcrição de áudio/i }));
     fireEvent.click(screen.getByRole('button', { name: /salvar transcrição/i }));
 
@@ -281,6 +347,7 @@ describe('AiSettingsTab', () => {
   it('shows automatic transcription only after enabling it and saves the preference', async () => {
     render(<AiSettingsTab canManage />);
 
+    openSection(/transcrição/i);
     expect(
       screen.queryByRole('switch', { name: /transcrever automaticamente/i }),
     ).toBeNull();

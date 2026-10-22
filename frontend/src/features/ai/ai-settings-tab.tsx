@@ -3,6 +3,7 @@ import {
   Check,
   KeyRound,
   Loader2,
+  Mic,
   PlugZap,
   Save,
   ShieldCheck,
@@ -24,6 +25,7 @@ import {
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ApiError } from '@/lib/api-client';
 import { cn } from '@/lib/utils';
 import type {
@@ -33,6 +35,7 @@ import type {
   AiSettings,
   UpdateAiSettingsInput,
 } from '@/types/ai';
+import { AiCredentialsTab } from './ai-credentials-tab';
 import { AiProviderLogo } from './ai-provider-logo';
 import { useAiCatalog, useAiSettings, useSaveAiSettings, useTestAiConnection } from './queries';
 import { TranscriptionSettingsCard } from './transcription-settings-card';
@@ -46,10 +49,23 @@ interface AiSettingsTabProps {
   canManage: boolean;
 }
 
+type AiSettingsSection = 'copilot' | 'transcription' | 'credentials';
+
+function isAiSettingsSection(value: string): value is AiSettingsSection {
+  return value === 'copilot' || value === 'transcription' || value === 'credentials';
+}
+
 export function AiSettingsTab({ canManage }: AiSettingsTabProps) {
   const catalog = useAiCatalog();
   const settings = useAiSettings();
   const [feedback, setFeedback] = useState<Feedback | null>(null);
+  const [activeSection, setActiveSection] = useState<AiSettingsSection>('copilot');
+
+  const handleSectionChange = (value: string): void => {
+    if (isAiSettingsSection(value)) {
+      setActiveSection(value);
+    }
+  };
 
   if (catalog.isPending || settings.isPending) {
     return (
@@ -93,17 +109,44 @@ export function AiSettingsTab({ canManage }: AiSettingsTabProps) {
   ].join('|');
 
   return (
-    <div className="space-y-6">
-      <AiSettingsForm
-        key={key}
-        canManage={canManage}
-        initial={settings.data}
-        catalog={catalog.data}
-        feedback={feedback}
-        onFeedback={setFeedback}
-      />
-      <TranscriptionSettingsCard canManage={canManage} />
-    </div>
+    <Tabs value={activeSection} onValueChange={handleSectionChange}>
+      <TabsList className="h-auto w-full flex-wrap justify-start sm:w-auto">
+        <TabsTrigger value="copilot">
+          <Sparkles />
+          Copiloto IA
+        </TabsTrigger>
+        <TabsTrigger value="transcription">
+          <Mic />
+          Transcrição
+        </TabsTrigger>
+        <TabsTrigger value="credentials">
+          <KeyRound />
+          Credenciais
+        </TabsTrigger>
+      </TabsList>
+
+      <TabsContent value="copilot" forceMount hidden={activeSection !== 'copilot'}>
+        <AiSettingsForm
+          key={key}
+          canManage={canManage}
+          initial={settings.data}
+          catalog={catalog.data}
+          feedback={feedback}
+          onFeedback={setFeedback}
+        />
+      </TabsContent>
+      <TabsContent value="transcription" forceMount hidden={activeSection !== 'transcription'}>
+        <TranscriptionSettingsCard canManage={canManage} />
+      </TabsContent>
+      <TabsContent value="credentials" forceMount hidden={activeSection !== 'credentials'}>
+        <AiCredentialsTab
+          canManage={canManage}
+          catalog={catalog.data}
+          settings={settings.data}
+          onManage={setActiveSection}
+        />
+      </TabsContent>
+    </Tabs>
   );
 }
 

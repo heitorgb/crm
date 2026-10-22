@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { usePageMetadata } from '@/lib/page-metadata';
 
 interface AuthShellProps {
   title: string;
@@ -8,6 +9,12 @@ interface AuthShellProps {
 }
 
 export function AuthShell({ title, description, badge, children }: AuthShellProps) {
+  usePageMetadata({
+    title: `${title} | OrderUp CRM`,
+    description,
+    robots: 'noindex, nofollow',
+  });
+
   return (
     <div className="auth-screen relative min-h-dvh overflow-hidden">
       <div className="auth-canvas pointer-events-none absolute inset-0" aria-hidden="true" />

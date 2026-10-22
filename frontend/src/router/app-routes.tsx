@@ -5,6 +5,7 @@ import { AppLayout } from '@/components/layout/app-layout';
 import { ForgotPasswordPage } from '@/features/auth/forgot-password-page';
 import { LoginPage } from '@/features/auth/login-page';
 import { ResetPasswordPage } from '@/features/auth/reset-password-page';
+import { LandingPage } from '@/features/landing/landing-page';
 import { ModuleRoute } from '@/features/modules/module-route';
 import { ModuleUnavailablePage } from '@/features/modules/module-unavailable-page';
 import { MODULE_KEYS } from '@/types/modules';
@@ -205,7 +206,7 @@ export function AppRoutes() {
           <Route path="/configuracoes" element={<SettingsPage />} />
         </Route>
 
-        <Route path="/" element={<Navigate to="/atendimento/conversas" replace />} />
+        <Route path="/" element={<LandingPage />} />
         <Route path="*" element={<NotFoundPage />} />
       </Routes>
     </Suspense>

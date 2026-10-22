@@ -16,6 +16,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useLogin } from '@/features/auth/queries';
 import { ApiError } from '@/lib/api-client';
+import { usePageMetadata } from '@/lib/page-metadata';
 import { storePasswordCredential } from '@/lib/password-credentials';
 import { cn } from '@/lib/utils';
 import { LoginShowcase } from './login-showcase';
@@ -27,6 +28,12 @@ import {
 } from './auth-styles';
 
 export function LoginPage() {
+  usePageMetadata({
+    title: 'Entrar | OrderUp CRM',
+    description: 'Acesse o painel da sua organização no OrderUp CRM.',
+    robots: 'noindex, nofollow',
+  });
+
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [passwordVisible, setPasswordVisible] = useState(false);

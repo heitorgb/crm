@@ -1,0 +1,20 @@
+User-agent: *
+Allow: /
+
+Disallow: /login
+Disallow: /esqueci-senha
+Disallow: /redefinir-senha
+Disallow: /admin
+Disallow: /atendimento
+Disallow: /contatos
+Disallow: /leads
+Disallow: /crm
+Disallow: /cobrancas
+Disallow: /configuracoes
+Disallow: /perfil
+Disallow: /integracoes
+Disallow: /mensagens-agendadas
+Disallow: /respostas-rapidas
+Disallow: /indisponivel
+
+Sitemap: https://crm.orderup.com.br/sitemap.xml

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from 'vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import type { ConversationMessage } from '@/types/attendance';
 import { MessageBubble } from './message-bubble';
 
@@ -66,6 +66,54 @@ describe('MessageBubble failure indicator', () => {
 
     expect(screen.queryByText('Não enviada')).toBeNull();
     expect(screen.queryByLabelText('Falha no envio')).toBeNull();
+  });
+});
+
+const LONG_TEXT = Array.from({ length: 240 }, (_, index) => `mensagem${index}`).join(' ');
+
+function expandFully(): void {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const button = screen.queryByRole('button', { name: 'Ler mais' });
+    if (!button) {
+      return;
+    }
+    fireEvent.click(button);
+  }
+  throw new Error('A mensagem não foi totalmente expandida');
+}
+
+describe('MessageBubble long content', () => {
+  it('does not show the action for a short message', () => {
+    renderBubble('SENT');
+
+    expect(screen.queryByRole('button', { name: 'Ler mais' })).toBeNull();
+  });
+
+  it('collapses a long outbound message and reveals it progressively', () => {
+    renderBubble('SENT', { content: LONG_TEXT });
+
+    expect(screen.queryByText(LONG_TEXT)).toBeNull();
+    expect(screen.getByText(/^mensagem0/)).toBeTruthy();
+
+    expandFully();
+
+    expect(screen.getByText(LONG_TEXT)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Ler mais' })).toBeNull();
+  });
+
+  it('applies the same behavior to a long inbound message', () => {
+    renderBubble('RECEIVED', {
+      direction: 'INBOUND',
+      content: LONG_TEXT,
+      senderName: 'Cliente',
+    });
+
+    expect(screen.queryByText(LONG_TEXT)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Ler mais' })).toBeTruthy();
+
+    expandFully();
+
+    expect(screen.getByText(LONG_TEXT)).toBeTruthy();
   });
 });
 

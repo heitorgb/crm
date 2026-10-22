@@ -41,6 +41,20 @@ podem enviar `{ "refreshToken": "..." }` no corpo de `refresh`/`logout` (fallbac
 - `NO_ACTIVE_MEMBERSHIP` (403) quando o usuário não tem nenhuma membership ativa.
 - `TENANT_REQUIRED` (400) quando o usuário tem múltiplas memberships e não informou `tenantId`.
 
+## Gerenciador de senhas do navegador
+
+A tela de login usa os mecanismos nativos do navegador, sem armazenar credenciais na aplicação:
+
+- E-mail: `autocomplete="username"`.
+- Senha: `autocomplete="current-password"`.
+- Formulário: `name="login"` e `autocomplete="on"`.
+
+A opção **"Lembrar senha"** registra apenas a preferência do usuário (booleano em
+`localStorage`, chave `orderup.remember-password`). Ela não armazena e-mail ou senha e não altera a
+sessão, os cookies ou a validade dos tokens. O salvamento e o preenchimento automático continuam
+sob controle do navegador e das políticas do dispositivo; não há como a aplicação obrigar ou
+impedir esses comportamentos.
+
 ## Access token (JWT)
 
 Claims mínimas:

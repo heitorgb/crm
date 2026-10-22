@@ -85,12 +85,17 @@ export function ChatPanel({
   onComposerInsertionHandled,
 }: ChatPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const atBottomRef = useRef(true);
+  const initialPositionDoneRef = useRef(false);
+  const lastMessageCountRef = useRef(0);
+  const conversationIdRef = useRef(conversation.id);
   const previousScrollHeightRef = useRef(0);
   const prependingRef = useRef(false);
   const loadingOlderRef = useRef(false);
   const isGroup = conversation.isGroup;
+  const hasMessages = messages.length > 0;
   const [replyTo, setReplyTo] = useState<ConversationMessage | null>(null);
   const [editing, setEditing] = useState<ConversationMessage | null>(null);
   const [showJumpToBottom, setShowJumpToBottom] = useState(false);
@@ -99,12 +104,15 @@ export function ChatPanel({
   const highlightTimerRef = useRef<number | null>(null);
   const noticeTimerRef = useRef<number | null>(null);
 
-  useEffect(() => {
-    if (!atBottomRef.current) {
+  useLayoutEffect(() => {
+    if (conversationIdRef.current === conversation.id) {
       return;
     }
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-  }, [messages.length, conversation.id]);
+    conversationIdRef.current = conversation.id;
+    initialPositionDoneRef.current = false;
+    lastMessageCountRef.current = 0;
+    atBottomRef.current = true;
+  }, [conversation.id]);
 
   useEffect(
     () => () => {
@@ -136,6 +144,61 @@ export function ChatPanel({
     }
     prependingRef.current = false;
   }, [messages.length]);
+
+  useLayoutEffect(() => {
+    const element = scrollRef.current;
+    if (!element || messagesPending || messagesError) {
+      return;
+    }
+
+    if (!initialPositionDoneRef.current) {
+      if (messages.length === 0) {
+        lastMessageCountRef.current = 0;
+        return;
+      }
+      element.scrollTop = element.scrollHeight;
+      previousScrollHeightRef.current = element.scrollHeight;
+      atBottomRef.current = true;
+      initialPositionDoneRef.current = true;
+      lastMessageCountRef.current = messages.length;
+      return;
+    }
+
+    const grew = messages.length > lastMessageCountRef.current;
+    lastMessageCountRef.current = messages.length;
+
+    if (!grew || loadingOlderRef.current || !atBottomRef.current) {
+      return;
+    }
+
+    element.scrollTop = element.scrollHeight;
+    previousScrollHeightRef.current = element.scrollHeight;
+  }, [conversation.id, messages.length, messagesPending, messagesError]);
+
+  useLayoutEffect(() => {
+    const content = contentRef.current;
+    const element = scrollRef.current;
+    if (!content || !element || typeof ResizeObserver === 'undefined') {
+      return;
+    }
+
+    const observer = new ResizeObserver(() => {
+      if (
+        !initialPositionDoneRef.current ||
+        !atBottomRef.current ||
+        prependingRef.current ||
+        loadingOlderRef.current
+      ) {
+        return;
+      }
+      element.scrollTop = element.scrollHeight;
+      previousScrollHeightRef.current = element.scrollHeight;
+    });
+
+    observer.observe(content);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [hasMessages]);
 
   const handleScroll = (): void => {
     const element = scrollRef.current;
@@ -341,7 +404,7 @@ export function ChatPanel({
             />
           </div>
         ) : (
-          <>
+          <div ref={contentRef}>
             {loadingOlderMessages ? (
               <div className="flex justify-center py-2">
                 <Loader2 className="size-4 animate-spin text-muted-foreground" aria-hidden />
@@ -376,7 +439,7 @@ export function ChatPanel({
                 </Fragment>
               );
             })}
-          </>
+          </div>
         )}
         <div ref={bottomRef} />
         {showJumpToBottom ? (

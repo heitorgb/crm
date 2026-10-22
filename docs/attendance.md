@@ -226,8 +226,11 @@ CRM (sem dependências novas). A tela é **full-bleed**: `MainContent` deixa de 
   não são agrupadas entre si, evitando confundir remetentes diferentes. Reações nunca entram em um
   bloco, para que continuem identificáveis; a rolagem é automática somente quando o
   usuário está no fim do histórico, e um botão flutuante ("Ir para as últimas mensagens") aparece ao
-  navegar por mensagens antigas. URLs no texto (e em legendas de mídia) são exibidas como links
-  clicáveis que abrem em nova aba. Quando a mensagem contém uma URL, o chat exibe também um
+  navegar por mensagens antigas. Ao abrir ou trocar de conversa (individual ou grupo), o histórico
+  carregado é posicionado no fim mesmo depois da renderização de mídias e pré-visualizações; ao
+  carregar páginas antigas, a posição visual do usuário é preservada. URLs no texto (e em legendas
+  de mídia) são exibidas como links clicáveis que abrem em nova aba. Quando a mensagem contém uma
+  URL, o chat exibe também um
   **cartão de pré-visualização** no estilo do WhatsApp Web (imagem, título, descrição e domínio),
   integrado à bolha enviada ou recebida. Previews entregues pela Evolution/WhatsApp em
   `extendedTextMessage` (incluindo `contextInfo.externalAdReply`) são lidos pelo webhook e guardados

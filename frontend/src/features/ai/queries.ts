@@ -1,10 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/stores/auth-store';
 import type {
+  AiProvider,
   AnalyzeSalesOpportunityInput,
   CreateSalesFollowUpInput,
   SuggestSalesReplyInput,
   TestAiConnectionInput,
+  UpdateAiCredentialInput,
   UpdateAiSettingsInput,
   UpdateSalesFollowUpInput,
   UpdateSalesRecommendationInput,
@@ -57,6 +59,29 @@ export function useSaveAiSettings() {
         queryClient.setQueryData(aiKeys.settings(tenantId), settings);
       }
       void queryClient.invalidateQueries({ queryKey: aiKeys.all });
+    },
+  });
+}
+
+export function useSaveAiCredential() {
+  const queryClient = useQueryClient();
+  const tenantId = useAuthStore((state) => state.session?.tenant.id);
+
+  return useMutation({
+    mutationFn: ({
+      provider,
+      input,
+    }: {
+      provider: AiProvider;
+      input: UpdateAiCredentialInput;
+    }) => aiService.saveCredential(provider, input),
+    onSuccess: (settings) => {
+      if (tenantId) {
+        queryClient.setQueryData(aiKeys.settings(tenantId), settings);
+        void queryClient.invalidateQueries({
+          queryKey: aiKeys.transcriptionSettings(tenantId),
+        });
+      }
     },
   });
 }

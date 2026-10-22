@@ -17,3 +17,13 @@ export class ContactPhoneConflictError extends AppException {
     super('CONTACT_PHONE_CONFLICT', 'A contact with this phone already exists', 409);
   }
 }
+
+export class ContactInvalidBirthDateError extends AppException {
+  constructor() {
+    super(
+      'CONTACT_INVALID_BIRTH_DATE',
+      'Data de nascimento inválida. Use o formato YYYY-MM-DD.',
+      400,
+    );
+  }
+}

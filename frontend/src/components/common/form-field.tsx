@@ -23,7 +23,7 @@ export function FormField({
 }: FormFieldProps) {
   return (
     <div className={cn('space-y-1.5', className)}>
-      <Label htmlFor={id} className="flex items-center gap-1">
+      <Label htmlFor={id} className="flex items-center gap-1 text-[13px] font-medium">
         {label}
         {required ? <span className="text-danger">*</span> : null}
       </Label>

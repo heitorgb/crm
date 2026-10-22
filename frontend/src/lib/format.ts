@@ -3,6 +3,14 @@ export function formatDate(value: string | Date): string {
   return new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short' }).format(date);
 }
 
+export function formatDateOnly(value: string): string {
+  const [year, month, day] = value.split('-');
+  if (!year || !month || !day) {
+    return value;
+  }
+  return `${day}/${month}/${year}`;
+}
+
 export function formatDateTime(value: string | Date): string {
   const date = typeof value === 'string' ? new Date(value) : value;
   return new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(date);

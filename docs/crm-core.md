@@ -28,8 +28,11 @@ endpoint aceita `tenantId` do cliente.
 
 Pertence a um `Customer` do mesmo tenant. `UNIQUE (tenantId, phone)`: o telefone é a chave de
 dedupe dentro do tenant (contatos sem telefone não colidem).
-Campos: `name` (obrigatório), `email?`, `phone?`, `position?`, `avatarUrl?`, `isPrimary`,
-timestamps. `avatarUrl` é preenchido pela importação automática da agenda do WhatsApp.
+Campos: `name` (obrigatório), `email?`, `phone?`, `birthDate?`, `address?`, `position?`,
+`avatarUrl?`, `isPrimary`, timestamps. `avatarUrl` é preenchido pela importação automática da agenda
+do WhatsApp. `birthDate` é uma data sem horário (`DATE`) exposta como `YYYY-MM-DD`, evitando
+deslocamento de dia por fuso; `address` é texto livre (até 500 caracteres). Ambos são opcionais e
+compatíveis com contatos anteriores à migration `20261021220000_contact_birth_date_address`.
 Índices: `(tenantId, customerId)` e `(tenantId, createdAt)`.
 
 ### Etiquetas compartilhadas
@@ -109,10 +112,17 @@ idempotente, usado pelos cartões de contato compartilhado no atendimento (ver
 Filtros específicos: `customers?status=&tagId=`, `contacts?customerId=`,
 `qualification-profiles?active=&isDefault=`. Tags ordenam por `name` por padrão.
 
+`GET /api/contacts` também aceita `filter` (`all`, `primary`, `blocked`, `incomplete`),
+`extraFilter` (`with_phone`, `with_email`, `with_birth_date`, `with_address`, `with_customer`) e
+`includeSummary=true`. O filtro `incomplete` considera contatos sem telefone, e-mail, data de
+nascimento ou endereço. Quando solicitado, a resposta inclui `summary` com `total`, `primary`,
+`blocked` e `incomplete` calculados sobre a busca, filtros adicionais e tenant atuais, sem alterar a
+paginação.
+
 ### Erros relevantes
 
 - `CUSTOMER_DOCUMENT_CONFLICT` (409), `CUSTOMER_TAG_NOT_FOUND` (404).
-- `CONTACT_CUSTOMER_NOT_FOUND` (404).
+- `CONTACT_CUSTOMER_NOT_FOUND` (404), `CONTACT_INVALID_BIRTH_DATE` (400).
 - `TAG_NAME_CONFLICT` (409).
 - `QUALIFICATION_PROFILE_NOT_FOUND` (404).
 - Cross-tenant: sempre `404` (leitura/escrita não encontram a linha do outro tenant).

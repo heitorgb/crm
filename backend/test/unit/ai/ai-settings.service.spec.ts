@@ -177,6 +177,61 @@ describe('AiSettingsService', () => {
     expect(update).not.toHaveProperty('openrouterApiKeyEncrypted');
   });
 
+  it('updates a credential without changing the active provider configuration', async () => {
+    const { service, prisma, encryption } = createService();
+    prisma.aiSettings.upsert.mockResolvedValue(
+      row({ deepseekApiKeyEncrypted: 'encrypted:sk-deepseek' }),
+    );
+
+    const view = await service.saveCredential(AiProvider.DEEPSEEK, {
+      apiKey: 'sk-deepseek',
+    });
+
+    expect(encryption.encrypt).toHaveBeenCalledWith('sk-deepseek');
+    const payload = prisma.aiSettings.upsert.mock.calls[0][0] as {
+      update: Record<string, unknown>;
+    };
+    expect(payload.update).toEqual({ deepseekApiKeyEncrypted: 'encrypted:sk-deepseek' });
+    expect(payload.update).not.toHaveProperty('provider');
+    expect(payload.update).not.toHaveProperty('model');
+    expect(payload.update).not.toHaveProperty('formality');
+    expect(view).toMatchObject({
+      provider: AiProvider.OPENAI,
+      configuredProviders: [AiProvider.OPENAI, AiProvider.DEEPSEEK],
+    });
+  });
+
+  it('removes only the requested credential', async () => {
+    const { service, prisma } = createService();
+    prisma.aiSettings.upsert.mockResolvedValue(
+      row({ openaiApiKeyEncrypted: null, deepseekApiKeyEncrypted: 'encrypted:sk-deepseek' }),
+    );
+
+    const view = await service.saveCredential(AiProvider.OPENAI, {
+      clearCredentials: true,
+    });
+
+    const payload = prisma.aiSettings.upsert.mock.calls[0][0] as {
+      update: Record<string, unknown>;
+    };
+    expect(payload.update).toEqual({ openaiApiKeyEncrypted: null });
+    expect(view).toMatchObject({
+      provider: AiProvider.OPENAI,
+      hasCredentials: false,
+      available: false,
+      configuredProviders: [AiProvider.DEEPSEEK],
+    });
+  });
+
+  it('does not change the stored credential when the request is empty', async () => {
+    const { service, prisma } = createService();
+    prisma.aiSettings.findUnique.mockResolvedValue(row());
+
+    await service.saveCredential(AiProvider.OPENAI, {});
+
+    expect(prisma.aiSettings.upsert).not.toHaveBeenCalled();
+  });
+
   it('decrypts only the credential of the configured provider for execution', async () => {
     const { service, prisma } = createService();
     prisma.aiSettings.findUnique.mockResolvedValue(

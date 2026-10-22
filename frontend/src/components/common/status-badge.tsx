@@ -24,7 +24,7 @@ interface StatusBadgeProps {
 
 export function StatusBadge({ tone = 'secondary', children, className, withDot = true }: StatusBadgeProps) {
   return (
-    <Badge variant={tone} className={cn('gap-1.5', className)}>
+    <Badge variant={tone} className={cn('gap-1.5 whitespace-nowrap', className)}>
       {withDot ? <span className={cn('size-1.5 rounded-full', toneDot[tone])} aria-hidden /> : null}
       {children}
     </Badge>

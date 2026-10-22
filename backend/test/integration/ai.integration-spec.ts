@@ -88,6 +88,27 @@ describe('AI settings and formalization (integration)', () => {
     });
   }
 
+  function saveCredential(
+    tenant: SeededTenant,
+    provider: AiProvider,
+    payload: Record<string, unknown>,
+  ) {
+    return app.inject({
+      method: 'PUT',
+      url: `/api/ai/credentials/${provider}`,
+      headers: authHeaders(tenant),
+      payload,
+    });
+  }
+
+  function getTranscriptionSettings(tenant: SeededTenant) {
+    return app.inject({
+      method: 'GET',
+      url: '/api/ai/transcription/settings',
+      headers: authHeaders(tenant),
+    });
+  }
+
   function getSettings(tenant: SeededTenant) {
     return app.inject({
       method: 'GET',
@@ -137,6 +158,69 @@ describe('AI settings and formalization (integration)', () => {
     });
     expect(row.openaiApiKeyEncrypted).not.toBe(secret);
     expect(app.get(EncryptionService).decrypt(row.openaiApiKeyEncrypted as string)).toBe(secret);
+  });
+
+  it('manages credentials independently without changing the copilot configuration', async () => {
+    const openAiSecret = 'sk-owner-openai-shared';
+    await saveSettings(ownerA, {
+      provider: 'OPENAI',
+      model: 'gpt-6-luna',
+      formality: 'FORMAL',
+      apiKey: openAiSecret,
+    });
+
+    const deepSeekSecret = 'sk-owner-deepseek-independent';
+    const saved = await saveCredential(ownerA, AiProvider.DEEPSEEK, {
+      apiKey: deepSeekSecret,
+    });
+
+    expect(saved.statusCode).toBe(200);
+    expect(saved.json()).toMatchObject({
+      provider: 'OPENAI',
+      model: 'gpt-6-luna',
+      formality: 'FORMAL',
+      hasCredentials: true,
+      available: true,
+      configuredProviders: ['OPENAI', 'DEEPSEEK'],
+    });
+    expect(saved.body).not.toContain(deepSeekSecret);
+
+    const shared = await getTranscriptionSettings(ownerA);
+    expect(shared.json()).toMatchObject({
+      hasCredentials: true,
+      credentialProvider: 'OPENAI',
+    });
+
+    const removed = await saveCredential(ownerA, AiProvider.OPENAI, {
+      clearCredentials: true,
+    });
+    expect(removed.statusCode).toBe(200);
+    expect(removed.json()).toMatchObject({
+      provider: 'OPENAI',
+      hasCredentials: false,
+      available: false,
+      configuredProviders: ['DEEPSEEK'],
+    });
+
+    const row = await prisma.aiSettings.findUniqueOrThrow({
+      where: { tenantId: ownerA.tenantId },
+    });
+    expect(row.openaiApiKeyEncrypted).toBeNull();
+    expect(row.deepseekApiKeyEncrypted).not.toBeNull();
+
+    const transcriptionAfter = await getTranscriptionSettings(ownerA);
+    expect(transcriptionAfter.json()).toMatchObject({
+      hasCredentials: false,
+      credentialProvider: 'OPENAI',
+    });
+  });
+
+  it('restricts credential changes to owners and admins', async () => {
+    const result = await saveCredential(userA, AiProvider.OPENAI, {
+      apiKey: 'sk-user-forbidden',
+    });
+
+    expect(result.statusCode).toBe(403);
   });
 
   it('keeps settings and credentials isolated between tenants', async () => {

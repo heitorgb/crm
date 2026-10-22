@@ -6,10 +6,22 @@ import { Dialog, DialogContent, DialogTrigger } from '@/components/ui/dialog';
 import { apiRequestBlob } from '@/lib/api-client';
 import type { ConversationMessage } from '@/types/attendance';
 import { attachmentPath } from './services/attendance-service';
-import { mediaErrorLabel } from './media-message-utils';
+import { isVideoMessage, mediaErrorLabel } from './media-message-utils';
 import { useAttachmentBlob } from './queries';
 import { AudioPlayer } from './audio-player';
 import { MessageTranscription } from './message-transcription';
+import { VideoPlayer } from './video-player';
+
+function downloadBlob(blob: Blob, fileName: string): void {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = fileName;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
 
 function useObjectUrl(blob: Blob | undefined): string | null {
   const [url, setUrl] = useState<string | null>(null);
@@ -65,7 +77,11 @@ export function MessageMedia({ conversationId, message }: MediaProps) {
     case 'AUDIO':
       return <MessageAudio conversationId={conversationId} message={message} />;
     default:
-      return <MessageFile conversationId={conversationId} message={message} />;
+      return isVideoMessage(message) ? (
+        <MessageVideo conversationId={conversationId} message={message} />
+      ) : (
+        <MessageFile conversationId={conversationId} message={message} />
+      );
   }
 }
 
@@ -176,6 +192,72 @@ function MessageAudio({ conversationId, message }: MediaProps) {
   );
 }
 
+function MessageVideo({ conversationId, message }: MediaProps) {
+  const attachment = message.attachments[0];
+  const [requested, setRequested] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const [downloadFailed, setDownloadFailed] = useState(false);
+
+  const thumbnailQuery = useAttachmentBlob({
+    conversationId,
+    messageId: message.id,
+    attachmentId: attachment.id,
+    variant: 'thumb',
+    enabled: attachment.hasThumbnail,
+    retry: false,
+  });
+  const posterUrl = useObjectUrl(thumbnailQuery.data);
+
+  const videoQuery = useAttachmentBlob({
+    conversationId,
+    messageId: message.id,
+    attachmentId: attachment.id,
+    variant: 'main',
+    enabled: requested,
+    gcTime: 0,
+    retry: false,
+  });
+  const videoUrl = useObjectUrl(videoQuery.data);
+
+  const handleDownload = async (): Promise<void> => {
+    if (downloading) return;
+    setDownloading(true);
+    setDownloadFailed(false);
+    try {
+      const blob =
+        videoQuery.data ??
+        (await apiRequestBlob(
+          attachmentPath(conversationId, message.id, attachment.id, 'main'),
+        ));
+      downloadBlob(blob, attachment.fileName);
+    } catch {
+      setDownloadFailed(true);
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  return (
+    <div className="min-w-0">
+      <VideoPlayer
+        src={videoUrl}
+        posterUrl={posterUrl}
+        fileName={attachment.fileName}
+        loading={requested && videoQuery.isPending}
+        unavailable={requested && videoQuery.isError}
+        downloading={downloading}
+        onPlay={() => setRequested(true)}
+        onDownload={() => void handleDownload()}
+      />
+      {downloadFailed ? (
+        <p role="alert" className="mt-1 text-xs">
+          Não foi possível baixar o vídeo.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 function MessageFile({ conversationId, message }: MediaProps) {
   const attachment = message.attachments[0];
   const [downloading, setDownloading] = useState(false);
@@ -186,14 +268,7 @@ function MessageFile({ conversationId, message }: MediaProps) {
       const blob = await apiRequestBlob(
         attachmentPath(conversationId, message.id, attachment.id, 'main'),
       );
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = attachment.fileName;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      URL.revokeObjectURL(url);
+      downloadBlob(blob, attachment.fileName);
     } finally {
       setDownloading(false);
     }

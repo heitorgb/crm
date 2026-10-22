@@ -282,6 +282,8 @@ export function useAttachmentBlob(params: {
   attachmentId: string;
   variant: 'main' | 'thumb';
   enabled?: boolean;
+  gcTime?: number;
+  retry?: boolean | number;
 }) {
   return useQuery({
     queryKey: attendanceKeys.attachment(
@@ -301,7 +303,8 @@ export function useAttachmentBlob(params: {
       ),
     enabled: params.enabled ?? true,
     staleTime: Infinity,
-    gcTime: Infinity,
+    gcTime: params.gcTime ?? Infinity,
+    retry: params.retry,
   });
 }
 

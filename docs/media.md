@@ -42,6 +42,29 @@ Não-imagens (áudio/vídeo/documento) são armazenadas como recebidas, respeita
   o formato do WhatsApp por padrão). Durante a gravação há timer e opção de cancelar (descarta).
 - MIME com parâmetros (ex.: `audio/ogg; codecs=opus`) é normalizado para definir a extensão.
 
+### Vídeos
+
+- **Receber/enviar:** mensagens `videoMessage` são armazenadas como recebidas e renderizadas com um
+  player integrado ao balão. Documentos cujo MIME seja `video/*` também usam o player; os demais
+  documentos continuam com o cartão de download atual.
+- **Reprodução:** o player usa `<video>` nativo (`controls`, `playsInline`) com proporção reservada
+  em 16:9 para não deslocar o scroll ao abrir. A reprodução só começa após o operador clicar no
+  botão de play; não há autoplay ao abrir a conversa.
+- **Carregamento sob demanda:** o arquivo principal só é buscado quando o operador solicita a
+  reprodução. Até lá, a conversa mostra uma prévia neutra (ou a thumbnail, quando o anexo tiver uma).
+  O blob é convertido em object URL temporária e liberado ao desmontar o componente ou trocar de
+  conversa.
+- **Prévia:** o pipeline atual gera thumbnail somente para imagens; vídeos exibem a prévia neutra
+  com botão de reprodução até que exista geração de poster no backend.
+- **Baixar vídeo:** botão discreto sobre o player, disponível durante a prévia, a reprodução e o
+  fallback de erro. Usa a mesma rota autenticada e preserva o nome do anexo.
+- **Erros:** falha de leitura, permissão, URL expirada, arquivo removido ou codec não suportado
+  exibem um estado discreto com a opção de download, sem quebrar a conversa.
+- **Streaming:** a rota de anexos responde o arquivo inteiro (sem `Range`/`206`) e exige o token
+  no header. Por isso o player carrega o blob autenticado antes de reproduzir; reprodução
+  progressiva real exigiria uma rota de mídia com `Range` e autenticação compatível com o elemento
+  `<video>`.
+
 ### Figurinhas
 
 - **Receber:** `stickerMessage` vira `MessageType.STICKER`. O WebP é **preservado sem conversão**
@@ -131,3 +154,5 @@ seguida o operador seleciona conversas (contatos/grupos) e dispara o batch.
 - Retenção/expurgo de mídia (a rotina de LGPD saiu com o módulo de Compliance).
 - Upload de vídeo/documento pela UI (hoje a UI envia imagens e áudio; documentos/vídeos continuam
   recebidos e baixáveis).
+- Geração de thumbnail/poster de vídeo no backend e rota de mídia com suporte a `Range` para
+  reprodução progressiva.

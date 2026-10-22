@@ -104,10 +104,6 @@ export function LoginShowcase() {
           </div>
         </div>
 
-        <div className="hidden items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 text-[11px] text-[var(--auth-muted-strong)] sm:flex">
-          <span className="size-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.9)]" />
-          Plataforma segura
-        </div>
       </header>
 
       <div className="relative flex flex-1 flex-col justify-center py-12">
@@ -149,12 +145,8 @@ export function LoginShowcase() {
 
       <PreviewCards />
 
-      <footer className="relative flex items-center justify-between gap-4 border-t border-white/[0.06] pt-5 text-[11px] text-[var(--auth-muted)]">
+      <footer className="relative flex items-center gap-4 border-t border-white/[0.06] pt-5 text-[11px] text-[var(--auth-muted)]">
         <span>© {new Date().getFullYear()} OrderUp CRM</span>
-        <span className="flex items-center gap-1.5">
-          <ShieldCheck className="size-3.5 text-emerald-400/80" />
-          Dados isolados por organização
-        </span>
       </footer>
     </section>
   );

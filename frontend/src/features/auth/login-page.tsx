@@ -16,6 +16,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useLogin } from '@/features/auth/queries';
 import { ApiError } from '@/lib/api-client';
+import { storePasswordCredential } from '@/lib/password-credentials';
 import { cn } from '@/lib/utils';
 import { LoginShowcase } from './login-showcase';
 import {
@@ -25,30 +26,16 @@ import {
   authSubmitClasses,
 } from './auth-styles';
 
-const REMEMBER_PASSWORD_KEY = 'orderup.remember-password';
-
-function readRememberPassword(): boolean {
-  try {
-    return window.localStorage.getItem(REMEMBER_PASSWORD_KEY) === 'true';
-  } catch {
-    return false;
-  }
-}
-
-function writeRememberPassword(value: boolean): void {
-  try {
-    window.localStorage.setItem(REMEMBER_PASSWORD_KEY, String(value));
-  } catch {
-    return;
-  }
-}
-
 export function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [passwordVisible, setPasswordVisible] = useState(false);
-  const [rememberPassword, setRememberPassword] = useState(readRememberPassword);
-  const login = useLogin();
+  const [rememberPassword, setRememberPassword] = useState(false);
+  const login = useLogin((input) => {
+    if (rememberPassword) {
+      void storePasswordCredential(input.email, input.password);
+    }
+  });
 
   const errorMessage =
     login.error instanceof ApiError
@@ -65,13 +52,12 @@ export function LoginPage() {
   return (
     <div className="auth-screen relative min-h-dvh overflow-hidden">
       <div className="auth-canvas pointer-events-none absolute inset-0" aria-hidden="true" />
+      <div className="auth-panel-glow pointer-events-none absolute inset-0" aria-hidden="true" />
 
       <div className="relative mx-auto grid min-h-dvh w-full max-w-[1680px] lg:grid-cols-[minmax(0,1.08fr)_minmax(0,0.92fr)]">
         <LoginShowcase />
 
         <main className="relative flex min-h-dvh flex-col justify-center px-4 pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-[max(1.5rem,env(safe-area-inset-top))] sm:px-6 lg:px-10 lg:py-12 xl:px-16">
-          <div className="auth-panel-glow pointer-events-none absolute inset-0" aria-hidden="true" />
-
           <div className="relative mx-auto flex w-full max-w-[26rem] flex-col">
             <div className="mb-8 flex items-center gap-3 lg:hidden">
               <img
@@ -83,11 +69,6 @@ export function LoginPage() {
                 <p className="text-base font-semibold tracking-tight">OrderUp CRM</p>
                 <p className="text-xs text-[var(--auth-muted)]">Atendimento omnichannel</p>
               </div>
-            </div>
-
-            <div className="mb-5 hidden items-center gap-2 text-[11px] font-medium uppercase tracking-[0.18em] text-[var(--auth-muted)] lg:flex">
-              <ShieldCheck className="size-3.5 text-emerald-400/80" />
-              Acesso seguro
             </div>
 
             <div className="auth-form-surface rounded-2xl p-6 sm:p-8">
@@ -107,6 +88,8 @@ export function LoginPage() {
               <form
                 id="login-form"
                 name="login"
+                method="post"
+                action="/api/auth/login"
                 autoComplete="on"
                 className="mt-7 space-y-5"
                 onSubmit={handleSubmit}
@@ -191,10 +174,7 @@ export function LoginPage() {
                         name="remember-password"
                         type="checkbox"
                         checked={rememberPassword}
-                        onChange={(event) => {
-                          setRememberPassword(event.target.checked);
-                          writeRememberPassword(event.target.checked);
-                        }}
+                        onChange={(event) => setRememberPassword(event.target.checked)}
                         disabled={login.isPending}
                         className="size-4 shrink-0 cursor-pointer rounded border border-white/20 bg-white/[0.04] accent-emerald-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/40 focus-visible:ring-offset-0 disabled:cursor-not-allowed disabled:opacity-60"
                       />

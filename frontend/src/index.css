@@ -15,8 +15,8 @@
     --popover: 0 0% 100%;
     --popover-foreground: 226 49% 8%;
 
-    --border: 226 30% 91%;
-    --input: 226 30% 88%;
+    --border: 226 28% 90%;
+    --input: 226 28% 87%;
     --ring: 142 71% 45%;
 
     --muted: 228 30% 95%;
@@ -25,6 +25,7 @@
     --primary: 142 71% 45%;
     --primary-foreground: 144 65% 6%;
     --brand-primary-hover: 142 76% 36%;
+    --brand-primary-strong: 142 72% 34%;
     --brand-primary-light: 141 84% 93%;
 
     --secondary: 228 28% 94%;
@@ -46,37 +47,38 @@
     --sidebar-accent: 142 55% 95%;
     --sidebar-border: 226 30% 91%;
 
-    --radius-sm: 8px;
-    --radius-md: 10px;
-    --radius-lg: 14px;
-    --radius-xl: 18px;
+    --radius-sm: 6px;
+    --radius-md: 8px;
+    --radius-lg: 16px;
+    --radius-xl: 20px;
   }
 
   .dark {
-    --background: 225 44% 5%;
-    --foreground: 230 32% 93%;
+    --background: 230 20% 6%;
+    --foreground: 220 30% 96%;
 
-    --surface: 226 49% 8%;
-    --surface-hover: 225 40% 13%;
-    --card: 226 45% 8%;
-    --card-foreground: 230 32% 93%;
-    --popover: 226 49% 9%;
-    --popover-foreground: 230 32% 93%;
+    --surface: 224 23% 11%;
+    --surface-hover: 224 20% 16%;
+    --card: 224 23% 11%;
+    --card-foreground: 220 30% 96%;
+    --popover: 224 23% 12%;
+    --popover-foreground: 220 30% 96%;
 
-    --border: 225 28% 17%;
-    --input: 225 28% 20%;
+    --border: 225 18% 17%;
+    --input: 225 18% 21%;
     --ring: 142 71% 45%;
 
-    --muted: 225 35% 13%;
-    --muted-foreground: 228 14% 62%;
+    --muted: 224 20% 15%;
+    --muted-foreground: 220 17% 65%;
 
     --primary: 142 71% 45%;
     --primary-foreground: 144 65% 6%;
     --brand-primary-hover: 142 66% 58%;
+    --brand-primary-strong: 142 72% 30%;
     --brand-primary-light: 142 45% 16%;
 
-    --secondary: 225 30% 15%;
-    --secondary-foreground: 230 32% 93%;
+    --secondary: 224 20% 16%;
+    --secondary-foreground: 220 30% 96%;
     --accent: 189 90% 46%;
     --accent-foreground: 225 44% 6%;
 
@@ -89,10 +91,10 @@
     --info: 189 90% 50%;
     --info-foreground: 225 44% 6%;
 
-    --sidebar: 226 49% 7%;
-    --sidebar-foreground: 230 28% 84%;
-    --sidebar-accent: 225 40% 14%;
-    --sidebar-border: 225 28% 15%;
+    --sidebar: 228 19% 7%;
+    --sidebar-foreground: 220 24% 86%;
+    --sidebar-accent: 224 20% 15%;
+    --sidebar-border: 225 18% 16%;
   }
 
   * {
@@ -128,6 +130,25 @@
 
   .brand-gradient-text {
     @apply brand-gradient bg-clip-text text-transparent;
+  }
+
+  .brand-button {
+    background-image: linear-gradient(
+      180deg,
+      hsl(var(--primary)) 0%,
+      hsl(var(--brand-primary-strong)) 100%
+    );
+    box-shadow:
+      inset 0 1px 0 0 rgb(255 255 255 / 0.22),
+      0 8px 20px -14px hsl(var(--primary) / 0.8);
+  }
+
+  .brand-button:hover:not(:disabled) {
+    filter: brightness(1.04);
+  }
+
+  .brand-button:active:not(:disabled) {
+    filter: brightness(0.97);
   }
 
   .chat-wallpaper {
@@ -172,7 +193,7 @@
 
   .auth-panel-glow {
     background-image: radial-gradient(
-      ellipse 75% 55% at 70% 0%,
+      ellipse min(34.5vw, 580px) 55% at calc(50% + min(36.2vw, 608px)) 0%,
       rgba(34, 197, 94, 0.09),
       transparent 68%
     );

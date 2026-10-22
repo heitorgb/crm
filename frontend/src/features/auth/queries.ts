@@ -17,7 +17,7 @@ export const authKeys = {
   me: ['auth', 'me'] as const,
 };
 
-export function useLogin() {
+export function useLogin(onAuthenticated?: (input: LoginInput) => void) {
   const setSession = useAuthStore((state) => state.setSession);
   const setMemberships = useAuthStore((state) => state.setMemberships);
   const setPlatformAdmin = useAuthStore((state) => state.setPlatformAdmin);
@@ -25,7 +25,7 @@ export function useLogin() {
 
   return useMutation({
     mutationFn: (input: LoginInput) => authService.login(input),
-    onSuccess: async (session) => {
+    onSuccess: async (session, input) => {
       setSession(toSession(session));
 
       try {
@@ -37,6 +37,7 @@ export function useLogin() {
         setPlatformAdmin(false);
       }
 
+      onAuthenticated?.(input);
       navigate('/atendimento/conversas', { replace: true });
     },
   });

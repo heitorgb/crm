@@ -116,6 +116,141 @@ describe('Contacts (integration)', () => {
     });
   });
 
+  describe('birth date and address', () => {
+    it('persists and returns the new profile fields as optional data', async () => {
+      const created = await createContact(ownerA, {
+        customerId: customerA,
+        name: 'Maria Silva',
+        birthDate: '1990-02-28',
+        address: 'Rua das Flores, 123, Centro, São Paulo/SP, 01000-000',
+      });
+
+      expect(created.statusCode).toBe(201);
+      expect(created.json()).toMatchObject({
+        birthDate: '1990-02-28',
+        address: 'Rua das Flores, 123, Centro, São Paulo/SP, 01000-000',
+      });
+
+      const detail = await app.inject({
+        method: 'GET',
+        url: `/api/contacts/${created.json().id}`,
+        headers: authHeaders(ownerA),
+      });
+      expect(detail.statusCode).toBe(200);
+      expect(detail.json()).toMatchObject({
+        birthDate: '1990-02-28',
+        address: 'Rua das Flores, 123, Centro, São Paulo/SP, 01000-000',
+      });
+    });
+
+    it('creates contacts without the new fields and clears them on update', async () => {
+      const created = await createContact(ownerA, { name: 'Sem dados extras' });
+      expect(created.statusCode).toBe(201);
+      expect(created.json().birthDate).toBeNull();
+      expect(created.json().address).toBeNull();
+
+      const id = created.json().id as string;
+      const filled = await app.inject({
+        method: 'PATCH',
+        url: `/api/contacts/${id}`,
+        headers: authHeaders(ownerA),
+        payload: { birthDate: '1985-12-31', address: 'Avenida Brasil, 10' },
+      });
+      expect(filled.statusCode).toBe(200);
+      expect(filled.json()).toMatchObject({
+        birthDate: '1985-12-31',
+        address: 'Avenida Brasil, 10',
+      });
+
+      const cleared = await app.inject({
+        method: 'PATCH',
+        url: `/api/contacts/${id}`,
+        headers: authHeaders(ownerA),
+        payload: { birthDate: null, address: null },
+      });
+      expect(cleared.statusCode).toBe(200);
+      expect(cleared.json().birthDate).toBeNull();
+      expect(cleared.json().address).toBeNull();
+    });
+
+    it('preserves the new fields when other data is updated', async () => {
+      const created = await createContact(ownerA, {
+        name: 'Campos preservados',
+        birthDate: '2000-01-15',
+        address: 'Rua A, 1',
+      });
+      const id = created.json().id as string;
+
+      const updated = await app.inject({
+        method: 'PATCH',
+        url: `/api/contacts/${id}`,
+        headers: authHeaders(ownerA),
+        payload: { position: 'Gerente' },
+      });
+
+      expect(updated.statusCode).toBe(200);
+      expect(updated.json()).toMatchObject({
+        position: 'Gerente',
+        birthDate: '2000-01-15',
+        address: 'Rua A, 1',
+      });
+    });
+
+    it('rejects invalid birth dates', async () => {
+      for (const birthDate of ['31/12/1990', '1990-02-31', 'not-a-date']) {
+        const response = await createContact(ownerA, { name: 'Data inválida', birthDate });
+        expect(response.statusCode).toBe(400);
+      }
+    });
+
+    it('keeps legacy contacts without the new fields editable', async () => {
+      const legacy = await prisma.contact.create({
+        data: { tenantId: ownerA.tenantId, name: 'Contato legado' },
+      });
+
+      const detail = await app.inject({
+        method: 'GET',
+        url: `/api/contacts/${legacy.id}`,
+        headers: authHeaders(ownerA),
+      });
+      expect(detail.statusCode).toBe(200);
+      expect(detail.json()).toMatchObject({ birthDate: null, address: null });
+
+      const updated = await app.inject({
+        method: 'PATCH',
+        url: `/api/contacts/${legacy.id}`,
+        headers: authHeaders(ownerA),
+        payload: { name: 'Contato legado editado' },
+      });
+      expect(updated.statusCode).toBe(200);
+      expect(updated.json()).toMatchObject({
+        name: 'Contato legado editado',
+        birthDate: null,
+        address: null,
+      });
+    });
+
+    it('includes the new fields in the customer contacts response', async () => {
+      await createContact(ownerA, {
+        customerId: customerA,
+        name: 'Contato do cliente',
+        birthDate: '1992-06-10',
+        address: 'Rua B, 20',
+      });
+
+      const detail = await app.inject({
+        method: 'GET',
+        url: `/api/customers/${customerA}`,
+        headers: authHeaders(ownerA),
+      });
+      expect(detail.statusCode).toBe(200);
+      expect(detail.json().contacts[0]).toMatchObject({
+        birthDate: '1992-06-10',
+        address: 'Rua B, 20',
+      });
+    });
+  });
+
   describe('blocking', () => {
     it('defaults new contacts to unblocked', async () => {
       const created = await createContact(ownerA, { name: 'Normal' });
@@ -195,6 +330,153 @@ describe('Contacts (integration)', () => {
 
       const createdB = await createContact(ownerB, { name: 'B', phone: '5511911113333' });
       expect(createdB.statusCode).toBe(201);
+    });
+  });
+
+  describe('list filters and summary', () => {
+    beforeEach(async () => {
+      await createContact(ownerA, {
+        name: 'Principal completa',
+        phone: '5511900000001',
+        email: 'principal@example.com',
+        birthDate: '1990-01-01',
+        address: 'Rua A, 1',
+        isPrimary: true,
+      });
+      await createContact(ownerA, {
+        name: 'Bloqueada incompleta',
+        phone: '5511900000002',
+        isBlocked: true,
+      });
+      await createContact(ownerA, {
+        name: 'Completa secundária',
+        phone: '5511900000003',
+        email: 'secundaria@example.com',
+        birthDate: '1991-02-02',
+        address: 'Rua B, 2',
+      });
+    });
+
+    it('filters contacts by primary, blocked and incomplete data', async () => {
+      const primary = await app.inject({
+        method: 'GET',
+        url: '/api/contacts?filter=primary',
+        headers: authHeaders(ownerA),
+      });
+      expect(primary.statusCode).toBe(200);
+      expect(primary.json().data.map((item: { name: string }) => item.name)).toEqual([
+        'Principal completa',
+      ]);
+
+      const blocked = await app.inject({
+        method: 'GET',
+        url: '/api/contacts?filter=blocked',
+        headers: authHeaders(ownerA),
+      });
+      expect(blocked.json().data.map((item: { name: string }) => item.name)).toEqual([
+        'Bloqueada incompleta',
+      ]);
+
+      const incomplete = await app.inject({
+        method: 'GET',
+        url: '/api/contacts?filter=incomplete',
+        headers: authHeaders(ownerA),
+      });
+      expect(incomplete.json().data.map((item: { name: string }) => item.name)).toEqual([
+        'Bloqueada incompleta',
+      ]);
+    });
+
+    it('applies the extra filters used by the compact menu', async () => {
+      const withEmail = await app.inject({
+        method: 'GET',
+        url: '/api/contacts?extraFilter=with_email',
+        headers: authHeaders(ownerA),
+      });
+      expect(withEmail.statusCode).toBe(200);
+      expect(withEmail.json().data).toHaveLength(2);
+      expect(
+        withEmail.json().data.every((item: { email: string | null }) => item.email !== null),
+      ).toBe(true);
+
+      const withCustomer = await app.inject({
+        method: 'GET',
+        url: '/api/contacts?extraFilter=with_customer',
+        headers: authHeaders(ownerA),
+      });
+      expect(withCustomer.json().data).toHaveLength(0);
+
+      const summary = await app.inject({
+        method: 'GET',
+        url: '/api/contacts?extraFilter=with_email&includeSummary=true',
+        headers: authHeaders(ownerA),
+      });
+      expect(summary.json().summary).toEqual({
+        total: 2,
+        primary: 1,
+        blocked: 0,
+        incomplete: 0,
+      });
+    });
+
+    it('combines search with the quick filters', async () => {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/contacts?search=Bloqueada&filter=incomplete',
+        headers: authHeaders(ownerA),
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json().data).toHaveLength(1);
+      expect(response.json().data[0].name).toBe('Bloqueada incompleta');
+    });
+
+    it('returns summary counts for the current search and tenant', async () => {
+      const all = await app.inject({
+        method: 'GET',
+        url: '/api/contacts?includeSummary=true',
+        headers: authHeaders(ownerA),
+      });
+      expect(all.statusCode).toBe(200);
+      expect(all.json().summary).toEqual({
+        total: 3,
+        primary: 1,
+        blocked: 1,
+        incomplete: 1,
+      });
+
+      const filtered = await app.inject({
+        method: 'GET',
+        url: '/api/contacts?filter=blocked&includeSummary=true',
+        headers: authHeaders(ownerA),
+      });
+      expect(filtered.json().meta.total).toBe(1);
+      expect(filtered.json().summary).toEqual(all.json().summary);
+
+      const searched = await app.inject({
+        method: 'GET',
+        url: '/api/contacts?search=Principal&includeSummary=true',
+        headers: authHeaders(ownerA),
+      });
+      expect(searched.json().meta.total).toBe(1);
+      expect(searched.json().summary).toMatchObject({
+        total: 1,
+        primary: 1,
+        blocked: 0,
+        incomplete: 0,
+      });
+
+      const otherTenant = await app.inject({
+        method: 'GET',
+        url: '/api/contacts?includeSummary=true',
+        headers: authHeaders(ownerB),
+      });
+      expect(otherTenant.json().summary).toEqual({
+        total: 0,
+        primary: 0,
+        blocked: 0,
+        incomplete: 0,
+      });
     });
   });
 

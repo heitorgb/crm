@@ -20,6 +20,8 @@ export interface CustomerContact {
   name: string;
   email: string | null;
   phone: string | null;
+  birthDate: string | null;
+  address: string | null;
   position: string | null;
   isPrimary: boolean;
   isBlocked: boolean;
@@ -42,6 +44,26 @@ export interface CustomerDetail extends Omit<Customer, 'contactCount'> {
   contacts: CustomerContact[];
 }
 
+export type ContactFilter = 'all' | 'primary' | 'blocked' | 'incomplete';
+
+export type ContactExtraFilter =
+  | 'with_phone'
+  | 'with_email'
+  | 'with_birth_date'
+  | 'with_address'
+  | 'with_customer';
+
+export interface ContactSummary {
+  total: number;
+  primary: number;
+  blocked: number;
+  incomplete: number;
+}
+
+export interface ContactListResult extends PageResult<Contact> {
+  summary?: ContactSummary;
+}
+
 export interface Contact {
   id: string;
   customerId: string | null;
@@ -49,6 +71,8 @@ export interface Contact {
   name: string;
   email: string | null;
   phone: string | null;
+  birthDate: string | null;
+  address: string | null;
   position: string | null;
   avatarUrl: string | null;
   isPrimary: boolean;
@@ -81,6 +105,8 @@ export interface ContactInput {
   name: string;
   email?: string | null;
   phone?: string | null;
+  birthDate?: string | null;
+  address?: string | null;
   position?: string | null;
   isPrimary?: boolean;
   isBlocked?: boolean;

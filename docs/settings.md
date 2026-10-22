@@ -102,9 +102,10 @@ operações pelo tenant do contexto. Fluxo completo em [`custom-menu.md`](./cust
 ### IA
 
 Configuração de provedor, modelo, credenciais e nível de formalidade para o botão de IA no
-compositor do atendimento. A credencial é criptografada e nunca retornada pela API. O botão de
-formalização só aparece quando a configuração do tenant está ativa e completa. Fluxo completo,
-provedores, modelos e endpoints em [`ai.md`](./ai.md).
+compositor do atendimento, organizada nas sub-abas **Copiloto IA**, **Transcrição** e
+**Credenciais**. A credencial é criptografada e nunca retornada pela API. O botão de formalização só
+aparece quando a configuração do tenant está ativa e completa. Fluxo completo, provedores, modelos e
+endpoints em [`ai.md`](./ai.md).
 
 ### WhatsApp
 

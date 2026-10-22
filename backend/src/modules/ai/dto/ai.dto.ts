@@ -51,6 +51,18 @@ export class UpdateAiSettingsDto {
   clearCredentials?: boolean;
 }
 
+export class UpdateAiCredentialDto {
+  @IsOptional()
+  @Transform(({ value }) => trimmedOrUndefined(value))
+  @IsString()
+  @MaxLength(1024)
+  apiKey?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  clearCredentials?: boolean;
+}
+
 export class TestAiConnectionDto {
   @IsEnum(AiProvider)
   provider!: AiProvider;

@@ -129,4 +129,5 @@ liveness/readiness; não usa `@nestjs/terminus` nesta fase.
 - Telas de CRM no frontend (Leads, Funil, Negócios, Clientes, Conversas) sobre a fundação já criada.
 
 > A identidade visual do frontend é derivada de https://orderup.com.br/ (tokens, tipografia e logo
-> oficiais). Ver [`frontend.md`](./frontend.md).
+> oficiais), harmonizada com a tela de login. Ver [`design.md`](./design.md) e
+> [`frontend.md`](./frontend.md).

@@ -28,6 +28,7 @@ Contatos (histórico de conversas por contato)
 - [docs/custom-menu.md](./docs/custom-menu.md) — grupos e atalhos externos no menu personalizado.
 - [docs/development.md](./docs/development.md) — como rodar, testar e validar.
 - [docs/frontend.md](./docs/frontend.md) — frontend e design system.
+- [docs/design.md](./docs/design.md) — identidade visual, tokens e diretrizes de UI.
 - [docs/deploy.md](./docs/deploy.md) — deploy contínuo (GitHub Actions + Docker Compose).
 - [docs/hardening.md](./docs/hardening.md) — auditoria de segurança/performance.
 - [docs/auditoria-mvp.md](./docs/auditoria-mvp.md) — auditoria do CRM e definição do MVP.

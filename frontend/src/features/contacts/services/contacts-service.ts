@@ -1,6 +1,12 @@
 import { apiRequest } from '@/lib/api-client';
 import { toQueryString } from '@/lib/query-params';
-import type { Contact, ContactInput, PageResult } from '@/types/crm';
+import type {
+  Contact,
+  ContactExtraFilter,
+  ContactFilter,
+  ContactInput,
+  ContactListResult,
+} from '@/types/crm';
 
 export interface ListContactsParams {
   page?: number;
@@ -9,11 +15,14 @@ export interface ListContactsParams {
   customerId?: string;
   sort?: string;
   order?: 'asc' | 'desc';
+  filter?: ContactFilter;
+  extraFilter?: ContactExtraFilter;
+  includeSummary?: boolean;
 }
 
 export const contactsService = {
   list: (params: ListContactsParams) =>
-    apiRequest<PageResult<Contact>>(
+    apiRequest<ContactListResult>(
       `/contacts${toQueryString({
         page: params.page,
         perPage: params.perPage,
@@ -21,6 +30,9 @@ export const contactsService = {
         customerId: params.customerId,
         sort: params.sort,
         order: params.order,
+        filter: params.filter,
+        extraFilter: params.extraFilter,
+        includeSummary: params.includeSummary,
       })}`,
     ),
 

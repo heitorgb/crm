@@ -26,6 +26,16 @@ export function isMediaMessage(message: ConversationMessage): boolean {
   return MEDIA_TYPES.includes(message.type);
 }
 
+export function isVideoMessage(message: ConversationMessage): boolean {
+  if (message.type === 'VIDEO') {
+    return true;
+  }
+  if (message.type !== 'DOCUMENT' && message.type !== 'UNKNOWN') {
+    return false;
+  }
+  return message.attachments[0]?.mimeType.toLowerCase().startsWith('video/') ?? false;
+}
+
 /**
  * A view-once message is received through the view-once envelope. WhatsApp does
  * not let the CRM open or download its content, so it is never treated as

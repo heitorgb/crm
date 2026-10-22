@@ -252,6 +252,19 @@ describe('Sidebar', () => {
     expect(stored.expandedNavGroups).toMatchObject({ crm: false, atendimento: true });
   });
 
+  it('renders the group rail only while the group is expanded', () => {
+    const { container } = renderSidebar({ collapsed: false });
+
+    expect(container.querySelector('[data-sidebar-rail]')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'CRM' }));
+
+    expect(container.querySelector('[data-sidebar-rail]')).not.toBeNull();
+    expect(container.querySelector('[data-sidebar-rail]')?.getAttribute('aria-hidden')).toBe(
+      'true',
+    );
+  });
+
   it('restores saved open, closed and mixed group preferences after hydration', async () => {
     localStorage.setItem(
       'orderup-ui',

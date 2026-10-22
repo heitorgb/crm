@@ -4,6 +4,7 @@ import { useSessionSync } from '@/features/auth/queries';
 import { useMessageNotifications } from '@/features/notifications/use-message-notifications';
 import { AttendanceMobileOptions } from '@/features/attendance/attendance-mobile-options';
 import { useUiStore } from '@/stores/ui-store';
+import { useNoIndex } from '@/lib/page-metadata';
 import { cn } from '@/lib/utils';
 import { Header } from './header';
 import { MainContent } from './main-content';
@@ -20,6 +21,7 @@ export function AppLayout() {
 
   useSessionSync();
   useMessageNotifications();
+  useNoIndex();
 
   useEffect(() => {
     if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {

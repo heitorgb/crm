@@ -3,7 +3,10 @@ import type { TenantContextService } from '../../../src/common/tenant-context/te
 import type { Env } from '../../../src/config/env.validation.js';
 import type { EncryptionService } from '../../../src/infrastructure/crypto/encryption.service.js';
 import type { PrismaService } from '../../../src/infrastructure/prisma/prisma.service.js';
-import type { EvolutionClient } from '../../../src/modules/whatsapp/evolution/evolution.client.js';
+import {
+  EvolutionRequestError,
+  type EvolutionClient,
+} from '../../../src/modules/whatsapp/evolution/evolution.client.js';
 import type { WhatsAppContactSyncService } from '../../../src/modules/whatsapp/whatsapp-contact-sync.service.js';
 import { WhatsAppInstanceLimitReachedError } from '../../../src/modules/whatsapp/whatsapp.errors.js';
 import { WhatsAppInstancesService } from '../../../src/modules/whatsapp/whatsapp-instances.service.js';
@@ -11,6 +14,12 @@ import { WhatsAppInstancesService } from '../../../src/modules/whatsapp/whatsapp
 interface EvolutionMock {
   configured: boolean;
   setWebhook: ReturnType<typeof vi.fn>;
+  createInstance: ReturnType<typeof vi.fn>;
+  connect: ReturnType<typeof vi.fn>;
+  disconnect: ReturnType<typeof vi.fn>;
+  deleteInstance: ReturnType<typeof vi.fn>;
+  instanceExists: ReturnType<typeof vi.fn>;
+  getConnectionState: ReturnType<typeof vi.fn>;
 }
 
 interface Harness {
@@ -23,8 +32,10 @@ interface Harness {
     };
     whatsAppInstance: {
       findMany: ReturnType<typeof vi.fn>;
+      findFirst: ReturnType<typeof vi.fn>;
       findUnique: ReturnType<typeof vi.fn>;
       update: ReturnType<typeof vi.fn>;
+      deleteMany: ReturnType<typeof vi.fn>;
       count: ReturnType<typeof vi.fn>;
       create: ReturnType<typeof vi.fn>;
     };
@@ -44,8 +55,10 @@ function createHarness(
     },
     whatsAppInstance: {
       findMany: vi.fn().mockResolvedValue([]),
+      findFirst: vi.fn().mockResolvedValue(null),
       findUnique: vi.fn().mockResolvedValue(null),
       update: vi.fn().mockResolvedValue({}),
+      deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
       count: vi.fn().mockResolvedValue(0),
       create: vi.fn(),
     },
@@ -58,6 +71,15 @@ function createHarness(
   const evolution: EvolutionMock = {
     configured: evolutionConfigured,
     setWebhook: vi.fn().mockResolvedValue({}),
+    createInstance: vi.fn().mockResolvedValue({
+      qrcode: { base64: 'ZmFrZS1xcg==', code: '2@fake' },
+      pairingCode: '12345678',
+    }),
+    connect: vi.fn().mockResolvedValue({ qrcode: { base64: 'ZXhpc3Rpbmc=' }, code: '2@existing' }),
+    disconnect: vi.fn().mockResolvedValue({}),
+    deleteInstance: vi.fn().mockResolvedValue({}),
+    instanceExists: vi.fn().mockResolvedValue(false),
+    getConnectionState: vi.fn().mockResolvedValue({ instance: 'inst-1', state: 'close' }),
   };
   const config = {
     get: vi.fn((key: string) => env[key]),
@@ -198,6 +220,20 @@ describe('WhatsAppInstancesService.applyProviderConnectionState', () => {
     expect(result).toMatchObject({ status: 'CONNECTED', changed: false });
   });
 
+  it('does not revive an explicitly disconnected instance from a stale connecting state', async () => {
+    const { service, prisma } = createHarness({});
+    prisma.whatsAppInstance.findUnique.mockResolvedValue({
+      id: 'i1',
+      tenantId: 't1',
+      status: 'DISCONNECTED',
+    });
+
+    const result = await service.applyProviderConnectionState('inst-1', 'connecting');
+
+    expect(prisma.whatsAppInstance.update).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ status: 'DISCONNECTED', changed: false });
+  });
+
   it('ignores a missing state or unknown instance', async () => {
     const { service, prisma } = createHarness({});
 
@@ -254,6 +290,125 @@ describe('WhatsAppInstancesService.create limit', () => {
       service.create({ name: 'Atendimento', instanceName: 'inst-1' }),
     ).rejects.toBeInstanceOf(WhatsAppInstanceLimitReachedError);
     expect(prisma.whatsAppInstance.create).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('WhatsAppInstancesService connect/disconnect', () => {
+  const instanceRow = {
+    id: 'i1',
+    tenantId: 't1',
+    instanceName: 'inst-1',
+    status: 'DISCONNECTED',
+    active: true,
+    credentialsEncrypted: null,
+  };
+
+  it('creates the instance when it does not exist yet', async () => {
+    const { service, prisma, evolution } = createHarness({});
+    prisma.whatsAppInstance.findFirst.mockResolvedValue(instanceRow);
+
+    const result = await service.connect('i1');
+
+    expect(evolution.instanceExists).toHaveBeenCalledWith('inst-1');
+    expect(evolution.createInstance).toHaveBeenCalledWith('inst-1');
+    expect(evolution.deleteInstance).not.toHaveBeenCalled();
+    expect(prisma.whatsAppInstance.update).toHaveBeenCalledWith({
+      where: { id: 'i1' },
+      data: { status: 'CONNECTING' },
+    });
+    expect(result).toMatchObject({
+      status: 'CONNECTING',
+      pairingCode: '12345678',
+      code: '2@fake',
+    });
+  });
+
+  it('falls back to connect when a concurrent create wins the race', async () => {
+    const { service, prisma, evolution } = createHarness({});
+    prisma.whatsAppInstance.findFirst.mockResolvedValue(instanceRow);
+    evolution.createInstance.mockRejectedValue(new EvolutionRequestError('already exists', 409));
+
+    const result = await service.connect('i1');
+
+    expect(evolution.instanceExists).toHaveBeenCalledWith('inst-1');
+    expect(evolution.connect).toHaveBeenCalledWith('inst-1');
+    expect(evolution.deleteInstance).not.toHaveBeenCalled();
+    expect(result.status).toBe('CONNECTING');
+  });
+
+  it('recreates an existing instance instead of calling create twice', async () => {
+    const { service, prisma, evolution } = createHarness({});
+    prisma.whatsAppInstance.findFirst.mockResolvedValue(instanceRow);
+    evolution.instanceExists.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+
+    const result = await service.connect('i1');
+
+    expect(evolution.createInstance).toHaveBeenCalledTimes(1);
+    expect(evolution.deleteInstance).toHaveBeenCalledWith('inst-1');
+    expect(evolution.connect).not.toHaveBeenCalled();
+    expect(result.status).toBe('CONNECTING');
+  });
+
+  it('rejects a provider response without a connection ticket', async () => {
+    const { service, prisma, evolution } = createHarness({});
+    prisma.whatsAppInstance.findFirst.mockResolvedValue(instanceRow);
+    evolution.createInstance.mockResolvedValue({ error: true, message: 'instance does not exist' });
+
+    await expect(service.connect('i1')).rejects.toBeInstanceOf(EvolutionRequestError);
+    expect(prisma.whatsAppInstance.update).not.toHaveBeenCalled();
+  });
+
+  it('marks the instance disconnected only after the provider confirms close', async () => {
+    const { service, prisma, evolution } = createHarness({});
+    prisma.whatsAppInstance.findFirst.mockResolvedValue({
+      ...instanceRow,
+      status: 'CONNECTED',
+    });
+    prisma.whatsAppInstance.update.mockResolvedValue({ status: 'DISCONNECTED' });
+
+    await expect(service.disconnect('i1')).resolves.toEqual({ status: 'DISCONNECTED' });
+
+    expect(evolution.disconnect).toHaveBeenCalledWith('inst-1');
+    expect(evolution.getConnectionState).toHaveBeenCalledWith('inst-1');
+    expect(prisma.whatsAppInstance.update).toHaveBeenCalledWith({
+      where: { id: 'i1' },
+      data: { status: 'DISCONNECTED' },
+    });
+  });
+
+  it('does not mark the instance disconnected when the provider still reports connecting', async () => {
+    const { service, prisma, evolution } = createHarness({});
+    prisma.whatsAppInstance.findFirst.mockResolvedValue({
+      ...instanceRow,
+      status: 'CONNECTED',
+    });
+    evolution.getConnectionState.mockResolvedValue({ instance: 'inst-1', state: 'connecting' });
+    evolution.instanceExists.mockResolvedValue(true);
+
+    await expect(service.disconnect('i1')).rejects.toBeInstanceOf(EvolutionRequestError);
+    expect(prisma.whatsAppInstance.update).not.toHaveBeenCalled();
+  });
+
+  it('removes the instance from Evolution before deleting it locally', async () => {
+    const { service, prisma, evolution } = createHarness({});
+    prisma.whatsAppInstance.findFirst.mockResolvedValue(instanceRow);
+
+    await service.remove('i1');
+
+    expect(evolution.deleteInstance).toHaveBeenCalledWith('inst-1');
+    expect(prisma.whatsAppInstance.deleteMany).toHaveBeenCalledWith({
+      where: { id: 'i1', tenantId: 't1' },
+    });
+  });
+
+  it('keeps the local instance when Evolution cleanup fails', async () => {
+    const { service, prisma, evolution } = createHarness({});
+    prisma.whatsAppInstance.findFirst.mockResolvedValue(instanceRow);
+    evolution.deleteInstance.mockRejectedValue(new Error('evolution down'));
+
+    await expect(service.remove('i1')).rejects.toThrow('evolution down');
+    expect(prisma.whatsAppInstance.deleteMany).not.toHaveBeenCalled();
   });
 });
 

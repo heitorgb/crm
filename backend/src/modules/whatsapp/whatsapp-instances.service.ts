@@ -1,3 +1,4 @@
+import { setTimeout as delay } from 'node:timers/promises';
 import { Injectable, Logger, type OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Prisma, WhatsAppInstanceStatus } from '@prisma/client';
@@ -66,6 +67,9 @@ const WEBHOOK_EVENTS = [
   'PRESENCE_UPDATE',
   'CONNECTION_UPDATE',
 ];
+
+const EVOLUTION_INSTANCE_POLL_INTERVAL_MS = 250;
+const EVOLUTION_INSTANCE_POLL_TIMEOUT_MS = 10_000;
 
 @Injectable()
 export class WhatsAppInstancesService implements OnModuleInit {
@@ -268,8 +272,21 @@ export class WhatsAppInstancesService implements OnModuleInit {
   }
 
   async remove(id: string): Promise<void> {
-    const { tenantId } = this.tenantContext.requireContext();
-    const result = await this.prisma.whatsAppInstance.deleteMany({ where: { id, tenantId } });
+    const instance = await this.requireInstanceById(id);
+
+    if (this.evolution.configured) {
+      try {
+        await this.evolution.deleteInstance(instance.instanceName);
+      } catch (error) {
+        if (!isEvolutionNotFound(error)) {
+          throw error;
+        }
+      }
+    }
+
+    const result = await this.prisma.whatsAppInstance.deleteMany({
+      where: { id, tenantId: instance.tenantId },
+    });
 
     if (result.count === 0) {
       throw new WhatsAppInstanceNotFoundError();
@@ -281,6 +298,10 @@ export class WhatsAppInstancesService implements OnModuleInit {
 
     const raw = await this.ensureInstanceAndConnect(instance.instanceName);
     const ticket = extractConnectionTicket(raw);
+
+    if (!ticket.qrCodeBase64 && !ticket.pairingCode && !ticket.code) {
+      throw new EvolutionRequestError('Evolution API did not return a connection ticket');
+    }
 
     await this.prisma.whatsAppInstance.update({
       where: { id },
@@ -300,6 +321,14 @@ export class WhatsAppInstancesService implements OnModuleInit {
   async disconnect(id: string): Promise<{ status: WhatsAppInstanceStatus }> {
     const instance = await this.requireInstanceById(id);
     await this.evolution.disconnect(instance.instanceName);
+
+    const providerState = await this.evolution.getConnectionState(instance.instanceName);
+    if (!(await this.isProviderDisconnected(instance.instanceName, providerState.state))) {
+      throw new EvolutionRequestError(
+        `Evolution API did not confirm the disconnect (state: ${providerState.state})`,
+      );
+    }
+
     const updated = await this.prisma.whatsAppInstance.update({
       where: { id },
       data: { status: WhatsAppInstanceStatus.DISCONNECTED },
@@ -311,6 +340,17 @@ export class WhatsAppInstancesService implements OnModuleInit {
     const instance = await this.requireInstanceById(id);
     const state = await this.evolution.getConnectionState(instance.instanceName);
     const status = mapEvolutionState(state.state);
+
+    // A stale reconnect from a previous socket must not revive an instance the
+    // operator explicitly disconnected. A new connection always starts at
+    // CONNECTING, so an open provider state is still accepted as authoritative.
+    if (
+      instance.status === WhatsAppInstanceStatus.DISCONNECTED &&
+      status === WhatsAppInstanceStatus.CONNECTING
+    ) {
+      return { status: instance.status };
+    }
+
     const updated = await this.prisma.whatsAppInstance.update({
       where: { id },
       data: { status },
@@ -356,6 +396,23 @@ export class WhatsAppInstancesService implements OnModuleInit {
     }
 
     const status = mapEvolutionState(state);
+
+    // Evolution may emit `connecting` from a stale socket or a reconnect timer
+    // after the operator disconnected. Only a new connection request (which
+    // sets CONNECTING through the API) or an authoritative open/error state may
+    // leave DISCONNECTED.
+    if (
+      instance.status === WhatsAppInstanceStatus.DISCONNECTED &&
+      status === WhatsAppInstanceStatus.CONNECTING
+    ) {
+      return {
+        instanceId: instance.id,
+        tenantId: instance.tenantId,
+        status: instance.status,
+        changed: false,
+      };
+    }
+
     if (instance.status !== status) {
       await this.prisma.whatsAppInstance.update({ where: { id: instance.id }, data: { status } });
     }
@@ -369,20 +426,66 @@ export class WhatsAppInstancesService implements OnModuleInit {
   }
 
   private async ensureInstanceAndConnect(instanceName: string): Promise<unknown> {
-    try {
-      // Create the instance in Evolution when it does not exist yet; the create
-      // response already carries the QR code for a fresh instance.
-      return await this.evolution.createInstance(instanceName);
-    } catch (error) {
-      if (
-        error instanceof EvolutionRequestError &&
-        (error.httpStatus === 409 || error.httpStatus === 400 || error.httpStatus === 403)
-      ) {
-        // Already exists (403 in Evolution v2): ask for a fresh connection ticket.
+    if (!(await this.evolution.instanceExists(instanceName))) {
+      try {
+        // The create response already carries the QR code for a fresh instance.
+        return await this.evolution.createInstance(instanceName);
+      } catch (error) {
+        if (!isEvolutionAlreadyExists(error)) {
+          throw error;
+        }
+
+        // A concurrent request created it between the existence check and the
+        // create call. Reuse the fresh instance instead of deleting it.
         return this.evolution.connect(instanceName);
       }
-      throw error;
     }
+
+    // Evolution 2.4.0-rc2 does not handle duplicate creates idempotently: it
+    // replaces the in-memory instance with a new id and poisons the session.
+    // Recreating from scratch is the only reliable way to obtain a fresh
+    // connection ticket for an instance that already exists.
+    await this.removeFromEvolution(instanceName);
+    await this.waitForEvolutionInstance(instanceName, false);
+    return this.evolution.createInstance(instanceName);
+  }
+
+  private async removeFromEvolution(instanceName: string): Promise<void> {
+    try {
+      await this.evolution.deleteInstance(instanceName);
+    } catch (error) {
+      if (!isEvolutionNotFound(error)) {
+        throw error;
+      }
+    }
+  }
+
+  private async waitForEvolutionInstance(
+    instanceName: string,
+    expected: boolean,
+  ): Promise<void> {
+    const deadline = Date.now() + EVOLUTION_INSTANCE_POLL_TIMEOUT_MS;
+
+    while (Date.now() < deadline) {
+      if ((await this.evolution.instanceExists(instanceName)) === expected) {
+        return;
+      }
+      await delay(EVOLUTION_INSTANCE_POLL_INTERVAL_MS);
+    }
+
+    throw new EvolutionRequestError(
+      `Evolution instance ${instanceName} was not ${expected ? 'created' : 'removed'} in time`,
+    );
+  }
+
+  private async isProviderDisconnected(instanceName: string, state: string): Promise<boolean> {
+    const normalized = state.toLowerCase();
+    if (normalized === 'close' || normalized === 'disconnected') {
+      return true;
+    }
+
+    // A missing provider instance has no session left to disconnect.
+    return normalized === 'unknown' && !(await this.evolution.instanceExists(instanceName));
   }
 
   private async tryConfigureWebhook(instance: {
@@ -574,6 +677,17 @@ function mapEvolutionState(state: string): WhatsAppInstanceStatus {
     return WhatsAppInstanceStatus.DISCONNECTED;
   }
   return WhatsAppInstanceStatus.ERROR;
+}
+
+function isEvolutionAlreadyExists(error: unknown): boolean {
+  return (
+    error instanceof EvolutionRequestError &&
+    (error.httpStatus === 409 || error.httpStatus === 400 || error.httpStatus === 403)
+  );
+}
+
+function isEvolutionNotFound(error: unknown): boolean {
+  return error instanceof EvolutionRequestError && error.httpStatus === 404;
 }
 
 function mapNameConflict(error: unknown): unknown {

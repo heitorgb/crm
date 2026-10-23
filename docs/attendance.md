@@ -86,7 +86,9 @@ Serviço centralizado em `WhatsAppModule` (`EvolutionClient`), configurado por
 ```text
 POST   /instance/create                   body { instanceName, qrcode, integration }
 GET    /instance/connect/{instanceName}
+GET    /instance/fetchInstances           lista instâncias persistidas (checagem de existência)
 DELETE /instance/logout/{instanceName}
+DELETE /instance/delete/{instanceName}
 GET    /instance/connectionState/{instanceName}
 POST   /message/sendText/{instanceName}   body { number, text, linkPreview? }
 POST   /webhook/set/{instanceName}        body { webhook: { enabled, url, events, base64 } }
@@ -120,9 +122,13 @@ humano para grupos usa o JID completo; para contatos, apenas os dígitos.
 Em **Configurações → WhatsApp** (`/configuracoes?tab=whatsapp`):
 
 1. **Nova instância** (nome, `instanceName`, telefone, credenciais opcionais).
-2. **Conectar** → o backend cria a instância na Evolution (`POST /instance/create`) ou, se já
-   existir, usa `GET /instance/connect`; retorna o **QR code** (base64) e/ou o **código de
-   pareamento**.
+2. **Conectar** → o backend consulta `GET /instance/fetchInstances`.
+   - Se a instância **não existe**, cria com `POST /instance/create`.
+   - Se **já existe**, remove a instância antiga com `DELETE /instance/delete` e aguarda a
+     confirmação de remoção antes de recriá-la. Isso evita o bug da Evolution `2.4.0-rc2`, que
+     não é idempotente no `create` duplicado e deixa a sessão inconsistente.
+   - O CRM só grava `CONNECTING` quando recebe um **ticket válido** (QR base64, pairing code ou
+     código). Respostas `{ error: true }` da Evolution são tratadas como falha.
 3. A tela exibe o QR, permite **gerar novo QR** e faz *poll* de status até **Conectado**.
 4. O **webhook é configurado automaticamente** (eventos `MESSAGES_UPSERT`, `MESSAGES_UPDATE`,
    `MESSAGES_EDITED`, `GROUPS_UPSERT`, `PRESENCE_UPDATE` e `CONNECTION_UPDATE`) com o token do
@@ -130,7 +136,10 @@ Em **Configurações → WhatsApp** (`/configuracoes?tab=whatsapp`):
    No boot do backend o webhook é **reconciliado** para todas as instâncias conectadas/ativas, de
    modo que mudar `PUBLIC_API_URL` se autocorrige no próximo restart sem depender de reconfiguração
    manual.
-5. Desconectar/excluir a instância permanecem disponíveis.
+5. **Desconectar** usa `DELETE /instance/logout` e só grava `DISCONNECTED` após
+   `GET /instance/connectionState` confirmar `close`/`disconnected`.
+6. **Excluir** remove a instância na Evolution com `DELETE /instance/delete` antes de apagar a
+   linha local; falhas de rede mantêm a linha local para permitir nova tentativa.
 
 ### Importação automática de contatos
 
@@ -545,6 +554,9 @@ Referência do evento: [implementação da Evolution](https://github.com/Evoluti
   instância (`WhatsAppInstance.status`) e emitindo `whatsapp.instance.updated` na sala
   `tenant:{tenantId}` (somente quando o estado muda). A tela **Configurações → WhatsApp** reage ao
   evento invalidando a listagem.
+- Um `connecting` atrasado de socket antigo **não** reativa uma instância marcada como
+  `DISCONNECTED`; apenas uma nova solicitação de conexão ou um `open`/erro autoritativo altera o
+  estado. A mesma guarda vale para o polling de `/status`.
 - `connectionState: open` **não** é prova de que o envio funciona: sessões degradadas
   (`Stream Errored (conflict)`, `device_removed`, `Connection Closed`) podem continuar reportando
   `open`. O `connection.update` é a evidência autoritativa para rebaixar o status. A recuperação da

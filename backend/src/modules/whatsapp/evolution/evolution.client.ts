@@ -126,6 +126,25 @@ export class EvolutionClient {
     return this.request('DELETE', `/instance/logout/${encodeURIComponent(instanceName)}`);
   }
 
+  async deleteInstance(instanceName: string): Promise<unknown> {
+    return this.request('DELETE', `/instance/delete/${encodeURIComponent(instanceName)}`);
+  }
+
+  async instanceExists(instanceName: string): Promise<boolean> {
+    const raw = await this.request('GET', '/instance/fetchInstances');
+    const list = Array.isArray(raw)
+      ? raw
+      : isRecord(raw) && Array.isArray(raw.data)
+        ? raw.data
+        : [];
+
+    return list.some(
+      (entry) =>
+        isRecord(entry) &&
+        (entry.name === instanceName || entry.instanceName === instanceName),
+    );
+  }
+
   async setWebhook(instanceName: string, url: string, events: string[]): Promise<unknown> {
     return this.request('POST', `/webhook/set/${encodeURIComponent(instanceName)}`, {
       webhook: { enabled: true, url, events, base64: false },

@@ -223,14 +223,17 @@ PUBLIC_API_URL=https://<url-publica-do-backend>
 ### Usar
 
 1. **Atendimento → WhatsApp → Nova instância** (nome, `instanceName` único, telefone opcional).
-2. **Conectar** → a API cria a instância na Evolution (`POST /instance/create`) ou reaproveita
-   (`GET /instance/connect`) e retorna QR/pairing.
+2. **Conectar** → a API verifica a existência (`GET /instance/fetchInstances`). Se não existir,
+   cria (`POST /instance/create`); se existir, remove a instância antiga (`DELETE /instance/delete`),
+   aguarda a remoção e recria para obter credenciais limpas. Só grava `CONNECTING` com um ticket
+   válido (QR/pairing).
 3. O webhook (`MESSAGES_UPSERT`) é configurado automaticamente.
 4. Mensagens recebidas criam/reutilizam o **Contact** por telefone e a **Conversation** da instância.
 
 Endpoints da Evolution usados por `EvolutionClient` (`src/modules/whatsapp/evolution/`):
-`/instance/create`, `/instance/connect/{name}`, `/instance/logout/{name}`,
-`/instance/connectionState/{name}`, `/message/sendText/{name}`, `/webhook/set/{name}`.
+`/instance/create`, `/instance/connect/{name}`, `/instance/fetchInstances`,
+`/instance/logout/{name}`, `/instance/delete/{name}`, `/instance/connectionState/{name}`,
+`/message/sendText/{name}`, `/webhook/set/{name}`.
 
 ## Frontend
 

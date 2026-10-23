@@ -40,10 +40,14 @@ class FakeEvolution {
   readonly sentAudio: { instance: string; number: string; audio: string }[] = [];
   readonly updated: UpdatedMessage[] = [];
   readonly created: string[] = [];
+  readonly deleted: string[] = [];
+  readonly instances = new Map<string, string>();
+  connectionStateOverride?: string;
   readonly webhooks: { instance: string; url: string; events: string[] }[] = [];
   readonly groupLookups: string[] = [];
   readonly avatarLookups: string[] = [];
   createInstanceError?: { status: number };
+  createInstancePayload?: unknown;
   updateMessageError?: { status: number };
   mediaBase64?: string;
   mediaError?: { status: number };
@@ -56,10 +60,14 @@ class FakeEvolution {
   private counter = 0;
 
   async createInstance(instanceName: string) {
+    if (this.createInstancePayload !== undefined) {
+      return this.createInstancePayload;
+    }
     if (this.createInstanceError) {
       throw new EvolutionRequestError('instance exists', this.createInstanceError.status);
     }
     this.created.push(instanceName);
+    this.instances.set(instanceName, 'close');
     return { qrcode: { base64: 'ZmFrZS1xcg==', code: '2@fake' }, pairingCode: '12345678' };
   }
 
@@ -69,16 +77,31 @@ class FakeEvolution {
     return { externalMessageId: `ext-${this.counter}`, raw: {} };
   }
 
-  async connect() {
+  async connect(instance: string) {
+    this.instances.set(instance, 'connecting');
     return { code: '2@existing', base64: 'ZXhpc3Rpbmc=' };
   }
 
-  async disconnect() {
+  async disconnect(instance: string) {
+    this.instances.set(instance, 'close');
     return {};
   }
 
-  async getConnectionState() {
-    return { instance: 'fake', state: 'open' };
+  async deleteInstance(instance: string) {
+    this.deleted.push(instance);
+    this.instances.delete(instance);
+    return {};
+  }
+
+  async instanceExists(instance: string) {
+    return this.instances.has(instance);
+  }
+
+  async getConnectionState(instance: string) {
+    return {
+      instance,
+      state: this.connectionStateOverride ?? this.instances.get(instance) ?? 'open',
+    };
   }
 
   async setWebhook(instance: string, url: string, events: string[]) {
@@ -175,12 +198,16 @@ describe('WhatsApp attendance (integration)', () => {
     evolution.sentAudio.length = 0;
     evolution.updated.length = 0;
     evolution.created.length = 0;
+    evolution.deleted.length = 0;
+    evolution.instances.clear();
+    evolution.connectionStateOverride = undefined;
     evolution.webhooks.length = 0;
     evolution.groupLookups.length = 0;
     evolution.avatarLookups.length = 0;
     evolution.contactLookups.length = 0;
     evolution.addressBook = [];
     evolution.createInstanceError = undefined;
+    evolution.createInstancePayload = undefined;
     evolution.updateMessageError = undefined;
     evolution.mediaBase64 = undefined;
     evolution.mediaError = undefined;
@@ -495,6 +522,8 @@ describe('WhatsApp attendance (integration)', () => {
         headers: authHeaders(ownerA),
       });
       expect(removed.statusCode).toBe(204);
+      const removedRow = await prisma.whatsAppInstance.findUnique({ where: { id: firstId } });
+      expect(removedRow).toBeNull();
 
       const created = await app.inject({
         method: 'POST',
@@ -643,24 +672,88 @@ describe('WhatsApp attendance (integration)', () => {
       expect(JSON.stringify(response.json())).not.toContain('super-secret-webhook');
     });
 
-    it.each([400, 403, 409])(
-      'falls back to an existing Evolution instance when create returns %i',
-      async (status) => {
-        const instanceName = `existing-${randomUUID()}`;
-        const instanceId = await createInstance(ownerA, instanceName);
-        evolution.createInstanceError = { status };
+    it('recreates an existing Evolution instance without duplicating the create', async () => {
+      const instanceName = `existing-${randomUUID()}`;
+      const instanceId = await createInstance(ownerA, instanceName);
+      evolution.instances.set(instanceName, 'close');
 
-        const response = await app.inject({
-          method: 'POST',
-          url: `/api/whatsapp/instances/${instanceId}/connect`,
-          headers: authHeaders(ownerA),
-        });
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/whatsapp/instances/${instanceId}/connect`,
+        headers: authHeaders(ownerA),
+      });
 
-        expect(response.statusCode).toBe(201);
-        expect(response.json().code).toBe('2@existing');
-        expect(evolution.created).not.toContain(instanceName);
-      },
-    );
+      expect(response.statusCode).toBe(201);
+      expect(response.json().code).toBe('2@fake');
+      expect(evolution.deleted).toContain(instanceName);
+      expect(evolution.created).toContain(instanceName);
+    });
+
+    it('reuses a concurrent instance when create loses the race', async () => {
+      const instanceName = `race-${randomUUID()}`;
+      const instanceId = await createInstance(ownerA, instanceName);
+      evolution.createInstanceError = { status: 409 };
+
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/whatsapp/instances/${instanceId}/connect`,
+        headers: authHeaders(ownerA),
+      });
+
+      expect(response.statusCode).toBe(201);
+      expect(response.json().code).toBe('2@existing');
+      expect(evolution.deleted).not.toContain(instanceName);
+      expect(evolution.created).not.toContain(instanceName);
+    });
+
+    it('does not mark the instance CONNECTING when Evolution returns an error payload', async () => {
+      const instanceName = `broken-${randomUUID()}`;
+      const instanceId = await createInstance(ownerA, instanceName, 'DISCONNECTED');
+      evolution.createInstancePayload = { error: true, message: 'instance does not exist' };
+
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/whatsapp/instances/${instanceId}/connect`,
+        headers: authHeaders(ownerA),
+      });
+
+      expect(response.statusCode).toBe(502);
+      const stored = await prisma.whatsAppInstance.findUnique({ where: { id: instanceId } });
+      expect(stored?.status).toBe('DISCONNECTED');
+    });
+
+    it('marks the instance disconnected after Evolution confirms the logout', async () => {
+      const instanceName = `disconnect-${randomUUID()}`;
+      const instanceId = await createInstance(ownerA, instanceName, 'CONNECTED');
+
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/whatsapp/instances/${instanceId}/disconnect`,
+        headers: authHeaders(ownerA),
+      });
+
+      expect(response.statusCode).toBe(201);
+      expect(response.json().status).toBe('DISCONNECTED');
+      const stored = await prisma.whatsAppInstance.findUnique({ where: { id: instanceId } });
+      expect(stored?.status).toBe('DISCONNECTED');
+    });
+
+    it('does not mark the instance disconnected when Evolution remains connecting', async () => {
+      const instanceName = `stuck-${randomUUID()}`;
+      const instanceId = await createInstance(ownerA, instanceName, 'CONNECTED');
+      evolution.instances.set(instanceName, 'connecting');
+      evolution.connectionStateOverride = 'connecting';
+
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/whatsapp/instances/${instanceId}/disconnect`,
+        headers: authHeaders(ownerA),
+      });
+
+      expect(response.statusCode).toBe(502);
+      const stored = await prisma.whatsAppInstance.findUnique({ where: { id: instanceId } });
+      expect(stored?.status).toBe('CONNECTED');
+    });
 
     it('restricts webhook configuration to OWNER/ADMIN and masks the secret', async () => {
       const instanceId = await createInstance(ownerA, `wh-${randomUUID()}`);

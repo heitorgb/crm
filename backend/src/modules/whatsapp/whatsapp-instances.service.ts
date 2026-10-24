@@ -1,7 +1,11 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import { Injectable, Logger, type OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Prisma, WhatsAppInstanceStatus } from '@prisma/client';
+import {
+  Prisma,
+  WhatsAppHistorySyncStatus,
+  WhatsAppInstanceStatus,
+} from '@prisma/client';
 import { AppException } from '../../common/errors/app.exception.js';
 import { buildPage, skipOf, type PageResult } from '../../common/http/pagination.js';
 import { TenantContextService } from '../../common/tenant-context/tenant-context.service.js';
@@ -22,6 +26,14 @@ import {
   WhatsAppInstanceNotFoundError,
 } from './whatsapp.errors.js';
 
+export interface WhatsAppHistorySyncView {
+  status: WhatsAppHistorySyncStatus;
+  progress: number | null;
+  startedAt: Date | null;
+  completedAt: Date | null;
+  error: string | null;
+}
+
 export interface WhatsAppInstanceView {
   id: string;
   name: string;
@@ -31,8 +43,23 @@ export interface WhatsAppInstanceView {
   status: WhatsAppInstanceStatus;
   active: boolean;
   hasCredentials: boolean;
+  historySync: WhatsAppHistorySyncView;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface AppliedHistorySyncState extends WhatsAppHistorySyncView {
+  instanceId: string;
+  tenantId: string;
+  changed: boolean;
+}
+
+export interface HistorySyncUpdate {
+  progress?: number | null;
+  completed?: boolean;
+  failed?: boolean;
+  error?: string | null;
+  onlyIfSyncing?: boolean;
 }
 
 export interface WhatsAppQuotaView {
@@ -70,6 +97,8 @@ const WEBHOOK_EVENTS = [
 
 const EVOLUTION_INSTANCE_POLL_INTERVAL_MS = 250;
 const EVOLUTION_INSTANCE_POLL_TIMEOUT_MS = 10_000;
+const DISCONNECT_CONFIRM_ATTEMPTS = 5;
+const DISCONNECT_CONFIRM_DELAY_MS = 200;
 
 @Injectable()
 export class WhatsAppInstancesService implements OnModuleInit {
@@ -349,18 +378,31 @@ export class WhatsAppInstancesService implements OnModuleInit {
 
   async disconnect(id: string): Promise<{ status: WhatsAppInstanceStatus }> {
     const instance = await this.requireInstanceById(id);
-    await this.evolution.disconnect(instance.instanceName);
 
-    const providerState = await this.evolution.getConnectionState(instance.instanceName);
-    if (!(await this.isProviderDisconnected(instance.instanceName, providerState.state))) {
-      throw new EvolutionRequestError(
-        `Evolution API did not confirm the disconnect (state: ${providerState.state})`,
-      );
+    let logoutError: unknown = null;
+    try {
+      await this.evolution.disconnect(instance.instanceName);
+    } catch (error) {
+      // The logout request may fail after the provider has already dropped the
+      // session (timeout, broken socket). The authoritative state query below
+      // decides whether the disconnection actually happened.
+      logoutError = error;
+    }
+
+    if (!(await this.waitForProviderDisconnect(instance.instanceName))) {
+      throw logoutError instanceof Error
+        ? logoutError
+        : new EvolutionRequestError('Evolution API did not confirm the disconnect');
     }
 
     const updated = await this.prisma.whatsAppInstance.update({
       where: { id },
       data: { status: WhatsAppInstanceStatus.DISCONNECTED },
+    });
+    await this.applyHistorySyncUpdate(instance.instanceName, {
+      failed: true,
+      error: 'disconnect',
+      onlyIfSyncing: true,
     });
     return { status: updated.status };
   }
@@ -426,13 +468,13 @@ export class WhatsAppInstancesService implements OnModuleInit {
 
     const status = mapEvolutionState(state);
 
-    // Evolution may emit `connecting` from a stale socket or a reconnect timer
-    // after the operator disconnected. Only a new connection request (which
-    // sets CONNECTING through the API) or an authoritative open/error state may
-    // leave DISCONNECTED.
+    // A deliberately disconnected instance only leaves DISCONNECTED through an
+    // explicit new connection request, which first persists CONNECTING. Any
+    // stale `open`/`connecting`/`error` event from the previous session is
+    // therefore ignored instead of reviving it.
     if (
       instance.status === WhatsAppInstanceStatus.DISCONNECTED &&
-      status === WhatsAppInstanceStatus.CONNECTING
+      status !== WhatsAppInstanceStatus.DISCONNECTED
     ) {
       return {
         instanceId: instance.id,
@@ -452,6 +494,135 @@ export class WhatsAppInstancesService implements OnModuleInit {
       status,
       changed: instance.status !== status,
     };
+  }
+
+  /**
+   * Persists the synchronization state advertised by the provider. `progress`
+   * is only stored when the provider actually sent it (0..100); it is never
+   * derived from `isLatest`, whose semantics do not mean completion.
+   */
+  async applyHistorySyncUpdate(
+    instanceName: string,
+    update: HistorySyncUpdate,
+  ): Promise<AppliedHistorySyncState | null> {
+    const instance = await this.prisma.whatsAppInstance.findUnique({
+      where: { instanceName },
+      select: {
+        id: true,
+        tenantId: true,
+        historySyncStatus: true,
+        historySyncProgress: true,
+        historySyncStartedAt: true,
+        historySyncCompletedAt: true,
+        historySyncError: true,
+      },
+    });
+    if (!instance) {
+      return null;
+    }
+
+    const current: AppliedHistorySyncState = {
+      instanceId: instance.id,
+      tenantId: instance.tenantId,
+      status: instance.historySyncStatus,
+      progress: instance.historySyncProgress,
+      startedAt: instance.historySyncStartedAt,
+      completedAt: instance.historySyncCompletedAt,
+      error: instance.historySyncError,
+      changed: false,
+    };
+
+    if (update.onlyIfSyncing && current.status !== WhatsAppHistorySyncStatus.SYNCING) {
+      return current;
+    }
+
+    const now = new Date();
+    const observed = normalizeHistoryProgress(update.progress);
+    let status = current.status;
+    let progress = current.progress;
+    let startedAt = current.startedAt;
+    let completedAt = current.completedAt;
+    let error = current.error;
+
+    if (update.completed) {
+      status = WhatsAppHistorySyncStatus.COMPLETED;
+      progress = 100;
+      startedAt ??= now;
+      completedAt = current.completedAt ?? now;
+      error = null;
+    } else if (update.failed) {
+      if (current.status === WhatsAppHistorySyncStatus.COMPLETED && observed === null) {
+        return current;
+      }
+      status = WhatsAppHistorySyncStatus.FAILED;
+      if (observed !== null && (progress === null || observed >= progress)) {
+        progress = observed;
+      }
+      startedAt ??= now;
+      completedAt = null;
+      error = update.error ?? 'history_import_failed';
+    } else if (current.status === WhatsAppHistorySyncStatus.COMPLETED) {
+      // A lower progress after completion means WhatsApp started a new history
+      // sync (for example after a reconnect). Replaying the same completed
+      // batch again (progress 100 or absent) must not reopen the cycle.
+      if (observed !== null && observed < 100) {
+        status = WhatsAppHistorySyncStatus.SYNCING;
+        progress = observed;
+        startedAt = now;
+        completedAt = null;
+        error = null;
+      }
+    } else {
+      status = WhatsAppHistorySyncStatus.SYNCING;
+      if (observed !== null && (progress === null || observed >= progress)) {
+        progress = observed;
+      }
+      startedAt ??= now;
+      completedAt = null;
+      error = null;
+    }
+
+    const changed =
+      status !== current.status ||
+      progress !== current.progress ||
+      !sameDate(startedAt, current.startedAt) ||
+      !sameDate(completedAt, current.completedAt) ||
+      error !== current.error;
+
+    if (changed) {
+      await this.prisma.whatsAppInstance.update({
+        where: { id: instance.id },
+        data: {
+          historySyncStatus: status,
+          historySyncProgress: progress,
+          historySyncStartedAt: startedAt,
+          historySyncCompletedAt: completedAt,
+          historySyncError: error,
+        },
+      });
+    }
+
+    return {
+      instanceId: instance.id,
+      tenantId: instance.tenantId,
+      status,
+      progress,
+      startedAt,
+      completedAt,
+      error,
+      changed,
+    };
+  }
+
+  async markHistorySyncInterrupted(
+    instanceName: string,
+    reason: string,
+  ): Promise<AppliedHistorySyncState | null> {
+    return this.applyHistorySyncUpdate(instanceName, {
+      failed: true,
+      error: reason,
+      onlyIfSyncing: true,
+    });
   }
 
   private async ensureInstanceAndConnect(instanceName: string): Promise<ConnectionAttempt> {
@@ -527,6 +698,30 @@ export class WhatsAppInstancesService implements OnModuleInit {
     );
   }
 
+  private async waitForProviderDisconnect(instanceName: string): Promise<boolean> {
+    let lastError: unknown = null;
+
+    for (let attempt = 0; attempt < DISCONNECT_CONFIRM_ATTEMPTS; attempt += 1) {
+      try {
+        const providerState = await this.evolution.getConnectionState(instanceName);
+        if (await this.isProviderDisconnected(instanceName, providerState.state)) {
+          return true;
+        }
+      } catch (error) {
+        lastError = error;
+      }
+
+      if (attempt < DISCONNECT_CONFIRM_ATTEMPTS - 1) {
+        await delay(DISCONNECT_CONFIRM_DELAY_MS);
+      }
+    }
+
+    if (lastError instanceof Error) {
+      throw lastError;
+    }
+    return false;
+  }
+
   private async isProviderDisconnected(instanceName: string, state: string): Promise<boolean> {
     const normalized = state.toLowerCase();
     if (normalized === 'close' || normalized === 'disconnected') {
@@ -586,7 +781,7 @@ export class WhatsAppInstancesService implements OnModuleInit {
 
   private webhookEvents(): string[] {
     return this.config.get('WHATSAPP_HISTORY_IMPORT_ENABLED')
-      ? ['MESSAGES_SET', ...WEBHOOK_EVENTS]
+      ? ['MESSAGES_SET', 'MESSAGING_HISTORY_SET', ...WEBHOOK_EVENTS]
       : WEBHOOK_EVENTS;
   }
 
@@ -699,6 +894,11 @@ function toView(instance: {
   status: WhatsAppInstanceStatus;
   active: boolean;
   credentialsEncrypted: string | null;
+  historySyncStatus?: WhatsAppHistorySyncStatus;
+  historySyncProgress?: number | null;
+  historySyncStartedAt?: Date | null;
+  historySyncCompletedAt?: Date | null;
+  historySyncError?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }): WhatsAppInstanceView {
@@ -711,6 +911,13 @@ function toView(instance: {
     status: instance.status,
     active: instance.active,
     hasCredentials: Boolean(instance.credentialsEncrypted),
+    historySync: {
+      status: instance.historySyncStatus ?? WhatsAppHistorySyncStatus.IDLE,
+      progress: instance.historySyncProgress ?? null,
+      startedAt: instance.historySyncStartedAt ?? null,
+      completedAt: instance.historySyncCompletedAt ?? null,
+      error: instance.historySyncError ?? null,
+    },
     createdAt: instance.createdAt,
     updatedAt: instance.updatedAt,
   };
@@ -803,6 +1010,23 @@ function toDataUrl(base64: string | null): string | null {
 
 function readString(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+function normalizeHistoryProgress(value: number | null | undefined): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return null;
+  }
+  if (value < 0 || value > 100) {
+    return null;
+  }
+  return Math.round(value);
+}
+
+function sameDate(left: Date | null, right: Date | null): boolean {
+  if (left === null || right === null) {
+    return left === right;
+  }
+  return left.getTime() === right.getTime();
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

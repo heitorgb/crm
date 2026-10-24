@@ -87,7 +87,7 @@ docker compose -f docker-compose.yml -f docker-compose.evolution.yml up -d
 docker compose -f docker-compose.yml -f docker-compose.evolution.yml ps
 ```
 
-- Imagem: `evoapicloud/evolution-api:v2.3.7` (namespace oficial atual; `atendai/...` foi descontinuado).
+- Imagem: `evoapicloud/evolution-api:2.4.0-rc2` (namespace oficial atual; `atendai/...` foi descontinuado).
 - Porta: `8080`.
 - Chave padrão: `change-me-evolution-api-key`.
 
@@ -98,7 +98,7 @@ curl http://localhost:8080/
 curl -H "apikey: change-me-evolution-api-key" http://localhost:8080/instance/fetchInstances
 ```
 
-Esperado: `HTTP 200` com `{"version":"2.3.7",...}` e `[]`, respectivamente.
+Esperado: `HTTP 200` com `{"version":"2.4.0",...}` e `[]`, respectivamente.
 
 ### 4.2 Configurar o backend (`backend/.env`)
 
@@ -194,7 +194,7 @@ docker compose -f docker-compose.yml -f docker-compose.evolution.yml down -v
 | Sintoma | Causa provável | Solução |
 | --- | --- | --- |
 | `open .../backend/docker-compose.yml: no such file or directory` | comando rodado dentro de `backend/` | rode da raiz ou use `-f ../docker-compose.yml` |
-| `pull access denied for atendai/evolution-api` | namespace antigo da imagem | use `evoapicloud/evolution-api:v2.3.7` (já configurado) |
+| `pull access denied for atendai/evolution-api` | namespace antigo da imagem | use `evoapicloud/evolution-api:2.4.0-rc2` (já configurado) |
 | `PUBLIC_API_URL_MISSING` ao conectar | webhook inalcançável | defina `PUBLIC_API_URL=http://host.docker.internal:3000` (ou túnel) e reinicie o backend |
 | `EVOLUTION_UNAVAILABLE` ao conectar | `EVOLUTION_API_BASE_URL`/`EVOLUTION_API_KEY` vazios ou Evolution fora do ar | suba a Evolution e preencha o `.env` |
 | "Página não encontrada" após login | rota antiga `/dashboard` | já corrigido: redireciona para `/atendimento/conversas` |

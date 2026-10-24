@@ -1,4 +1,13 @@
 export type WhatsAppInstanceStatus = 'CONNECTED' | 'CONNECTING' | 'DISCONNECTED' | 'ERROR';
+export type WhatsAppHistorySyncStatus = 'IDLE' | 'SYNCING' | 'COMPLETED' | 'FAILED';
+
+export interface WhatsAppHistorySync {
+  status: WhatsAppHistorySyncStatus;
+  progress: number | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  error: string | null;
+}
 
 export interface WhatsAppInstance {
   id: string;
@@ -9,6 +18,7 @@ export interface WhatsAppInstance {
   status: WhatsAppInstanceStatus;
   active: boolean;
   hasCredentials: boolean;
+  historySync: WhatsAppHistorySync;
   createdAt: string;
   updatedAt: string;
 }

@@ -76,6 +76,13 @@ enum WhatsAppInstanceStatus {
   ERROR
 }
 
+enum WhatsAppHistorySyncStatus {
+  IDLE
+  SYNCING
+  COMPLETED
+  FAILED
+}
+
 enum ConversationStatus {
   OPEN
   CLOSED
@@ -659,17 +666,22 @@ model CustomerTag {
 }
 
 model WhatsAppInstance {
-  id                   String                 @id @default(uuid()) @db.Uuid
-  tenantId             String                 @map("tenant_id") @db.Uuid
-  name                 String
-  instanceName         String                 @unique @map("instance_name")
-  externalInstanceId   String?                @map("external_instance_id")
-  phone                String?
-  status               WhatsAppInstanceStatus @default(DISCONNECTED)
-  credentialsEncrypted String?                @map("credentials_encrypted")
-  active               Boolean                @default(true)
-  createdAt            DateTime               @default(now()) @map("created_at")
-  updatedAt            DateTime               @updatedAt @map("updated_at")
+  id                     String                    @id @default(uuid()) @db.Uuid
+  tenantId               String                    @map("tenant_id") @db.Uuid
+  name                   String
+  instanceName           String                    @unique @map("instance_name")
+  externalInstanceId     String?                   @map("external_instance_id")
+  phone                  String?
+  status                 WhatsAppInstanceStatus    @default(DISCONNECTED)
+  credentialsEncrypted   String?                   @map("credentials_encrypted")
+  active                 Boolean                   @default(true)
+  historySyncStatus      WhatsAppHistorySyncStatus @default(IDLE) @map("history_sync_status")
+  historySyncProgress    Int?                      @map("history_sync_progress")
+  historySyncStartedAt   DateTime?                 @map("history_sync_started_at")
+  historySyncCompletedAt DateTime?                 @map("history_sync_completed_at")
+  historySyncError       String?                   @map("history_sync_error")
+  createdAt              DateTime                  @default(now()) @map("created_at")
+  updatedAt              DateTime                  @updatedAt @map("updated_at")
 
   tenant              Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   conversations       Conversation[]

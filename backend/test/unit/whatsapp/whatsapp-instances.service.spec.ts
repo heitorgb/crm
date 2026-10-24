@@ -156,6 +156,7 @@ describe('WhatsAppInstancesService webhook reconciliation', () => {
       'https://crm.example/api/webhooks/evolution?token=secret',
       [
         'MESSAGES_SET',
+        'MESSAGING_HISTORY_SET',
         'MESSAGES_UPSERT',
         'MESSAGES_UPDATE',
         'MESSAGES_EDITED',
@@ -449,6 +450,22 @@ describe('WhatsAppInstancesService connect/disconnect', () => {
     expect(prisma.whatsAppInstance.update).not.toHaveBeenCalled();
   });
 
+  it('marks the instance disconnected when the logout response fails but the provider state is close', async () => {
+    const { service, prisma, evolution } = createHarness({});
+    prisma.whatsAppInstance.findFirst.mockResolvedValue({
+      ...instanceRow,
+      status: 'CONNECTED',
+    });
+    prisma.whatsAppInstance.update.mockResolvedValue({ status: 'DISCONNECTED' });
+    evolution.disconnect.mockRejectedValue(new EvolutionRequestError('timeout'));
+
+    await expect(service.disconnect('i1')).resolves.toEqual({ status: 'DISCONNECTED' });
+    expect(prisma.whatsAppInstance.update).toHaveBeenCalledWith({
+      where: { id: 'i1' },
+      data: { status: 'DISCONNECTED' },
+    });
+  });
+
   it('removes the instance from Evolution before deleting it locally', async () => {
     const { service, prisma, evolution } = createHarness({});
     prisma.whatsAppInstance.findFirst.mockResolvedValue(instanceRow);
@@ -486,5 +503,158 @@ describe('WhatsAppInstancesService.getQuota', () => {
     prisma.whatsAppInstance.count.mockResolvedValue(3);
 
     await expect(service.getQuota()).resolves.toEqual({ used: 3, canCreate: false });
+  });
+});
+
+describe('WhatsAppInstancesService history sync state', () => {
+  it('starts at the first batch and keeps isLatest out of the completion decision', async () => {
+    const { service, prisma } = createHarness({});
+    prisma.whatsAppInstance.findUnique.mockResolvedValue({
+      id: 'i1',
+      tenantId: 't1',
+      historySyncStatus: 'IDLE',
+      historySyncProgress: null,
+      historySyncStartedAt: null,
+      historySyncCompletedAt: null,
+      historySyncError: null,
+    });
+
+    const result = await service.applyHistorySyncUpdate('inst-1', {
+      progress: 25,
+    });
+
+    expect(result).toMatchObject({
+      status: 'SYNCING',
+      progress: 25,
+      completedAt: null,
+      changed: true,
+    });
+    expect(prisma.whatsAppInstance.update).toHaveBeenCalledWith({
+      where: { id: 'i1' },
+      data: expect.objectContaining({
+        historySyncStatus: 'SYNCING',
+        historySyncProgress: 25,
+      }),
+    });
+  });
+
+  it('does not regress progress while a synchronization is in progress', async () => {
+    const { service, prisma } = createHarness({});
+    prisma.whatsAppInstance.findUnique.mockResolvedValue({
+      id: 'i1',
+      tenantId: 't1',
+      historySyncStatus: 'SYNCING',
+      historySyncProgress: 70,
+      historySyncStartedAt: new Date('2026-10-24T10:00:00Z'),
+      historySyncCompletedAt: null,
+      historySyncError: null,
+    });
+
+    const result = await service.applyHistorySyncUpdate('inst-1', { progress: 40 });
+
+    expect(result).toMatchObject({ status: 'SYNCING', progress: 70, changed: false });
+    expect(prisma.whatsAppInstance.update).not.toHaveBeenCalled();
+  });
+
+  it('marks completion only on an explicit completion signal', async () => {
+    const { service, prisma } = createHarness({});
+    prisma.whatsAppInstance.findUnique.mockResolvedValue({
+      id: 'i1',
+      tenantId: 't1',
+      historySyncStatus: 'SYNCING',
+      historySyncProgress: 90,
+      historySyncStartedAt: new Date('2026-10-24T10:00:00Z'),
+      historySyncCompletedAt: null,
+      historySyncError: null,
+    });
+
+    const result = await service.applyHistorySyncUpdate('inst-1', {
+      progress: 100,
+      completed: true,
+    });
+
+    expect(result).toMatchObject({
+      status: 'COMPLETED',
+      progress: 100,
+      error: null,
+      changed: true,
+    });
+    expect(prisma.whatsAppInstance.update).toHaveBeenCalledWith({
+      where: { id: 'i1' },
+      data: expect.objectContaining({
+        historySyncStatus: 'COMPLETED',
+        historySyncProgress: 100,
+      }),
+    });
+  });
+
+  it('opens a new cycle when a completed instance starts syncing again', async () => {
+    const { service, prisma } = createHarness({});
+    prisma.whatsAppInstance.findUnique.mockResolvedValue({
+      id: 'i1',
+      tenantId: 't1',
+      historySyncStatus: 'COMPLETED',
+      historySyncProgress: 100,
+      historySyncStartedAt: new Date('2026-10-24T10:00:00Z'),
+      historySyncCompletedAt: new Date('2026-10-24T10:05:00Z'),
+      historySyncError: null,
+    });
+
+    const result = await service.applyHistorySyncUpdate('inst-1', { progress: 5 });
+
+    expect(result).toMatchObject({
+      status: 'SYNCING',
+      progress: 5,
+      completedAt: null,
+      changed: true,
+    });
+  });
+
+  it('records a failed batch and allows a later retry to recover', async () => {
+    const { service, prisma } = createHarness({});
+    prisma.whatsAppInstance.findUnique.mockResolvedValueOnce({
+      id: 'i1',
+      tenantId: 't1',
+      historySyncStatus: 'SYNCING',
+      historySyncProgress: 30,
+      historySyncStartedAt: new Date('2026-10-24T10:00:00Z'),
+      historySyncCompletedAt: null,
+      historySyncError: null,
+    });
+
+    const failed = await service.applyHistorySyncUpdate('inst-1', {
+      progress: 30,
+      failed: true,
+      error: 'history_import_failed',
+    });
+    expect(failed).toMatchObject({ status: 'FAILED', error: 'history_import_failed' });
+
+    prisma.whatsAppInstance.findUnique.mockResolvedValueOnce({
+      id: 'i1',
+      tenantId: 't1',
+      historySyncStatus: 'FAILED',
+      historySyncProgress: 30,
+      historySyncStartedAt: new Date('2026-10-24T10:00:00Z'),
+      historySyncCompletedAt: null,
+      historySyncError: 'history_import_failed',
+    });
+    const retry = await service.applyHistorySyncUpdate('inst-1', { progress: 30 });
+    expect(retry).toMatchObject({ status: 'SYNCING', error: null });
+  });
+});
+
+describe('WhatsAppInstancesService stale connection events', () => {
+  it('does not revive a disconnected instance when a late open event arrives', async () => {
+    const { service, prisma } = createHarness({});
+    prisma.whatsAppInstance.findUnique.mockResolvedValue({
+      id: 'i1',
+      tenantId: 't1',
+      status: 'DISCONNECTED',
+    });
+
+    const result = await service.applyProviderConnectionState('inst-1', 'open');
+
+    expect(prisma.whatsAppInstance.update).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ status: 'DISCONNECTED', changed: false });
   });
 });

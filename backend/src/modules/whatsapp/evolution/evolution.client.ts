@@ -101,6 +101,7 @@ export class EvolutionClient {
   private readonly logger = new Logger(EvolutionClient.name);
   private readonly baseUrl?: string;
   private readonly apiKey?: string;
+  private readonly requestTimeoutMs: number;
 
   constructor(
     config: ConfigService<Env, true>,
@@ -108,6 +109,7 @@ export class EvolutionClient {
   ) {
     this.baseUrl = trimTrailingSlash(config.get('EVOLUTION_API_BASE_URL') ?? '');
     this.apiKey = config.get('EVOLUTION_API_KEY');
+    this.requestTimeoutMs = config.get('EVOLUTION_REQUEST_TIMEOUT_MS') ?? 20_000;
   }
 
   get configured(): boolean {
@@ -417,6 +419,7 @@ export class EvolutionClient {
           apikey: this.apiKey,
         },
         body: body !== undefined ? JSON.stringify(body) : undefined,
+        signal: AbortSignal.timeout(this.requestTimeoutMs),
       });
 
       if (!response.ok) {

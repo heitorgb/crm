@@ -439,12 +439,16 @@ export class MessagesService {
     tenantId: string;
     externalMessageId: string;
     status: MessageStatus;
+    whatsappInstanceId?: string;
   }): Promise<{ messageId: string; conversationId: string; status: MessageStatus } | null> {
     const message = await this.prisma.message.findFirst({
       where: {
         tenantId: input.tenantId,
         externalMessageId: input.externalMessageId,
         direction: MessageDirection.OUTBOUND,
+        ...(input.whatsappInstanceId
+          ? { conversation: { whatsappInstanceId: input.whatsappInstanceId } }
+          : {}),
       },
       select: { id: true, conversationId: true, status: true },
     });

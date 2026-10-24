@@ -686,6 +686,7 @@ describe('WhatsApp attendance (integration)', () => {
       const webhook = evolution.webhooks.find((item) => item.instance === instanceName);
       expect(webhook?.events).toEqual([
         'MESSAGES_SET',
+        'MESSAGING_HISTORY_SET',
         'MESSAGES_UPSERT',
         'MESSAGES_UPDATE',
         'MESSAGES_EDITED',
@@ -796,6 +797,28 @@ describe('WhatsApp attendance (integration)', () => {
       expect(response.json().status).toBe('DISCONNECTED');
       const stored = await prisma.whatsAppInstance.findUnique({ where: { id: instanceId } });
       expect(stored?.status).toBe('DISCONNECTED');
+    });
+
+    it('ignores a delayed connection open event after an explicit disconnect', async () => {
+      const instanceName = `disconnect-stale-${randomUUID()}`;
+      const instanceId = await createInstance(ownerA, instanceName, 'CONNECTED');
+
+      await app.inject({
+        method: 'POST',
+        url: `/api/whatsapp/instances/${instanceId}/disconnect`,
+        headers: authHeaders(ownerA),
+      });
+
+      await postWebhook({
+        event: 'connection.update',
+        instance: instanceName,
+        data: { instance: instanceName, state: 'open' },
+      });
+
+      const stored = await prisma.whatsAppInstance.findUniqueOrThrow({
+        where: { id: instanceId },
+      });
+      expect(stored.status).toBe('DISCONNECTED');
     });
 
     it('does not mark the instance disconnected when Evolution remains connecting', async () => {
@@ -1062,6 +1085,126 @@ describe('WhatsApp attendance (integration)', () => {
 
       await postWebhook(payload);
       expect(await prisma.message.count({ where: { tenantId: ownerA.tenantId } })).toBe(2);
+    });
+
+    it('persists history synchronization progress without completing on isLatest', async () => {
+      const instanceName = `history-state-${randomUUID()}`;
+      const instanceId = await createInstance(ownerA, instanceName);
+
+      await postWebhook({
+        event: 'messages.set',
+        instance: instanceName,
+        isLatest: true,
+        progress: 40,
+        data: [],
+      });
+
+      let stored = await prisma.whatsAppInstance.findUniqueOrThrow({
+        where: { id: instanceId },
+      });
+      expect(stored.historySyncStatus).toBe('SYNCING');
+      expect(stored.historySyncProgress).toBe(40);
+      expect(stored.historySyncCompletedAt).toBeNull();
+
+      const response = await app.inject({
+        method: 'GET',
+        url: `/api/whatsapp/instances/${instanceId}`,
+        headers: authHeaders(ownerA),
+      });
+      expect(response.json().historySync).toMatchObject({
+        status: 'SYNCING',
+        progress: 40,
+        completedAt: null,
+      });
+
+      await postWebhook({
+        event: 'messages.set',
+        instance: instanceName,
+        isLatest: false,
+        progress: 100,
+        data: [],
+      });
+
+      stored = await prisma.whatsAppInstance.findUniqueOrThrow({ where: { id: instanceId } });
+      expect(stored.historySyncStatus).toBe('COMPLETED');
+      expect(stored.historySyncProgress).toBe(100);
+      expect(stored.historySyncCompletedAt).not.toBeNull();
+    });
+
+    it('accepts the explicit messaging-history.set completion signal', async () => {
+      const instanceName = `history-complete-${randomUUID()}`;
+      const instanceId = await createInstance(ownerA, instanceName);
+
+      await postWebhook({
+        event: 'messaging-history.set',
+        instance: instanceName,
+        data: { messageCount: 4, chatCount: 2, contactCount: 1, progress: 100 },
+      });
+
+      const stored = await prisma.whatsAppInstance.findUniqueOrThrow({
+        where: { id: instanceId },
+      });
+      expect(stored.historySyncStatus).toBe('COMPLETED');
+      expect(stored.historySyncProgress).toBe(100);
+    });
+
+    it('keeps messages received during history synchronization', async () => {
+      const instanceName = `history-live-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      const now = Math.floor(Date.now() / 1000);
+
+      await postWebhook({
+        event: 'messages.set',
+        instance: instanceName,
+        progress: 50,
+        data: [
+          {
+            key: { remoteJid: '5511777777777@s.whatsapp.net', fromMe: false, id: randomUUID() },
+            pushName: 'Histórico',
+            message: { conversation: 'do histórico' },
+            messageTimestamp: now,
+          },
+        ],
+      });
+      await postWebhook(
+        evolutionPayload(instanceName, randomUUID(), 'recebida durante a sincronização'),
+      );
+      await postWebhook({
+        event: 'messages.set',
+        instance: instanceName,
+        progress: 100,
+        data: [],
+      });
+
+      const messages = await prisma.message.findMany({
+        where: { tenantId: ownerA.tenantId },
+        orderBy: { occurredAt: 'asc' },
+      });
+      expect(messages.map((message) => message.content)).toEqual(
+        expect.arrayContaining(['do histórico', 'recebida durante a sincronização']),
+      );
+    });
+
+    it('accepts uppercase webhook event names from the provider', async () => {
+      const instanceName = `uppercase-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+
+      const response = await postWebhook({
+        event: 'MESSAGES_UPSERT',
+        instance: instanceName,
+        data: {
+          key: { remoteJid: '5511666666666@s.whatsapp.net', fromMe: false, id: randomUUID() },
+          pushName: 'Contato Teste',
+          message: { conversation: 'evento em maiúsculas' },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(
+        await prisma.message.count({
+          where: { tenantId: ownerA.tenantId, content: 'evento em maiúsculas' },
+        }),
+      ).toBe(1);
     });
 
     it('does not move an active conversation back in time when importing older history', async () => {
@@ -1396,6 +1539,36 @@ describe('WhatsApp attendance (integration)', () => {
         where: { tenantId: ownerA.tenantId, direction: 'INBOUND' },
       });
       expect(inbound).toHaveLength(1);
+    });
+
+    it('retries a webhook whose message persistence failed instead of dropping it', async () => {
+      const instanceName = `transient-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      const messageId = randomUUID();
+      const payload = evolutionPayload(instanceName, messageId, 'não pode ser perdida');
+
+      const create = vi
+        .spyOn(prisma.message, 'create')
+        .mockRejectedValueOnce(new Error('database unavailable'));
+      try {
+        const first = await postWebhook(payload);
+        expect(first.statusCode).toBe(503);
+      } finally {
+        create.mockRestore();
+      }
+
+      const stored = await prisma.message.findFirst({
+        where: { tenantId: ownerA.tenantId, externalMessageId: messageId },
+      });
+      expect(stored?.content).toBe('não pode ser perdida');
+
+      const retry = await postWebhook(payload);
+      expect(retry.statusCode).toBe(200);
+      expect(
+        await prisma.message.count({
+          where: { tenantId: ownerA.tenantId, externalMessageId: messageId },
+        }),
+      ).toBe(1);
     });
 
     it('reopens a closed conversation when a new message arrives', async () => {
@@ -1845,6 +2018,17 @@ describe('WhatsApp attendance (integration)', () => {
 
       expect(response.statusCode).toBe(200);
       expect(response.json().accepted).toBe(true);
+    });
+
+    it('scopes status updates to the owning instance inside the same tenant', async () => {
+      const { messageId, externalMessageId } = await seedOutbound();
+      const otherInstance = `status-same-tenant-${randomUUID()}`;
+      await createInstance(ownerA, otherInstance);
+
+      await postWebhook(statusPayload(otherInstance, externalMessageId, 'READ'));
+
+      const message = await prisma.message.findUniqueOrThrow({ where: { id: messageId } });
+      expect(message.status).toBe('SENT');
     });
 
     it('scopes status updates to the owning tenant', async () => {

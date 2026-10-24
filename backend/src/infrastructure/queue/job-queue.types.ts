@@ -19,6 +19,7 @@ export const JOB_QUEUE = 'JOB_QUEUE';
 
 export const JOB_NAMES = {
   WHATSAPP_SEND: 'whatsapp.message.send',
+  WEBHOOK_PROCESS: 'webhook.evolution.process',
   MEDIA_PROCESS: 'media.process',
   TRANSCRIPTION_PROCESS: 'transcription.process',
   CONTACTS_SYNC: 'whatsapp.contacts.sync',

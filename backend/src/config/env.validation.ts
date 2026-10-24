@@ -100,6 +100,7 @@ const integrationEnvSchema = z.object({
   EVOLUTION_API_BASE_URL: optionalEnv(z.url()),
   EVOLUTION_API_KEY: optionalEnv(z.string().min(1)),
   EVOLUTION_WEBHOOK_SECRET: optionalEnv(z.string().min(1)),
+  EVOLUTION_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(20_000),
   PUBLIC_API_URL: optionalEnv(z.url()),
   WHATSAPP_HISTORY_IMPORT_ENABLED: optionalBoolean.default(false),
   WHATSAPP_HISTORY_IMPORT_DAYS: z.coerce.number().int().min(1).max(365).default(30),

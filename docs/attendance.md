@@ -140,14 +140,20 @@ Em **Configurações → WhatsApp** (`/configuracoes?tab=whatsapp`):
      código). Respostas `{ error: true }` da Evolution são tratadas como falha.
 3. A tela exibe o QR, permite **gerar novo QR** e faz *poll* de status até **Conectado**.
 4. O **webhook é configurado automaticamente** (eventos `MESSAGES_UPSERT`, `MESSAGES_UPDATE`,
-   `MESSAGES_EDITED`, `GROUPS_UPSERT`, `PRESENCE_UPDATE` e `CONNECTION_UPDATE`; `MESSAGES_SET`
-   somente quando a importação automática de histórico está habilitada) com o token do
-   segredo (da instância ou `EVOLUTION_WEBHOOK_SECRET`); há também a ação **Reconfigurar webhook**.
+   `MESSAGES_EDITED`, `GROUPS_UPSERT`, `PRESENCE_UPDATE` e `CONNECTION_UPDATE`; `MESSAGES_SET` e
+   `MESSAGING_HISTORY_SET` somente quando a importação automática de histórico está habilitada) com
+   o token do segredo (da instância ou `EVOLUTION_WEBHOOK_SECRET`); há também a ação
+   **Reconfigurar webhook**.
    No boot do backend o webhook é **reconciliado** para todas as instâncias conectadas/ativas, de
    modo que mudar `PUBLIC_API_URL` se autocorrige no próximo restart sem depender de reconfiguração
    manual.
 5. **Desconectar** usa `DELETE /instance/logout` e só grava `DISCONNECTED` após
-   `GET /instance/connectionState` confirmar `close`/`disconnected`.
+   `GET /instance/connectionState` confirmar `close`/`disconnected` (com algumas tentativas
+   curtas para absorver a latência do provedor). Se o logout responder erro/timeout mas o estado
+   confirmar `close`, a desconexão é considerada concluída; se o estado não confirmar, a API
+   responde erro e o CRM **não** declara sucesso. Cada chamada HTTP à Evolution tem timeout
+   (`EVOLUTION_REQUEST_TIMEOUT_MS`, padrão 20 s). Eventos `connection.update` atrasados de uma
+   sessão anterior não reativam uma instância explicitamente desconectada.
 6. **Excluir** remove a instância na Evolution com `DELETE /instance/delete` antes de apagar a
    linha local; falhas de rede mantêm a linha local para permitir nova tentativa.
 
@@ -159,6 +165,19 @@ Em **Configurações → WhatsApp** (`/configuracoes?tab=whatsapp`):
 - Se habilitada (`WHATSAPP_HISTORY_IMPORT_ENABLED=true`), o `MESSAGES_SET` é assinado e processado
   com o mesmo pipeline de `MESSAGES_UPSERT`, importando apenas mensagens dentro de
   `WHATSAPP_HISTORY_IMPORT_DAYS` (padrão 30 dias). Mensagens mais antigas são ignoradas.
+- O CRM persiste o estado da sincronização em `WhatsAppInstance` (`history_sync_status`,
+  `history_sync_progress`, `history_sync_started_at`, `history_sync_completed_at`,
+  `history_sync_error`) e o expõe em `GET /api/whatsapp/instances[/:id]` como `historySync`.
+  Os estados são `IDLE`, `SYNCING`, `COMPLETED` e `FAILED`.
+- `progress` é copiado apenas quando a Evolution o envia (0–100). `isLatest` **não** significa
+  conclusão (é apenas um indicador de lote do Baileys) e nunca é usado para declarar o histórico
+  completo. A conclusão vem de `progress === 100` no `MESSAGES_SET` ou do
+  evento `MESSAGING_HISTORY_SET` (`progress: 100`), ambos confirmados na Evolution 2.4.0.
+- Se um lote tiver mensagens que falharam, o estado fica `FAILED` e o webhook responde `5xx` para a
+  Evolution reenviar o lote. Mensagens já importadas são ignoradas por idempotência no retry.
+  Reconexão/queda de conexão durante um sync também marca `FAILED`. O frontend só mostra
+  “Histórico sincronizado” quando o estado persistido é `COMPLETED`.
+- O progresso é publicado em tempo real por `whatsapp.history.updated` na sala do tenant.
 - A ingestão é deduplicada por `(tenantId, externalMessageId)` e pelo contexto da instância.
   Webhook e backfill podem rodar simultaneamente sem duplicar mensagens.
 - Mensagens recentes recuperadas do histórico emitem eventos realtime; mensagens antigas são
@@ -511,9 +530,14 @@ responde `409 CONVERSATION_NOT_HUMAN_OWNED`. O bot só responde enquanto a conve
   `metadata.destinationType` e `metadata.fallbackAttempted`, que garante no máximo **um** fallback
   por mensagem (sem loops). O LID é capturado no mesmo evento em que o contato/telefone é resolvido,
   então um novo inbound popula conversas já existentes.
-- O webhook é resiliente: qualquer erro inesperado ao processar um evento é registrado em log e a
-  Evolution recebe `200` (`ignored: processing_error`), evitando *retry storm* que trava o
-  processamento da instância.
+- O webhook usa `webhook_events` como caixa de entrada durável: o evento é reivindicado antes do
+  processamento e só recebe `processedAt` após o sucesso. Eventos já processados são idempotentes;
+  eventos reivindicados e não concluídos são reprocessados. Em falha de banco/processamento a API
+  responde `503` (em vez de `200`), a Evolution reenvia e uma cópia é enfileirada em
+  `webhook.evolution.process`; no boot, eventos pendentes das últimas 24 h são reenfileirados.
+  Assim uma falha temporária não descarta silenciosamente a mensagem.
+- `messages.update` só altera mensagens `OUTBOUND` da **mesma instância e tenant**, e a progressão
+  de status é monotônica (`SENT → DELIVERED → READ`); `ERROR` não regride `DELIVERED`/`READ`.
 - O webhook aceita `presence.update` da Evolution e publica `conversation.presence` somente na
   sala do tenant da instância, após localizar a conversa por tenant, instância e JID.
 - Presença é transitória: não grava `WebhookEvent` nem passa pela deduplicação de mensagens.
@@ -607,7 +631,7 @@ Referência do evento: [implementação da Evolution](https://github.com/Evoluti
 
 ### Edição de mensagem
 
-- A Evolution v2.3.7 (Baileys 7.0.0-rc.9) reporta edições de duas formas: `messages.edited`, cujo
+- A Evolution 2.4.0 (Baileys 7.0.0-rc.9) reporta edições de duas formas: `messages.edited`, cujo
   `data` **é** o `protocolMessage` (`key` = mensagem original + `editedMessage` = novo conteúdo), e
   `messages.update`, no formato real `{ keyId: <id original>, status: "SERVER_ACK",
   message: { editedMessage: { message: <novo conteúdo> } } }`. O webhook reconhece ambos, além de

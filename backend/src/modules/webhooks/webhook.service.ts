@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, type OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   ConversationStatus,
@@ -7,7 +7,9 @@ import {
   MessageStatus,
   MessageType,
   Prisma,
+  WhatsAppInstanceStatus,
 } from '@prisma/client';
+import { AppException } from '../../common/errors/app.exception.js';
 import {
   alternateDestination,
   pickDestination,
@@ -33,8 +35,10 @@ import { TranscriptionSettingsService } from '../transcription/transcription-set
 import { WhatsAppDirectoryService } from '../whatsapp/whatsapp-directory.service.js';
 import {
   WhatsAppInstancesService,
+  type AppliedHistorySyncState,
   type ResolvedInstance,
 } from '../whatsapp/whatsapp-instances.service.js';
+import { WebhookProcessingError } from './webhooks.errors.js';
 
 export interface WebhookIngestResult {
   accepted: boolean;
@@ -52,9 +56,18 @@ export interface HistoryIngestResult {
 }
 
 const HISTORY_REALTIME_WINDOW_MS = 15 * 60 * 1000;
+const WEBHOOK_REPLAY_LOOKBACK_MS = 24 * 60 * 60 * 1000;
+const WEBHOOK_REPLAY_LIMIT = 100;
+
+class HistoryIngestError extends Error {
+  constructor(readonly result: HistoryIngestResult) {
+    super('History batch had failed messages');
+    this.name = 'HistoryIngestError';
+  }
+}
 
 @Injectable()
-export class WebhookService {
+export class WebhookService implements OnModuleInit {
   private readonly logger = new Logger(WebhookService.name);
 
   constructor(
@@ -69,6 +82,71 @@ export class WebhookService {
     @Inject(JOB_QUEUE) private readonly queue: JobQueue,
   ) {}
 
+  onModuleInit(): void {
+    this.queue.registerProcessor(JOB_NAMES.WEBHOOK_PROCESS, (payload) =>
+      this.replayRecordedEvent(payload),
+    );
+    void this.replayPendingEvents();
+  }
+
+  /**
+   * Requeues events that were claimed but not acknowledged before a restart or
+   * a processing failure. The payload is already stored in `webhook_events`, so
+   * replay is bounded and survives process restarts without an in-memory queue.
+   */
+  private async replayPendingEvents(): Promise<void> {
+    try {
+      const pending = await this.prisma.webhookEvent.findMany({
+        where: {
+          processedAt: null,
+          tenantId: { not: null },
+          createdAt: { gte: new Date(Date.now() - WEBHOOK_REPLAY_LOOKBACK_MS) },
+        },
+        orderBy: { createdAt: 'asc' },
+        take: WEBHOOK_REPLAY_LIMIT,
+        select: { id: true },
+      });
+
+      for (const event of pending) {
+        try {
+          await this.queue.enqueue(
+            JOB_NAMES.WEBHOOK_PROCESS,
+            { webhookEventId: event.id },
+            { jobId: event.id },
+          );
+        } catch (error) {
+          this.logger.warn(
+            `Could not enqueue webhook replay ${event.id}: ${
+              error instanceof Error ? error.message : 'unknown'
+            }`,
+          );
+        }
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Webhook replay scan failed: ${error instanceof Error ? error.message : 'unknown'}`,
+      );
+    }
+  }
+
+  private async replayRecordedEvent(payload: Record<string, unknown>): Promise<void> {
+    const webhookEventId = typeof payload.webhookEventId === 'string' ? payload.webhookEventId : null;
+    if (!webhookEventId) {
+      return;
+    }
+
+    const stored = await this.prisma.webhookEvent.findUnique({
+      where: { id: webhookEventId },
+      select: { id: true, payload: true, processedAt: true },
+    });
+    if (!stored || stored.processedAt) {
+      return;
+    }
+
+    await this.processEvolution(stored.payload, { scheduleRecovery: false });
+    await this.markEventProcessed(webhookEventId);
+  }
+
   async ingestEvolution(payload: unknown): Promise<WebhookIngestResult> {
     try {
       const result = await this.processEvolution(payload);
@@ -78,7 +156,9 @@ export class WebhookService {
       this.logger.error(
         `Failed to process webhook event: ${error instanceof Error ? error.message : 'unknown'}`,
       );
-      return { accepted: false, ignored: 'processing_error' };
+      throw error instanceof AppException
+        ? error
+        : new WebhookProcessingError(error);
     }
   }
 
@@ -126,12 +206,15 @@ export class WebhookService {
     }
   }
 
-  private async processEvolution(payload: unknown): Promise<WebhookIngestResult> {
+  private async processEvolution(
+    payload: unknown,
+    options: { scheduleRecovery: boolean } = { scheduleRecovery: true },
+  ): Promise<WebhookIngestResult> {
     if (!isRecord(payload)) {
       return { accepted: false, ignored: 'invalid_payload' };
     }
 
-    const eventType = readString(payload.event) ?? 'unknown';
+    const eventType = normalizeEventType(readString(payload.event) ?? 'unknown');
     const instanceName = readInstanceName(payload);
     if (!instanceName) {
       return { accepted: false, ignored: 'missing_instance' };
@@ -150,28 +233,69 @@ export class WebhookService {
 
     // History sync batches are large and idempotent at the message level.
     // Handling them before `recordEvent` avoids storing the whole batch payload
-    // in webhook_events while still importing every missing message.
-    if (eventType === 'messages.set' || eventType === 'MESSAGES_SET') {
+    // in webhook_events while still importing every missing message. A batch
+    // failure is reported as 5xx so Evolution retries it instead of dropping it.
+    if (eventType === 'messages.set') {
       if (!this.config.get('WHATSAPP_HISTORY_IMPORT_ENABLED')) {
         return { accepted: true, ignored: 'history_import_disabled' };
       }
 
-      await this.handleMessagesSet(instance, payload);
-      return { accepted: true };
+      try {
+        await this.handleMessagesSet(instance, payload);
+        return { accepted: true };
+      } catch (error) {
+        throw error instanceof AppException ? error : new WebhookProcessingError(error);
+      }
+    }
+
+    if (eventType === 'messaging-history.set') {
+      if (!this.config.get('WHATSAPP_HISTORY_IMPORT_ENABLED')) {
+        return { accepted: true, ignored: 'history_import_disabled' };
+      }
+
+      try {
+        await this.handleMessagingHistorySet(instance, payload);
+        return { accepted: true };
+      } catch (error) {
+        throw error instanceof AppException ? error : new WebhookProcessingError(error);
+      }
     }
 
     const externalEventId = computeEventId(payload, eventType, instanceName);
 
-    const duplicate = await this.recordEvent({
-      tenantId: instance.tenantId,
-      externalEventId,
-      eventType,
-      payload,
-    });
-    if (duplicate) {
+    let claim: { id: string; duplicate: boolean };
+    try {
+      claim = await this.recordEvent({
+        tenantId: instance.tenantId,
+        externalEventId,
+        eventType,
+        payload,
+      });
+    } catch (error) {
+      throw new WebhookProcessingError(error);
+    }
+
+    if (claim.duplicate) {
       return { accepted: true, ignored: 'duplicate_event' };
     }
 
+    try {
+      const result = await this.processRecordedEvent(instance, eventType, payload);
+      await this.markEventProcessed(claim.id);
+      return result;
+    } catch (error) {
+      if (options.scheduleRecovery) {
+        await this.enqueueRecovery(claim.id, error);
+      }
+      throw error instanceof AppException ? error : new WebhookProcessingError(error);
+    }
+  }
+
+  private async processRecordedEvent(
+    instance: ResolvedInstance,
+    eventType: string,
+    payload: Record<string, unknown>,
+  ): Promise<WebhookIngestResult> {
     if (eventType === 'groups.upsert' || eventType === 'groups.update') {
       await this.handleGroupUpsert(instance, payload);
       return { accepted: true };
@@ -181,7 +305,7 @@ export class WebhookService {
     // authoritative evidence of a degraded session (conflict, device_removed,
     // connection closed) that `connectionState: open` alone can hide, so it is
     // persisted and broadcast to the tenant.
-    if (eventType === 'connection.update' || eventType === 'CONNECTION_UPDATE') {
+    if (eventType === 'connection.update') {
       await this.handleConnectionUpdate(instance, payload);
       return { accepted: true };
     }
@@ -208,17 +332,80 @@ export class WebhookService {
     return this.ingestMessage(instance, data, { source: 'messages.upsert' });
   }
 
+  private async enqueueRecovery(webhookEventId: string, error: unknown): Promise<void> {
+    try {
+      await this.queue.enqueue(
+        JOB_NAMES.WEBHOOK_PROCESS,
+        { webhookEventId },
+        { jobId: webhookEventId },
+      );
+    } catch (enqueueError) {
+      this.logger.warn(
+        `Could not enqueue webhook recovery ${webhookEventId}: ${
+          enqueueError instanceof Error ? enqueueError.message : 'unknown'
+        }`,
+      );
+    }
+
+    this.logger.warn(
+      `Webhook event ${webhookEventId} left pending for retry: ${
+        error instanceof Error ? error.message : 'unknown'
+      }`,
+    );
+  }
+
+  private async markEventProcessed(webhookEventId: string): Promise<void> {
+    if (!webhookEventId) {
+      return;
+    }
+
+    await this.prisma.webhookEvent.updateMany({
+      where: { id: webhookEventId, processedAt: null },
+      data: { processedAt: new Date() },
+    });
+  }
+
   private async handleMessagesSet(
     instance: ResolvedInstance,
     payload: Record<string, unknown>,
   ): Promise<void> {
     const records = toArray(payload.data).filter(isRecord);
-    const isLatest = payload.isLatest === true;
-    const progress = typeof payload.progress === 'number' ? payload.progress : null;
-    const result = await this.ingestHistoryMessages(instance, records, {
-      cutoff: this.historyCutoff(),
-      emitRecentRealtime: true,
-      source: 'messages.set',
+    const isLatest = typeof payload.isLatest === 'boolean' ? payload.isLatest : null;
+    const progress = readProgress(payload.progress);
+
+    let result: HistoryIngestResult;
+    try {
+      result = await this.ingestHistoryMessages(instance, records, {
+        cutoff: this.historyCutoff(),
+        emitRecentRealtime: true,
+        source: 'messages.set',
+        throwOnFailure: true,
+      });
+    } catch (error) {
+      const failed = error instanceof HistoryIngestError ? error.result.failed : 0;
+      await this.updateHistorySync(instance, {
+        progress,
+        failed: true,
+        error: 'history_import_failed',
+      });
+      this.logger.warn(
+        `whatsapp.history.batch.failed ${JSON.stringify({
+          instance: instance.instanceName,
+          received: records.length,
+          failed,
+          progress,
+        })}`,
+      );
+      throw error;
+    }
+
+    const failed = result.failed > 0;
+    const completed = !failed && progress === 100;
+    await this.updateHistorySync(instance, {
+      progress,
+      completed,
+      failed,
+      error: failed ? 'history_import_failed' : null,
     });
 
     this.logger.log(
@@ -231,8 +418,52 @@ export class WebhookService {
         conversations: result.conversations,
         isLatest,
         progress,
+        completed,
       })}`,
     );
+  }
+
+  /**
+   * `messaging-history.set` is emitted by Evolution when its accumulated
+   * history progress reaches 100. It is the definitive completion signal; the
+   * per-batch `isLatest` flag is only metadata and is never used for this.
+   */
+  private async handleMessagingHistorySet(
+    instance: ResolvedInstance,
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    const data = isRecord(payload.data) ? payload.data : null;
+    const progress = readProgress(data?.progress) ?? readProgress(payload.progress);
+
+    if (progress !== null && progress < 100) {
+      await this.updateHistorySync(instance, { progress });
+      return;
+    }
+
+    await this.updateHistorySync(instance, { progress: 100, completed: true });
+  }
+
+  private async updateHistorySync(
+    instance: ResolvedInstance,
+    update: {
+      progress?: number | null;
+      completed?: boolean;
+      failed?: boolean;
+      error?: string | null;
+    },
+  ): Promise<AppliedHistorySyncState | null> {
+    const state = await this.instances.applyHistorySyncUpdate(instance.instanceName, update);
+    if (state?.changed) {
+      this.realtime.emitToTenant(instance.tenantId, 'whatsapp.history.updated', {
+        instanceId: state.instanceId,
+        status: state.status,
+        progress: state.progress,
+        startedAt: state.startedAt,
+        completedAt: state.completedAt,
+        error: state.error,
+      });
+    }
+    return state;
   }
 
   /**
@@ -243,7 +474,12 @@ export class WebhookService {
   async ingestHistoryMessages(
     instance: ResolvedInstance,
     records: unknown[],
-    options: { cutoff: number; emitRecentRealtime?: boolean; source: string },
+    options: {
+      cutoff: number;
+      emitRecentRealtime?: boolean;
+      source: string;
+      throwOnFailure?: boolean;
+    },
   ): Promise<HistoryIngestResult> {
     const ordered = records
       .filter(isRecord)
@@ -317,13 +553,19 @@ export class WebhookService {
       })}`,
     );
 
-    return {
+    const summary: HistoryIngestResult = {
       received: ordered.length,
       imported,
       skipped,
       failed,
       conversations: conversations.size,
     };
+
+    if (options.throwOnFailure && failed > 0) {
+      throw new HistoryIngestError(summary);
+    }
+
+    return summary;
   }
 
   private historyCutoff(): number {
@@ -433,7 +675,11 @@ export class WebhookService {
     const audioDurationSeconds = type === MessageType.AUDIO ? readAudioDuration(message) : null;
     const linkPreview = extractWhatsAppLinkPreview(message);
     const externalMessageId = readString(key?.id);
-    const quoted = await this.resolveInboundQuoted(instance.tenantId, message);
+    const quoted = await this.resolveInboundQuoted(
+      instance.tenantId,
+      instance.id,
+      message,
+    );
     const contacts = extractContacts(message);
     const occurredAt = readMessageTimestamp(data);
     const recent =
@@ -446,6 +692,7 @@ export class WebhookService {
 
     const persisted = await this.persistWebhookMessage({
       tenantId: instance.tenantId,
+      whatsappInstanceId: instance.id,
       conversationId: conversation.id,
       direction,
       content,
@@ -679,6 +926,23 @@ export class WebhookService {
       }`,
     );
 
+    if (result.status !== WhatsAppInstanceStatus.CONNECTED) {
+      const history = await this.instances.markHistorySyncInterrupted(
+        instance.instanceName,
+        'connection_lost',
+      );
+      if (history?.changed) {
+        this.realtime.emitToTenant(instance.tenantId, 'whatsapp.history.updated', {
+          instanceId: history.instanceId,
+          status: history.status,
+          progress: history.progress,
+          startedAt: history.startedAt,
+          completedAt: history.completedAt,
+          error: history.error,
+        });
+      }
+    }
+
     if (!result.changed) {
       return;
     }
@@ -771,6 +1035,7 @@ export class WebhookService {
 
       const updated = await this.messages.updateOutboundStatusByExternalId({
         tenantId: instance.tenantId,
+        whatsappInstanceId: instance.id,
         externalMessageId,
         status,
       });
@@ -866,14 +1131,20 @@ export class WebhookService {
     });
   }
 
+  /**
+   * Atomically claims an event for processing. A duplicate is only ignored when
+   * its previous delivery was fully processed (`processedAt` set). An event that
+   * was claimed but never completed is retried, so a database/processing failure
+   * cannot silently discard it.
+   */
   private async recordEvent(input: {
     tenantId: string;
     externalEventId: string;
     eventType: string;
     payload: unknown;
-  }): Promise<boolean> {
+  }): Promise<{ id: string; duplicate: boolean }> {
     try {
-      await this.prisma.webhookEvent.create({
+      const created = await this.prisma.webhookEvent.create({
         data: {
           tenantId: input.tenantId,
           provider: 'evolution',
@@ -881,13 +1152,26 @@ export class WebhookService {
           eventType: input.eventType,
           payload: input.payload as Prisma.InputJsonValue,
         },
+        select: { id: true },
       });
-      return false;
+      return { id: created.id, duplicate: false };
     } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-        return true;
+      if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') {
+        throw error;
       }
-      throw error;
+
+      const existing = await this.prisma.webhookEvent.findFirst({
+        where: {
+          provider: 'evolution',
+          externalEventId: input.externalEventId,
+        },
+        select: { id: true, processedAt: true },
+      });
+      if (!existing) {
+        throw error;
+      }
+
+      return { id: existing.id, duplicate: existing.processedAt !== null };
     }
   }
 
@@ -1029,6 +1313,7 @@ export class WebhookService {
    */
   private async persistWebhookMessage(input: {
     tenantId: string;
+    whatsappInstanceId: string;
     conversationId: string;
     direction: MessageDirection;
     content: string | null;
@@ -1044,7 +1329,11 @@ export class WebhookService {
 
     if (input.direction === MessageDirection.OUTBOUND && input.externalMessageId) {
       const existing = await this.prisma.message.findFirst({
-        where: { tenantId: input.tenantId, externalMessageId: input.externalMessageId },
+        where: {
+          tenantId: input.tenantId,
+          externalMessageId: input.externalMessageId,
+          conversation: { whatsappInstanceId: input.whatsappInstanceId },
+        },
         select: { id: true, direction: true, metadata: true },
       });
       if (existing) {
@@ -1112,7 +1401,11 @@ export class WebhookService {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
         // A concurrent event (or the CRM send itself) stored the same provider id.
         const raced = await this.prisma.message.findFirst({
-          where: { tenantId: input.tenantId, externalMessageId: input.externalMessageId },
+          where: {
+            tenantId: input.tenantId,
+            externalMessageId: input.externalMessageId,
+            conversation: { whatsappInstanceId: input.whatsappInstanceId },
+          },
           select: { id: true },
         });
         return raced ? { id: raced.id, created: false } : null;
@@ -1124,6 +1417,7 @@ export class WebhookService {
   /** Extracts the quoted message context of a reply, enriching it from the local history. */
   private async resolveInboundQuoted(
     tenantId: string,
+    whatsappInstanceId: string,
     message: unknown,
   ): Promise<QuotedMessageInfo | null> {
     const contextInfo = findContextInfo(message);
@@ -1142,7 +1436,11 @@ export class WebhookService {
 
     if (externalId) {
       const local = await this.prisma.message.findFirst({
-        where: { tenantId, externalMessageId: externalId },
+        where: {
+          tenantId,
+          externalMessageId: externalId,
+          conversation: { whatsappInstanceId },
+        },
         select: { id: true, direction: true, senderName: true, content: true, type: true },
       });
       if (local) {
@@ -1651,6 +1949,37 @@ function isMediaType(type: MessageType): boolean {
     type === MessageType.DOCUMENT ||
     type === MessageType.STICKER
   );
+}
+
+const EVENT_TYPE_ALIASES: Record<string, string> = {
+  MESSAGES_SET: 'messages.set',
+  MESSAGES_UPSERT: 'messages.upsert',
+  MESSAGES_UPDATE: 'messages.update',
+  MESSAGES_EDITED: 'messages.edited',
+  MESSAGING_HISTORY_SET: 'messaging-history.set',
+  GROUPS_UPSERT: 'groups.upsert',
+  GROUPS_UPDATE: 'groups.update',
+  PRESENCE_UPDATE: 'presence.update',
+  CONNECTION_UPDATE: 'connection.update',
+};
+
+function normalizeEventType(value: string): string {
+  return EVENT_TYPE_ALIASES[value.toUpperCase()] ?? value.toLowerCase();
+}
+
+function readProgress(value: unknown): number | null {
+  const numeric =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string' && value.length > 0
+        ? Number(value)
+        : Number.NaN;
+
+  if (!Number.isFinite(numeric) || numeric < 0 || numeric > 100) {
+    return null;
+  }
+
+  return Math.round(numeric);
 }
 
 function readString(value: unknown): string | null {

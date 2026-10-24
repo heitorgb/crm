@@ -7,6 +7,7 @@ import {
   canEditMessage,
   computeMessageScrollTop,
   findQuotedMessage,
+  readQuotedMessage,
 } from './attendance-utils';
 
 const WINDOW_MS = 5 * 60 * 1000;
@@ -206,6 +207,77 @@ describe('findQuotedMessage', () => {
     expect(
       findQuotedMessage([message({ id: 'orig-1' })], 'conv-1', quoted({ messageId: 'orig-1' })),
     ).not.toBeNull();
+  });
+});
+
+describe('readQuotedMessage', () => {
+  it('ignores the empty quote persisted by older normalization', () => {
+    const audio = message({
+      type: 'AUDIO',
+      metadata: {
+        quoted: {
+          messageId: null,
+          externalId: null,
+          authorName: null,
+          authorJid: null,
+          fromMe: false,
+          content: null,
+          type: 'UNKNOWN',
+        },
+      },
+    });
+
+    expect(readQuotedMessage(audio)).toBeNull();
+  });
+
+  it('keeps a quote whose referenced message is still unavailable locally', () => {
+    const audio = message({
+      type: 'AUDIO',
+      metadata: {
+        quoted: {
+          messageId: null,
+          externalId: 'wamid.original',
+          authorName: 'Ana',
+          authorJid: 'ana@s.whatsapp.net',
+          fromMe: false,
+          content: null,
+          type: 'TEXT',
+        },
+      },
+    });
+
+    expect(readQuotedMessage(audio)).toEqual({
+      messageId: null,
+      externalId: 'wamid.original',
+      authorName: 'Ana',
+      authorJid: 'ana@s.whatsapp.net',
+      fromMe: false,
+      content: null,
+      type: 'TEXT',
+    });
+  });
+
+  it('keeps a quote resolved to a local message by its internal id', () => {
+    const audio = message({
+      type: 'AUDIO',
+      metadata: {
+        quoted: {
+          messageId: 'original-1',
+          externalId: null,
+          authorName: null,
+          authorJid: null,
+          fromMe: true,
+          content: null,
+          type: 'AUDIO',
+        },
+      },
+    });
+
+    expect(readQuotedMessage(audio)).toMatchObject({
+      messageId: 'original-1',
+      fromMe: true,
+      type: 'AUDIO',
+    });
   });
 });
 

@@ -1665,6 +1665,304 @@ describe('WhatsApp attendance (integration)', () => {
         new Set([contacts[0].id]),
       );
     });
+
+    describe('quoted replies', () => {
+      const GROUP_JID = '120363000000000001@g.us';
+      const PARTICIPANT = '5511888888888@s.whatsapp.net';
+
+      function audioWithContextPayload(input: {
+        instanceName: string;
+        messageId: string;
+        contextInfo: Record<string, unknown>;
+        remoteJid?: string;
+        participant?: string;
+        pushName?: string;
+        seconds?: number;
+      }) {
+        const {
+          instanceName,
+          messageId,
+          contextInfo,
+          remoteJid = '5511999999999@s.whatsapp.net',
+          participant,
+          pushName = 'Contato Teste',
+          seconds = 5,
+        } = input;
+        return {
+          event: 'messages.upsert',
+          instance: instanceName,
+          data: {
+            key: {
+              remoteJid,
+              fromMe: false,
+              id: messageId,
+              ...(participant ? { participant } : {}),
+            },
+            pushName,
+            messageType: 'audioMessage',
+            message: {
+              audioMessage: {
+                mimetype: 'audio/ogg; codecs=opus',
+                ptt: true,
+                seconds,
+                contextInfo,
+              },
+              messageContextInfo: { threadId: [] },
+            },
+          },
+        };
+      }
+
+      it('does not quote an audio whose contextInfo only carries technical metadata', async () => {
+        const instanceName = `audio-context-${randomUUID()}`;
+        await createInstance(ownerA, instanceName);
+        const messageId = randomUUID();
+
+        const response = await postWebhook(
+          audioWithContextPayload({
+            instanceName,
+            messageId,
+            remoteJid: GROUP_JID,
+            participant: PARTICIPANT,
+            pushName: 'Maria',
+            seconds: 7,
+            contextInfo: {
+              mentionedJid: [],
+              groupMentions: [],
+              statusAttributions: [],
+            },
+          }),
+        );
+
+        expect(response.statusCode).toBe(200);
+        const message = await prisma.message.findFirstOrThrow({
+          where: { tenantId: ownerA.tenantId, externalMessageId: messageId },
+        });
+        const metadata = message.metadata as {
+          quoted?: unknown;
+          audioDurationSeconds?: number;
+        };
+        expect(metadata.quoted).toBeUndefined();
+        expect(metadata.audioDurationSeconds).toBe(7);
+        expect(message.type).toBe('AUDIO');
+        expect(message.senderId).toBe(PARTICIPANT);
+        expect(message.senderName).toBe('Maria');
+      });
+
+      it('persists the quote when an audio explicitly replies to an earlier message', async () => {
+        const instanceName = `audio-reply-${randomUUID()}`;
+        await createInstance(ownerA, instanceName);
+        const originalId = randomUUID();
+        const audioId = randomUUID();
+
+        await postWebhook(evolutionPayload(instanceName, originalId, 'Mensagem original'));
+
+        await postWebhook(
+          audioWithContextPayload({
+            instanceName,
+            messageId: audioId,
+            contextInfo: {
+              stanzaId: originalId,
+              participant: '5511999999999@s.whatsapp.net',
+              quotedMessage: { conversation: 'Mensagem original' },
+            },
+          }),
+        );
+
+        const original = await prisma.message.findFirstOrThrow({
+          where: { tenantId: ownerA.tenantId, externalMessageId: originalId },
+        });
+        const audio = await prisma.message.findFirstOrThrow({
+          where: { tenantId: ownerA.tenantId, externalMessageId: audioId },
+        });
+        const metadata = audio.metadata as {
+          quoted?: {
+            messageId?: string | null;
+            externalId?: string | null;
+            content?: string | null;
+            type?: string;
+          };
+        };
+
+        expect(metadata.quoted).toMatchObject({
+          messageId: original.id,
+          externalId: originalId,
+          content: 'Mensagem original',
+          type: 'TEXT',
+        });
+      });
+
+      it('preserves quotes to text, image, video and document content', async () => {
+        const instanceName = `audio-quote-types-${randomUUID()}`;
+        await createInstance(ownerA, instanceName);
+        const cases = [
+          { quotedMessage: { conversation: 'texto citado' }, type: 'TEXT' },
+          { quotedMessage: { imageMessage: { mimetype: 'image/jpeg' } }, type: 'IMAGE' },
+          { quotedMessage: { videoMessage: { mimetype: 'video/mp4' } }, type: 'VIDEO' },
+          {
+            quotedMessage: { documentMessage: { mimetype: 'application/pdf' } },
+            type: 'DOCUMENT',
+          },
+        ];
+        const messageIds: string[] = [];
+
+        for (const item of cases) {
+          const messageId = randomUUID();
+          messageIds.push(messageId);
+          await postWebhook(
+            audioWithContextPayload({
+              instanceName,
+              messageId,
+              contextInfo: {
+                stanzaId: randomUUID(),
+                quotedMessage: item.quotedMessage,
+              },
+            }),
+          );
+        }
+
+        const messages = await prisma.message.findMany({
+          where: { tenantId: ownerA.tenantId, externalMessageId: { in: messageIds } },
+        });
+        const quotedTypes = messages.map(
+          (message) =>
+            (message.metadata as { quoted?: { type?: string } }).quoted?.type ?? null,
+        );
+        expect(quotedTypes).toEqual(
+          expect.arrayContaining(cases.map((item) => item.type)),
+        );
+      });
+
+      it('keeps the relationship when the reply targets an audio message', async () => {
+        const instanceName = `reply-to-audio-${randomUUID()}`;
+        await createInstance(ownerA, instanceName);
+        const originalAudioId = randomUUID();
+        const replyId = randomUUID();
+
+        await postWebhook(audioPayload(instanceName, originalAudioId));
+
+        await postWebhook({
+          event: 'messages.upsert',
+          instance: instanceName,
+          data: {
+            key: {
+              remoteJid: '5511999999999@s.whatsapp.net',
+              fromMe: false,
+              id: replyId,
+            },
+            pushName: 'Contato Teste',
+            message: {
+              extendedTextMessage: {
+                text: 'Ouvi seu áudio',
+                contextInfo: {
+                  stanzaId: originalAudioId,
+                  participant: '5511999999999@s.whatsapp.net',
+                  quotedMessage: { audioMessage: { ptt: true, seconds: 5 } },
+                },
+              },
+            },
+          },
+        });
+
+        const originalAudio = await prisma.message.findFirstOrThrow({
+          where: { tenantId: ownerA.tenantId, externalMessageId: originalAudioId },
+        });
+        expect((originalAudio.metadata as { quoted?: unknown }).quoted).toBeUndefined();
+        const reply = await prisma.message.findFirstOrThrow({
+          where: { tenantId: ownerA.tenantId, externalMessageId: replyId },
+        });
+        const metadata = reply.metadata as {
+          quoted?: {
+            messageId?: string | null;
+            externalId?: string | null;
+            type?: string;
+          };
+        };
+
+        expect(metadata.quoted).toMatchObject({
+          messageId: originalAudio.id,
+          externalId: originalAudioId,
+          type: 'AUDIO',
+        });
+      });
+
+      it('keeps an explicit reference whose quoted content is unavailable locally', async () => {
+        const instanceName = `audio-missing-quote-${randomUUID()}`;
+        await createInstance(ownerA, instanceName);
+        const audioId = randomUUID();
+        const unavailableId = randomUUID();
+
+        await postWebhook(
+          audioWithContextPayload({
+            instanceName,
+            messageId: audioId,
+            contextInfo: { stanzaId: unavailableId },
+          }),
+        );
+
+        const audio = await prisma.message.findFirstOrThrow({
+          where: { tenantId: ownerA.tenantId, externalMessageId: audioId },
+        });
+        const metadata = audio.metadata as {
+          quoted?: {
+            messageId?: string | null;
+            externalId?: string | null;
+            content?: string | null;
+            type?: string;
+          };
+        };
+
+        expect(metadata.quoted).toMatchObject({
+          messageId: null,
+          externalId: unavailableId,
+          content: null,
+          type: 'UNKNOWN',
+        });
+      });
+
+      it('applies the same normalization to history and realtime audio', async () => {
+        const instanceName = `audio-history-${randomUUID()}`;
+        await createInstance(ownerA, instanceName);
+        const messageId = randomUUID();
+
+        const response = await postWebhook({
+          event: 'messages.set',
+          instance: instanceName,
+          isLatest: true,
+          progress: 100,
+          data: [
+            {
+              key: {
+                remoteJid: GROUP_JID,
+                fromMe: false,
+                id: messageId,
+                participant: PARTICIPANT,
+              },
+              pushName: 'Maria',
+              messageTimestamp: Math.floor(Date.now() / 1000),
+              message: {
+                audioMessage: {
+                  mimetype: 'audio/ogg; codecs=opus',
+                  ptt: true,
+                  seconds: 12,
+                  contextInfo: { mentionedJid: [], groupMentions: [] },
+                },
+              },
+            },
+          ],
+        });
+
+        expect(response.statusCode).toBe(200);
+        const message = await prisma.message.findFirstOrThrow({
+          where: { tenantId: ownerA.tenantId, externalMessageId: messageId },
+        });
+        expect((message.metadata as { quoted?: unknown }).quoted).toBeUndefined();
+        expect((message.metadata as { audioDurationSeconds?: number }).audioDurationSeconds).toBe(
+          12,
+        );
+        expect(message.senderName).toBe('Maria');
+      });
+    });
   });
 
   describe('external outbound messages (fromMe)', () => {

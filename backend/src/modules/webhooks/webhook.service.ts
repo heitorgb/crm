@@ -1742,7 +1742,15 @@ export class WebhookService implements OnModuleInit {
       return null;
     }
 
+    // `contextInfo` is also used for mentions, ephemeral settings, status
+    // attributions and other technical metadata. Only `stanzaId` identifies an
+    // explicit reply; without it there is no message to quote, even when
+    // `quotedMessage` or other fields are present.
     const externalId = readString(contextInfo.stanzaId);
+    if (!externalId) {
+      return null;
+    }
+
     const authorJid = readString(contextInfo.participant);
     const quotedRaw = contextInfo.quotedMessage;
     let content = extractText(quotedRaw);

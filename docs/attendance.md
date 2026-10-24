@@ -381,10 +381,13 @@ CRM (sem dependências novas). A tela é **full-bleed**: `MainContent` deixa de 
   `{ key: { id, remoteJid, fromMe, participant }, message }`; em grupos o `participant` com o JID de
   quem escreveu a citada é obrigatório). O backend persiste o
   contexto em `Message.metadata.quoted` (`externalId`, `authorName`, `authorJid`, `fromMe`, `content`,
-  `type` e `messageId` local quando resolvido): no inbound, lendo `contextInfo.quotedMessage` do
-  webhook e enriquecendo com o histórico local para descobrir autor e direção; no outbound, a partir
-  da mensagem referenciada (sempre escopada por tenant/conversa). No reenvio de falha a citação é
-   reconstruída do metadata.
+  `type` e `messageId` local quando resolvido): no inbound, a resposta só é reconhecida quando o
+  `contextInfo` traz `stanzaId` (a referência explícita à mensagem original); o conteúdo vem de
+  `contextInfo.quotedMessage` e é enriquecido com o histórico local para descobrir autor e direção.
+  `contextInfo` com apenas menções, expiração, atribuições de status ou outros metadados técnicos não
+  cria citação, e registros antigos com citação vazia são ignorados na renderização. No outbound, a
+  citação vem da mensagem referenciada (sempre escopada por tenant/conversa). No reenvio de falha a
+  citação é reconstruída do metadata.
 - **Mensagens enviadas pelo celular / WhatsApp Web**: o webhook trata `messages.upsert` com
   `key.fromMe = true` como mensagem `OUTBOUND` enviada pela própria conta conectada, exibindo-a na
   conversa ao lado das mensagens enviadas pelo CRM. A instância, o contato e a conversa são

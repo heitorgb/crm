@@ -224,9 +224,18 @@ export function readQuotedMessage(message: ConversationMessage): QuotedMessage |
     return null;
   }
   const quoted = raw as Record<string, unknown>;
+  const messageId = typeof quoted.messageId === 'string' ? quoted.messageId : null;
+  const externalId = typeof quoted.externalId === 'string' ? quoted.externalId : null;
+  // Legacy rows may carry an empty `quoted` object created from technical
+  // `contextInfo` metadata. A reply is only renderable when it points to a
+  // message through one of its identifiers; without that there is nothing to
+  // cite and the block must not appear.
+  if (!messageId && !externalId) {
+    return null;
+  }
   return {
-    messageId: typeof quoted.messageId === 'string' ? quoted.messageId : null,
-    externalId: typeof quoted.externalId === 'string' ? quoted.externalId : null,
+    messageId,
+    externalId,
     authorName: typeof quoted.authorName === 'string' ? quoted.authorName : null,
     authorJid: typeof quoted.authorJid === 'string' ? quoted.authorJid : null,
     fromMe: quoted.fromMe === true,

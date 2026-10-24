@@ -73,6 +73,7 @@ export function addRecurrence(
   current: Date,
   recurrence: ScheduledRecurrence,
   timeZone: string,
+  weekdays: readonly number[] = [],
 ): Date {
   if (recurrence === 'ONCE') {
     return current;
@@ -81,7 +82,21 @@ export function addRecurrence(
   const parts = localParts(current, timeZone);
   const local = new Date(Date.UTC(parts.year, parts.month - 1, parts.day));
   if (recurrence === 'DAILY') {
-    local.setUTCDate(local.getUTCDate() + 1);
+    const allowed = new Set(weekdays);
+    let offset = 1;
+    if (allowed.size > 0) {
+      while (offset <= 7) {
+        const candidate = new Date(Date.UTC(parts.year, parts.month - 1, parts.day + offset));
+        if (allowed.has(isoWeekday(candidate))) {
+          break;
+        }
+        offset += 1;
+      }
+      if (offset > 7) {
+        offset = 1;
+      }
+    }
+    local.setUTCDate(local.getUTCDate() + offset);
   } else if (recurrence === 'WEEKLY') {
     local.setUTCDate(local.getUTCDate() + 7);
   } else {
@@ -115,6 +130,11 @@ export function toLocalDateTimeString(date: Date, timeZone: string): string {
   return `${pad(parts.year)}-${pad(parts.month)}-${pad(parts.day)}T${pad(parts.hour)}:${pad(
     parts.minute,
   )}`;
+}
+
+function isoWeekday(date: Date): number {
+  const day = date.getUTCDay();
+  return day === 0 ? 7 : day;
 }
 
 function localParts(date: Date, timeZone: string): LocalParts {

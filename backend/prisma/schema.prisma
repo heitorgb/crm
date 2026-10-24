@@ -1101,6 +1101,7 @@ model ScheduledMessage {
   attachmentMimeType     String?                    @map("attachment_mime_type")
   attachmentSize         Int?                       @map("attachment_size")
   recurrence             ScheduledMessageRecurrence @default(ONCE)
+  weekdays               Int[]                      @default([])
   timeZone               String                     @default("America/Sao_Paulo") @map("time_zone")
   scheduledAt            DateTime                   @map("scheduled_at")
   nextRunAt              DateTime?                  @map("next_run_at")

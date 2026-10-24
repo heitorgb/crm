@@ -13,6 +13,7 @@ import type { ScheduledMessage } from '@/types/scheduled-messages';
 import { useRetryScheduledMessage, useScheduledMessageLogs } from './queries';
 import {
   formatInTimeZone,
+  scheduleRecurrenceSummary,
   scheduledRecipientStatusLabel,
   scheduledRecipientStatusTone,
   scheduledStatusLabel,
@@ -46,6 +47,7 @@ export function ScheduledMessageDetailDialog({
               {scheduledStatusLabel[schedule.status]}
             </StatusBadge>
             <span>{schedule.recipientCount} destinatário(s)</span>
+            <span>{scheduleRecurrenceSummary(schedule)}</span>
             {schedule.nextRunAt ? (
               <span>Próximo: {formatInTimeZone(schedule.nextRunAt, schedule.timeZone)}</span>
             ) : null}

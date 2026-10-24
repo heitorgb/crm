@@ -37,6 +37,7 @@ import {
   defaultLocalDateTime,
   previewScheduledMessage,
   recurrenceLabel,
+  scheduledWeekdays,
   toLocalInput,
 } from './scheduled-message-utils';
 
@@ -86,6 +87,11 @@ export function ScheduledMessageForm({
   const [recurrence, setRecurrence] = useState<ScheduledMessageRecurrence>(
     schedule?.recurrence ?? 'ONCE',
   );
+  const [weekdays, setWeekdays] = useState<number[]>(() =>
+    schedule?.recurrence === 'DAILY' && schedule.weekdays.length > 0
+      ? [...schedule.weekdays]
+      : scheduledWeekdays.map((day) => day.value),
+  );
   const [scheduledAt, setScheduledAt] = useState(
     schedule
       ? toLocalInput(schedule.nextRunAt ?? schedule.scheduledAt, schedule.timeZone)
@@ -116,6 +122,14 @@ export function ScheduledMessageForm({
     setContent((current) => `${current}${current.endsWith(' ') || current.length === 0 ? '' : ' '}${variable}`);
   };
 
+  const toggleWeekday = (day: number): void => {
+    setWeekdays((current) =>
+      current.includes(day)
+        ? current.filter((value) => value !== day)
+        : [...current, day].sort((left, right) => left - right),
+    );
+  };
+
   const handleFileSelected = (event: ChangeEvent<HTMLInputElement>): void => {
     const selected = event.target.files?.[0] ?? null;
     event.target.value = '';
@@ -143,6 +157,10 @@ export function ScheduledMessageForm({
       setError('Informe a data e a hora do envio.');
       return;
     }
+    if (recurrence === 'DAILY' && weekdays.length === 0) {
+      setError('Selecione ao menos um dia da semana.');
+      return;
+    }
 
     const input: ScheduledMessageInput = {
       type,
@@ -150,6 +168,7 @@ export function ScheduledMessageForm({
       content: content.trim(),
       valor: valor.trim() || null,
       recurrence,
+      weekdays,
       scheduledAt,
       conversationIds: [...selectedIds],
       file,
@@ -215,6 +234,39 @@ export function ScheduledMessageForm({
               </Select>
             </FormField>
           </div>
+
+          {recurrence === 'DAILY' ? (
+            <FormField
+              id="scheduled-weekdays"
+              label="Dias da semana"
+              required
+              description="Selecione os dias em que a mensagem será enviada."
+            >
+              <div
+                id="scheduled-weekdays"
+                role="group"
+                aria-label="Dias da semana"
+                className="grid grid-cols-2 gap-2 sm:grid-cols-4"
+              >
+                {scheduledWeekdays.map((day) => {
+                  const selected = weekdays.includes(day.value);
+                  return (
+                    <Button
+                      key={day.value}
+                      type="button"
+                      variant={selected ? 'default' : 'outline'}
+                      size="sm"
+                      aria-pressed={selected}
+                      onClick={() => toggleWeekday(day.value)}
+                      className="justify-start"
+                    >
+                      <span className="truncate">{day.label}</span>
+                    </Button>
+                  );
+                })}
+              </div>
+            </FormField>
+          ) : null}
 
           <FormField id="scheduled-title" label="Título interno" required>
             <Input

@@ -61,6 +61,64 @@ export const recurrenceLabel: Record<ScheduledMessageRecurrence, string> = {
   MONTHLY: 'Mensal',
 };
 
+export interface ScheduledWeekdayOption {
+  value: number;
+  label: string;
+  shortLabel: string;
+}
+
+export const scheduledWeekdays: readonly ScheduledWeekdayOption[] = [
+  { value: 1, label: 'Segunda-feira', shortLabel: 'Segunda' },
+  { value: 2, label: 'Terça-feira', shortLabel: 'Terça' },
+  { value: 3, label: 'Quarta-feira', shortLabel: 'Quarta' },
+  { value: 4, label: 'Quinta-feira', shortLabel: 'Quinta' },
+  { value: 5, label: 'Sexta-feira', shortLabel: 'Sexta' },
+  { value: 6, label: 'Sábado', shortLabel: 'Sábado' },
+  { value: 7, label: 'Domingo', shortLabel: 'Domingo' },
+];
+
+export const ALL_WEEKDAYS = scheduledWeekdays.map((day) => day.value);
+
+export function weekdaysLabel(weekdays: number[]): string {
+  const labels = scheduledWeekdays
+    .filter((day) => weekdays.includes(day.value))
+    .map((day) => day.shortLabel);
+  if (labels.length === 0) {
+    return 'Todos os dias';
+  }
+  if (labels.length === 1) {
+    return labels[0];
+  }
+  const sentence = labels.map((label, index) =>
+    index === 0 ? label : label.charAt(0).toLocaleLowerCase('pt-BR') + label.slice(1),
+  );
+  return `${sentence.slice(0, -1).join(', ')} e ${sentence[sentence.length - 1]}`;
+}
+
+export function formatTimeInTimeZone(value: string | Date, timeZone: string): string {
+  const date = typeof value === 'string' ? new Date(value) : value;
+  return new Intl.DateTimeFormat('pt-BR', {
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone,
+  }).format(date);
+}
+
+export function scheduleRecurrenceSummary(schedule: {
+  recurrence: ScheduledMessageRecurrence;
+  weekdays: number[];
+  timeZone: string;
+  scheduledAt: string;
+  nextRunAt: string | null;
+}): string {
+  if (schedule.recurrence !== 'DAILY') {
+    return recurrenceLabel[schedule.recurrence];
+  }
+  const days = weekdaysLabel(schedule.weekdays);
+  const time = formatTimeInTimeZone(schedule.nextRunAt ?? schedule.scheduledAt, schedule.timeZone);
+  return `${days} · ${time}`;
+}
+
 export function formatInTimeZone(value: string | Date, timeZone: string): string {
   const date = typeof value === 'string' ? new Date(value) : value;
   return new Intl.DateTimeFormat('pt-BR', {

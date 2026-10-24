@@ -33,6 +33,7 @@ import {
   toLocalDateTimeString,
   zonedTimeToUtc,
 } from './scheduled-message-time.js';
+import { resolveUpdatedWeekdays, resolveWeekdays } from './scheduled-message-weekdays.js';
 
 export interface ScheduledMessageAttachmentFile {
   buffer: Buffer;
@@ -48,6 +49,7 @@ export interface CreateScheduledMessageInput {
   content: string;
   valor: string | null;
   recurrence: string;
+  weekdays?: unknown;
   scheduledAt: string;
   conversationIds: string[];
   file: ScheduledMessageAttachmentFile | null;
@@ -59,6 +61,7 @@ export interface UpdateScheduledMessageInput {
   content?: string;
   valor?: string | null;
   recurrence?: string;
+  weekdays?: unknown;
   scheduledAt?: string;
   conversationIds?: string[];
   file: ScheduledMessageAttachmentFile | null;
@@ -81,6 +84,7 @@ export interface ScheduledMessageView {
   content: string;
   valor: string | null;
   recurrence: ScheduledMessageRecurrence;
+  weekdays: number[];
   timeZone: string;
   scheduledAt: Date;
   nextRunAt: Date | null;
@@ -151,6 +155,7 @@ const SCHEDULE_SELECT = {
   content: true,
   valor: true,
   recurrence: true,
+  weekdays: true,
   timeZone: true,
   scheduledAt: true,
   nextRunAt: true,
@@ -228,6 +233,7 @@ export class ScheduledMessagesService {
   async create(input: CreateScheduledMessageInput): Promise<ScheduledMessageView> {
     const type = parseType(input.type);
     const recurrence = parseRecurrence(input.recurrence);
+    const weekdays = resolveWeekdays(recurrence, input.weekdays);
     const title = input.title.trim();
     const content = input.content.trim();
     if (title.length === 0 || content.length === 0) {
@@ -251,6 +257,7 @@ export class ScheduledMessagesService {
           content,
           valor: normalizeOptional(input.valor),
           recurrence,
+          weekdays,
           timeZone,
           scheduledAt,
           nextRunAt: scheduledAt,
@@ -303,6 +310,10 @@ export class ScheduledMessagesService {
 
     const type = input.type ? parseType(input.type) : current.type;
     const recurrence = input.recurrence ? parseRecurrence(input.recurrence) : current.recurrence;
+    const weekdays = resolveUpdatedWeekdays(recurrence, input.weekdays, {
+      recurrence: current.recurrence,
+      weekdays: current.weekdays,
+    });
     const title = input.title !== undefined ? input.title.trim() : current.title;
     const content = input.content !== undefined ? input.content.trim() : current.content;
     if (title.length === 0 || content.length === 0) {
@@ -376,6 +387,7 @@ export class ScheduledMessagesService {
             content,
             valor: input.valor !== undefined ? normalizeOptional(input.valor) : current.valor,
             recurrence,
+            weekdays,
             scheduledAt: input.scheduledAt !== undefined ? scheduledAt : current.scheduledAt,
             nextRunAt: scheduledAt,
             recipientCount: recipients.length,
@@ -414,12 +426,16 @@ export class ScheduledMessagesService {
       return toView(current);
     }
 
-    await this.prisma.$transaction([
-      this.prisma.scheduledMessage.update({
-        where: { id },
-        data: { status: ScheduledMessageStatus.CANCELED, canceledAt: new Date() },
-      }),
-      this.prisma.scheduledMessageRecipient.updateMany({
+    await this.prisma.$transaction(async (tx) => {
+      await tx.scheduledMessage.updateMany({
+        where: { id, tenantId, status: { not: ScheduledMessageStatus.CANCELED } },
+        data: {
+          status: ScheduledMessageStatus.CANCELED,
+          canceledAt: new Date(),
+          nextRunAt: null,
+        },
+      });
+      await tx.scheduledMessageRecipient.updateMany({
         where: {
           tenantId,
           scheduledMessageId: id,
@@ -431,8 +447,8 @@ export class ScheduledMessagesService {
           },
         },
         data: { status: ScheduledMessageRecipientStatus.SKIPPED },
-      }),
-    ]);
+      });
+    });
 
     return this.findOne(id);
   }
@@ -464,6 +480,7 @@ export class ScheduledMessagesService {
         content: original.content,
         valor: original.valor,
         recurrence: original.recurrence,
+        weekdays: original.weekdays,
         timeZone,
         scheduledAt,
         nextRunAt: scheduledAt,
@@ -874,6 +891,7 @@ export function toView(schedule: PrismaSchedule): ScheduledMessageView {
     content: schedule.content,
     valor: schedule.valor,
     recurrence: schedule.recurrence,
+    weekdays: schedule.weekdays,
     timeZone: schedule.timeZone,
     scheduledAt: schedule.scheduledAt,
     nextRunAt: schedule.nextRunAt,

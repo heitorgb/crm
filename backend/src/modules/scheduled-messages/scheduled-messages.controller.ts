@@ -63,6 +63,7 @@ export class ScheduledMessagesController {
       content: parsed.fields.content ?? '',
       valor: parsed.fields.valor ?? null,
       recurrence: parsed.fields.recurrence ?? 'ONCE',
+      weekdays: parseWeekdaysField(parsed.fields.weekdays),
       scheduledAt: parsed.fields.scheduledAt ?? '',
       conversationIds: parseConversationIds(parsed.fields.recipientConversationIds),
       file: parsed.file,
@@ -106,6 +107,7 @@ export class ScheduledMessagesController {
       content: parsed.fields.content,
       valor: parsed.fields.valor,
       recurrence: parsed.fields.recurrence,
+      weekdays: parseWeekdaysField(parsed.fields.weekdays),
       scheduledAt: parsed.fields.scheduledAt,
       conversationIds:
         parsed.fields.recipientConversationIds !== undefined
@@ -206,6 +208,17 @@ function parseConversationIds(value: string | undefined): string[] {
     );
   }
   return [...new Set(parsed.filter((item): item is string => typeof item === 'string'))];
+}
+
+function parseWeekdaysField(value: string | undefined): unknown {
+  if (value === undefined || value.trim() === '') {
+    return undefined;
+  }
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
 }
 
 function sanitizeFileName(fileName: string): string {

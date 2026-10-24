@@ -40,6 +40,12 @@ export class ScheduledMessageEmptyContentError extends AppException {
   }
 }
 
+export class ScheduledMessageInvalidWeekdaysError extends AppException {
+  constructor(message = 'Selecione ao menos um dia da semana.') {
+    super('SCHEDULED_MESSAGE_INVALID_WEEKDAYS', message, 400);
+  }
+}
+
 export class ScheduledMessageInvalidTypeError extends AppException {
   constructor() {
     super('SCHEDULED_MESSAGE_INVALID_TYPE', 'Tipo de mensagem inválido.', 400);

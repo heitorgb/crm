@@ -8,6 +8,7 @@ import {
   Loader2,
   Pencil,
   RefreshCw,
+  Repeat,
   XCircle,
 } from 'lucide-react';
 import { ConfirmDialog } from '@/components/common/confirm-dialog';
@@ -38,6 +39,7 @@ import { ScheduledMessageDetailDialog } from './scheduled-message-detail-dialog'
 import { ScheduledMessageForm } from './scheduled-message-form';
 import {
   formatInTimeZone,
+  scheduleRecurrenceSummary,
   scheduledStatusLabel,
   scheduledStatusTone,
   scheduledTypeLabel,
@@ -248,11 +250,11 @@ export function ScheduledMessagesPage() {
                         ? `Último envio: ${formatInTimeZone(schedule.lastRunAt, schedule.timeZone)}`
                         : 'Sem próximo envio'}
                   </p>
-                  <p>
-                    {schedule.recipientCount} destinatário(s) · {schedule.recurrence === 'ONCE'
-                      ? 'única'
-                      : schedule.recurrence.toLowerCase()}
+                  <p className="flex items-center gap-1.5">
+                    <Repeat className="size-3.5 shrink-0" />
+                    {scheduleRecurrenceSummary(schedule)}
                   </p>
+                  <p>{schedule.recipientCount} destinatário(s)</p>
                 </div>
 
                 <div className="mt-auto flex items-center justify-end gap-1 border-t border-border pt-2">
@@ -278,29 +280,40 @@ export function ScheduledMessagesPage() {
                     <Copy />
                   </Button>
                   {canManage && schedule.status === 'SCHEDULED' ? (
-                    <>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="size-8"
-                        onClick={() => void openEdit(schedule)}
-                        disabled={loadingRecipients}
-                        title="Editar"
-                        aria-label="Editar"
-                      >
-                        {loadingRecipients ? <Loader2 className="animate-spin" /> : <Pencil />}
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="size-8 text-danger"
-                        onClick={() => setPendingCancel(schedule)}
-                        title="Cancelar agendamento"
-                        aria-label="Cancelar agendamento"
-                      >
-                        <XCircle />
-                      </Button>
-                    </>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="size-8"
+                      onClick={() => void openEdit(schedule)}
+                      disabled={loadingRecipients}
+                      title="Editar"
+                      aria-label="Editar"
+                    >
+                      {loadingRecipients ? <Loader2 className="animate-spin" /> : <Pencil />}
+                    </Button>
+                  ) : null}
+                  {canManage &&
+                  (schedule.status === 'SCHEDULED' ||
+                    (schedule.recurrence !== 'ONCE' && schedule.status === 'PROCESSING')) ? (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="size-8 text-danger"
+                      onClick={() => setPendingCancel(schedule)}
+                      disabled={cancel.isPending}
+                      title={
+                        schedule.recurrence === 'ONCE'
+                          ? 'Cancelar agendamento'
+                          : 'Finalizar recorrência'
+                      }
+                      aria-label={
+                        schedule.recurrence === 'ONCE'
+                          ? 'Cancelar agendamento'
+                          : 'Finalizar recorrência'
+                      }
+                    >
+                      <XCircle />
+                    </Button>
                   ) : null}
                 </div>
               </Card>
@@ -338,13 +351,21 @@ export function ScheduledMessagesPage() {
         onOpenChange={(open) => {
           if (!open) setPendingCancel(null);
         }}
-        title="Cancelar mensagem agendada"
+        title={
+          pendingCancel?.recurrence === 'ONCE'
+            ? 'Cancelar mensagem agendada'
+            : 'Finalizar recorrência'
+        }
         description={
           pendingCancel
-            ? `O agendamento "${pendingCancel.title}" será cancelado. Envios já realizados não serão desfeitos.`
+            ? pendingCancel.recurrence === 'ONCE'
+              ? `O agendamento "${pendingCancel.title}" será cancelado. Envios já realizados não serão desfeitos.`
+              : `A recorrência de "${pendingCancel.title}" será finalizada. Não haverá novos envios após a finalização. Os envios já realizados e o histórico serão preservados.`
             : undefined
         }
-        confirmLabel="Cancelar agendamento"
+        confirmLabel={
+          pendingCancel?.recurrence === 'ONCE' ? 'Cancelar agendamento' : 'Finalizar recorrência'
+        }
         cancelLabel="Voltar"
         destructive
         loading={cancel.isPending}

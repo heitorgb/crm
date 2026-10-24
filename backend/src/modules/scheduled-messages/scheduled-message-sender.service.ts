@@ -1,6 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { ScheduledMessageRecipientStatus, ScheduledMessageStatus } from '@prisma/client';
+import { Prisma, ScheduledMessageRecipientStatus, ScheduledMessageStatus } from '@prisma/client';
 import { AppException } from '../../common/errors/app.exception.js';
 import { TenantContextService } from '../../common/tenant-context/tenant-context.service.js';
 import type { TenantContext } from '../../common/tenant-context/tenant-context.types.js';
@@ -87,10 +87,14 @@ export class ScheduledMessageSenderService {
         const claim = await this.prisma.scheduledMessageRecipient.updateMany({
           where: {
             id: recipient.id,
+            tenantId,
             status: {
               in: [ScheduledMessageRecipientStatus.PENDING, ScheduledMessageRecipientStatus.FAILED],
             },
             OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: now } }],
+            scheduledMessage: {
+              is: { status: { not: ScheduledMessageStatus.CANCELED } },
+            },
           },
           data: {
             status: ScheduledMessageRecipientStatus.PROCESSING,
@@ -238,6 +242,9 @@ export class ScheduledMessageSenderService {
         status: ScheduledMessageRecipientStatus.FAILED,
         attempts: { lt: this.config.get('SCHEDULED_MESSAGE_MAX_ATTEMPTS') },
         nextAttemptAt: { lte: now },
+        scheduledMessage: {
+          is: { status: { not: ScheduledMessageStatus.CANCELED } },
+        },
       },
       select: { tenantId: true, scheduledMessageId: true, scheduledFor: true },
       take: 100,
@@ -258,6 +265,7 @@ export class ScheduledMessageSenderService {
     schedule: {
       id: string;
       recurrence: 'ONCE' | 'DAILY' | 'WEEKLY' | 'MONTHLY';
+      weekdays: number[];
       timeZone: string;
       status: ScheduledMessageStatus;
       nextRunAt: Date | null;
@@ -296,8 +304,12 @@ export class ScheduledMessageSenderService {
     });
 
     if (schedule.recurrence === 'ONCE') {
-      await this.prisma.scheduledMessage.update({
-        where: { id: schedule.id },
+      await this.prisma.scheduledMessage.updateMany({
+        where: {
+          id: schedule.id,
+          tenantId,
+          status: { not: ScheduledMessageStatus.CANCELED },
+        },
         data: {
           status:
             failed === 0 && pending === 0
@@ -318,15 +330,29 @@ export class ScheduledMessageSenderService {
       scheduledFor,
       schedule.recurrence as ScheduledRecurrence,
       schedule.timeZone,
+      schedule.weekdays,
     );
-    await this.cloneRecipients(tenantId, schedule.id, scheduledFor, nextRunAt);
-    await this.prisma.scheduledMessage.update({
-      where: { id: schedule.id },
-      data: {
-        status: ScheduledMessageStatus.SCHEDULED,
-        nextRunAt,
-        lastRunAt: new Date(),
-      },
+
+    await this.prisma.$transaction(async (tx) => {
+      const transition = await tx.scheduledMessage.updateMany({
+        where: {
+          id: schedule.id,
+          tenantId,
+          status: {
+            in: [ScheduledMessageStatus.SCHEDULED, ScheduledMessageStatus.PROCESSING],
+          },
+          nextRunAt: scheduledFor,
+        },
+        data: {
+          status: ScheduledMessageStatus.SCHEDULED,
+          nextRunAt,
+          lastRunAt: new Date(),
+        },
+      });
+      if (transition.count === 0) {
+        return;
+      }
+      await this.cloneRecipients(tx, tenantId, schedule.id, scheduledFor, nextRunAt);
     });
 
     if (hasRetryableFailures > 0) {
@@ -337,12 +363,13 @@ export class ScheduledMessageSenderService {
   }
 
   private async cloneRecipients(
+    tx: Prisma.TransactionClient,
     tenantId: string,
     scheduleId: string,
     currentOccurrence: Date,
     nextOccurrence: Date,
   ): Promise<void> {
-    const current = await this.prisma.scheduledMessageRecipient.findMany({
+    const current = await tx.scheduledMessageRecipient.findMany({
       where: { tenantId, scheduledMessageId: scheduleId, scheduledFor: currentOccurrence },
       select: {
         recipientKey: true,
@@ -357,7 +384,7 @@ export class ScheduledMessageSenderService {
       return;
     }
 
-    await this.prisma.scheduledMessageRecipient.createMany({
+    await tx.scheduledMessageRecipient.createMany({
       data: current.map((recipient) => ({
         tenantId,
         scheduledMessageId: scheduleId,

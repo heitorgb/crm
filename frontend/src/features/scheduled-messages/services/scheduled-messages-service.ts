@@ -28,6 +28,9 @@ function buildFormData(input: ScheduledMessageInput): FormData {
     formData.append('valor', input.valor);
   }
   formData.append('recurrence', input.recurrence);
+  if (input.weekdays) {
+    formData.append('weekdays', JSON.stringify(input.weekdays));
+  }
   formData.append('scheduledAt', input.scheduledAt);
   formData.append('recipientConversationIds', JSON.stringify(input.conversationIds));
   if (input.file) {

@@ -3259,6 +3259,44 @@ describe('WhatsApp attendance (integration)', () => {
     }
   });
 
+  it('resolves a group @lid activity indicator from the sender data already stored', async () => {
+    const instanceName = `presence-lid-${randomUUID()}`;
+    const groupJid = '120363444444444444@g.us';
+    const participant = '63604221026389@lid';
+    await createInstance(ownerA, instanceName);
+    await postWebhook(
+      groupPayload(instanceName, randomUUID(), 'Olá', groupJid, participant, 'Ernandes Lourenço'),
+    );
+    const conversation = await prisma.conversation.findFirstOrThrow({
+      where: { tenantId: ownerA.tenantId, isGroup: true },
+    });
+    const emit = vi.spyOn(app.get(RealtimeService), 'emitToTenant');
+    try {
+      const response = await postWebhook({
+        event: 'presence.update',
+        instance: instanceName,
+        data: {
+          id: groupJid,
+          presences: { [participant]: { lastKnownPresence: 'recording' } },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(emit).toHaveBeenLastCalledWith(
+        ownerA.tenantId,
+        'conversation.presence',
+        expect.objectContaining({
+          conversationId: conversation.id,
+          participantId: participant,
+          participantName: 'Ernandes Lourenço',
+          state: 'recording',
+        }),
+      );
+    } finally {
+      emit.mockRestore();
+    }
+  });
+
   it('resolves direct contact photos with caching and tenant isolation', async () => {
     const instanceName = `contact-avatar-${randomUUID()}`;
     const jid = '5511999999999@s.whatsapp.net';

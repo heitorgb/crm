@@ -121,7 +121,9 @@ humano para grupos usa o JID completo; para contatos, apenas os dígitos.
   `GROUPS_UPSERT`/`GROUP_UPDATE` (quando emitidos). A foto do grupo fica em `Conversation.avatarUrl`.
 - Participantes: `GROUPS_UPSERT` (snapshot completo) e `GROUP_PARTICIPANTS_UPDATE`
   (`add`/`remove`/`promote`/`demote`) alimentam `ConversationParticipant` de forma idempotente
-  (`UNIQUE (conversationId, jid)`). Saídas são marcadas `active = false`/`leftAt`, sem apagar a
+  (`UNIQUE (conversationId, jid)`), incluindo o LID alternativo quando a Evolution o envia
+  (`jid` mantém o endereço preferido e `lid` guarda o outro identificador). Saídas são marcadas
+  `active = false`/`leftAt`, sem apagar a
   linha nem as mensagens; reentradas reativam a mesma linha. Nenhum contato é criado
   automaticamente para participantes.
 - Fotos de participantes são resolvidas sob demanda e cacheadas em `WhatsAppAvatar`
@@ -565,6 +567,19 @@ responde `409 CONVERSATION_NOT_HUMAN_OWNED`. O bot só responde enquanto a conve
   inclui `state` normalizado (`online`, `offline`, `composing`, `recording`), `participantName`/
   `participantPhone` (participantes de grupo vêm de `ConversationParticipant`), `lastSeenAt`,
   `occurredAt` (ordenação) e `receivedAt` (base do TTL no cliente).
+- O identificador de presença de grupo pode chegar como `@lid` ou `@s.whatsapp.net`, às vezes com
+  sufixo de dispositivo (`:NN`). A resolução remove o sufixo e procura o participante pelo JID
+  principal, pelo LID alternativo (`ConversationParticipant.lid`) e pelo telefone normalizado,
+  nessa ordem, sempre dentro da conversa/tenant/instância. O nome prioriza o contato CRM associado
+  ao telefone (quando não é apenas o telefone), depois o nome sincronizado do participante e, por
+  fim, o `senderName` da mensagem mais recente daquele remetente na conversa. Sem correspondência
+  exata, o payload mantém `participantName`/`participantPhone` nulos e a UI mostra apenas
+  “digitando…”/“gravando áudio…”, nunca o JID técnico.
+- O diretório de participantes é mantido em memória por 30 s (chave tenant + instância + conversa)
+  e os nomes de remetente por 15 s, limitado a 500 conversas. O cache é descartado ao receber
+  `groups.upsert`, `groups.update` ou `group-participants.update`. Assim uma sequência de eventos
+  de digitação/gravação não consulta o banco a cada evento, sem reutilizar identidade entre tenants
+  ou instâncias.
 - Presença é transitória: não grava `WebhookEvent`, não cria mensagem/conversa e não passa pela
   deduplicação de mensagens. A UI mantém o estado apenas em memória, por conversa.
 - No cabeçalho, o indicador mostra `Online`, `Visto por último …` (somente com `lastSeen` válido e

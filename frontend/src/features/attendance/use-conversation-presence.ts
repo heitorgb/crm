@@ -176,7 +176,7 @@ export function useConversationPresence(conversationId: string): ConversationPre
 }
 
 function participantLabel(presence: ConversationPresence): string | null {
-  return presence.participantName ?? presence.participantPhone ?? presence.participantId;
+  return presence.participantName ?? presence.participantPhone;
 }
 
 export function presenceLabel(

@@ -141,6 +141,7 @@ describe('WhatsAppConversationSyncService groups', () => {
         participants: [
           {
             id: '5511888888888@s.whatsapp.net',
+            lid: '63604221026389@lid',
             name: 'Bruno',
             phoneNumber: '5511888888888',
             admin: 'admin',
@@ -160,6 +161,7 @@ describe('WhatsAppConversationSyncService groups', () => {
         tenantId: 'tenant-1',
         conversationId: 'conversation-1',
         jid: '5511888888888@s.whatsapp.net',
+        lid: '63604221026389@lid',
         phone: '5511888888888',
         name: 'Bruno',
         isAdmin: true,

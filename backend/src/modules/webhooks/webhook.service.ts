@@ -59,6 +59,35 @@ export interface HistoryIngestResult {
 const HISTORY_REALTIME_WINDOW_MS = 15 * 60 * 1000;
 const WEBHOOK_REPLAY_LOOKBACK_MS = 24 * 60 * 60 * 1000;
 const WEBHOOK_REPLAY_LIMIT = 100;
+const PRESENCE_DIRECTORY_TTL_MS = 30_000;
+const PRESENCE_NAME_TTL_MS = 15_000;
+const PRESENCE_DIRECTORY_CACHE_LIMIT = 500;
+
+interface PresenceIdentity {
+  name: string | null;
+  phone: string | null;
+}
+
+interface PresenceNameEntry {
+  name: string | null;
+  expiresAt: number;
+}
+
+interface PresenceDirectory {
+  expiresAt: number;
+  byJid: Map<string, PresenceIdentity | null>;
+  byLid: Map<string, PresenceIdentity | null>;
+  byPhone: Map<string, PresenceIdentity | null>;
+  contactNames: Map<string, string | null>;
+  senderNames: Map<string, PresenceNameEntry>;
+}
+
+interface PresenceActivity {
+  participantId: string;
+  state: PresenceState;
+  lastSeenAt: Date | null;
+  identity: PresenceIdentity;
+}
 
 class HistoryIngestError extends Error {
   constructor(readonly result: HistoryIngestResult) {
@@ -70,6 +99,7 @@ class HistoryIngestError extends Error {
 @Injectable()
 export class WebhookService implements OnModuleInit {
   private readonly logger = new Logger(WebhookService.name);
+  private readonly presenceDirectories = new Map<string, PresenceDirectory>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -300,11 +330,13 @@ export class WebhookService implements OnModuleInit {
   ): Promise<WebhookIngestResult> {
     if (eventType === 'groups.upsert' || eventType === 'groups.update') {
       await this.handleGroupUpsert(instance, payload, eventType === 'groups.upsert');
+      this.presenceDirectories.clear();
       return { accepted: true };
     }
 
     if (eventType === 'group-participants.update') {
       await this.handleGroupParticipantsUpdate(instance, payload);
+      this.presenceDirectories.clear();
       return { accepted: true };
     }
 
@@ -923,6 +955,10 @@ export class WebhookService implements OnModuleInit {
 
     const receivedAt = new Date();
     const occurredAt = readEventTimestamp(payload.date_time) ?? receivedAt;
+    const directory = conversation.isGroup
+      ? await this.getPresenceDirectory(instance.tenantId, instance.id, conversation.id)
+      : null;
+    const activities: PresenceActivity[] = [];
 
     for (const [participantId, presence] of Object.entries(presences)) {
       if (!isRecord(presence)) {
@@ -935,33 +971,238 @@ export class WebhookService implements OnModuleInit {
         continue;
       }
 
-      let participantName = conversation.isGroup ? null : (conversation.contact?.name ?? null);
-      let participantPhone = phoneFromJid(participantId);
-
-      if (conversation.isGroup) {
-        const participant = await this.prisma.conversationParticipant.findUnique({
-          where: {
-            conversationId_jid: { conversationId: conversation.id, jid: participantId },
-          },
-          select: { name: true, phone: true },
-        });
-        participantName = participant?.name ?? participantName;
-        participantPhone = participant?.phone ?? participantPhone;
+      let identity: PresenceIdentity;
+      if (directory) {
+        identity = resolvePresenceIdentity(directory, participantId) ?? {
+          name: null,
+          phone: phoneFromJid(participantId),
+        };
+        identity.phone ??= phoneFromJid(participantId);
+      } else {
+        identity = {
+          name: conversation.contact?.name ?? null,
+          phone: phoneFromJid(participantId),
+        };
       }
 
       const lastSeenAt =
         state === 'offline' ? readLastSeenTimestamp(presence.lastSeen, receivedAt) : null;
 
+      activities.push({ participantId, state, lastSeenAt, identity });
+    }
+
+    if (directory && activities.length > 0) {
+      await this.fillPresenceNames(instance.tenantId, conversation.id, directory, activities);
+    }
+
+    for (const activity of activities) {
       this.realtime.emitToTenant(instance.tenantId, 'conversation.presence', {
         conversationId: conversation.id,
-        participantId,
-        participantName,
-        participantPhone,
-        state,
-        lastSeenAt: lastSeenAt ? lastSeenAt.toISOString() : null,
+        participantId: activity.participantId,
+        participantName: activity.identity.name,
+        participantPhone: activity.identity.phone,
+        state: activity.state,
+        lastSeenAt: activity.lastSeenAt ? activity.lastSeenAt.toISOString() : null,
         occurredAt: occurredAt.toISOString(),
         receivedAt: receivedAt.toISOString(),
       });
+    }
+  }
+
+  private async getPresenceDirectory(
+    tenantId: string,
+    whatsappInstanceId: string,
+    conversationId: string,
+  ): Promise<PresenceDirectory> {
+    const cacheKey = `${tenantId}:${whatsappInstanceId}:${conversationId}`;
+    const cached = this.presenceDirectories.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached;
+    }
+
+    const participants = await this.prisma.conversationParticipant.findMany({
+      where: { tenantId, conversationId, active: true },
+      select: { jid: true, lid: true, phone: true, name: true },
+    });
+    const phones = [
+      ...new Set(
+        participants
+          .map((participant) => participant.phone)
+          .filter((phone): phone is string => phone !== null),
+      ),
+    ];
+    const contacts =
+      phones.length > 0
+        ? await this.prisma.contact.findMany({
+            where: { tenantId, phone: { in: phones } },
+            select: { phone: true, name: true },
+          })
+        : [];
+    const contactNameByPhone = new Map(
+      contacts.flatMap((contact) =>
+        contact.phone ? [[contact.phone, contact.name] as const] : [],
+      ),
+    );
+
+    const directory: PresenceDirectory = {
+      expiresAt: Date.now() + PRESENCE_DIRECTORY_TTL_MS,
+      byJid: new Map(),
+      byLid: new Map(),
+      byPhone: new Map(),
+      contactNames: new Map(),
+      senderNames: new Map(),
+    };
+
+    for (const participant of participants) {
+      const phone = participant.phone ?? phoneFromJid(participant.jid);
+      const contactName = phone ? (contactNameByPhone.get(phone) ?? null) : null;
+      const name =
+        (contactName && contactName !== phone ? contactName : null) ?? participant.name ?? null;
+      const identity: PresenceIdentity = { name, phone };
+      const lid = participant.lid ?? lidFromJid(participant.jid);
+
+      addPresenceAlias(directory.byJid, canonicalJid(participant.jid), identity);
+      if (lid) {
+        addPresenceAlias(directory.byLid, canonicalJid(lid), identity);
+      }
+      if (phone) {
+        addPresenceAlias(directory.byPhone, phone, identity);
+        directory.contactNames.set(phone, contactName);
+      }
+    }
+
+    this.presenceDirectories.set(cacheKey, directory);
+    this.trimPresenceDirectories();
+    return directory;
+  }
+
+  private async fillPresenceNames(
+    tenantId: string,
+    conversationId: string,
+    directory: PresenceDirectory,
+    activities: PresenceActivity[],
+  ): Promise<void> {
+    const missingName = activities.filter((activity) => activity.identity.name === null);
+    if (missingName.length === 0) {
+      return;
+    }
+
+    const phonesToLoad = new Set<string>();
+    for (const activity of missingName) {
+      const phone = activity.identity.phone;
+      if (phone && !directory.contactNames.has(phone)) {
+        phonesToLoad.add(phone);
+      }
+    }
+    if (phonesToLoad.size > 0) {
+      const contacts = await this.prisma.contact.findMany({
+        where: { tenantId, phone: { in: [...phonesToLoad] } },
+        select: { phone: true, name: true },
+      });
+      const contactNameByPhone = new Map(
+        contacts.flatMap((contact) =>
+          contact.phone ? [[contact.phone, contact.name] as const] : [],
+        ),
+      );
+      for (const phone of phonesToLoad) {
+        directory.contactNames.set(phone, contactNameByPhone.get(phone) ?? null);
+      }
+    }
+
+    for (const activity of missingName) {
+      const phone = activity.identity.phone;
+      const contactName = phone ? (directory.contactNames.get(phone) ?? null) : null;
+      if (contactName && contactName !== phone) {
+        activity.identity.name = contactName;
+      }
+    }
+
+    const stillMissing = missingName.filter((activity) => activity.identity.name === null);
+    if (stillMissing.length === 0) {
+      return;
+    }
+
+    const now = Date.now();
+    const senderIds = new Set<string>();
+    for (const activity of stillMissing) {
+      const aliases = presenceLookupAliases(activity.participantId);
+      const cached = aliases
+        .map((alias) => directory.senderNames.get(alias))
+        .filter((entry): entry is PresenceNameEntry => entry !== undefined && entry.expiresAt > now);
+      const cachedName = cached.find((entry) => entry.name)?.name;
+      if (cachedName) {
+        activity.identity.name = cachedName;
+        continue;
+      }
+      if (cached.length === aliases.length) {
+        continue;
+      }
+      for (const alias of aliases) {
+        const entry = directory.senderNames.get(alias);
+        if (!entry || entry.expiresAt <= now) {
+          senderIds.add(alias);
+        }
+      }
+    }
+
+    const unresolved = stillMissing.filter((activity) => activity.identity.name === null);
+    if (senderIds.size === 0 || unresolved.length === 0) {
+      return;
+    }
+
+    const senders = await this.prisma.message.findMany({
+      where: {
+        tenantId,
+        conversationId,
+        senderId: { in: [...senderIds] },
+        senderName: { not: null },
+      },
+      orderBy: [{ senderId: 'asc' }, { createdAt: 'desc' }],
+      distinct: ['senderId'],
+      select: { senderId: true, senderName: true },
+    });
+    const senderNameById = new Map(
+      senders.flatMap((sender) =>
+        sender.senderId && sender.senderName
+          ? [[sender.senderId, sender.senderName] as const]
+          : [],
+      ),
+    );
+    for (const alias of senderIds) {
+      directory.senderNames.set(alias, {
+        name: senderNameById.get(alias) ?? null,
+        expiresAt: now + PRESENCE_NAME_TTL_MS,
+      });
+    }
+
+    for (const activity of unresolved) {
+      for (const alias of presenceLookupAliases(activity.participantId)) {
+        const name = directory.senderNames.get(alias)?.name;
+        if (name) {
+          activity.identity.name = name;
+          break;
+        }
+      }
+    }
+  }
+
+  private trimPresenceDirectories(): void {
+    if (this.presenceDirectories.size <= PRESENCE_DIRECTORY_CACHE_LIMIT) {
+      return;
+    }
+
+    const now = Date.now();
+    for (const [key, directory] of this.presenceDirectories) {
+      if (directory.expiresAt <= now) {
+        this.presenceDirectories.delete(key);
+      }
+    }
+    while (this.presenceDirectories.size > PRESENCE_DIRECTORY_CACHE_LIMIT) {
+      const oldest = this.presenceDirectories.keys().next().value;
+      if (oldest === undefined) {
+        break;
+      }
+      this.presenceDirectories.delete(oldest);
     }
   }
 
@@ -2130,6 +2371,71 @@ function mapPresenceState(state: string): PresenceState | null {
     default:
       return null;
   }
+}
+
+/**
+ * WhatsApp device suffixes (`:NN`) identify a device, not a different person.
+ * Removing them keeps the same identity comparable across presence and metadata.
+ */
+function canonicalJid(jid: string): string {
+  const separatorIndex = jid.indexOf('@');
+  if (separatorIndex <= 0) {
+    return jid;
+  }
+  const localPart = jid.slice(0, separatorIndex).split(':')[0];
+  return `${localPart}@${jid.slice(separatorIndex + 1)}`;
+}
+
+function presenceLookupAliases(participantId: string): string[] {
+  const aliases = new Set<string>([participantId, canonicalJid(participantId)]);
+  const lid = lidFromJid(participantId);
+  if (lid) {
+    aliases.add(lid);
+  }
+  return [...aliases];
+}
+
+function addPresenceAlias(
+  index: Map<string, PresenceIdentity | null>,
+  alias: string,
+  identity: PresenceIdentity,
+): void {
+  const current = index.get(alias);
+  if (current === undefined) {
+    index.set(alias, identity);
+    return;
+  }
+  if (current !== identity) {
+    index.set(alias, null);
+  }
+}
+
+function resolvePresenceIdentity(
+  directory: PresenceDirectory,
+  participantId: string,
+): PresenceIdentity | null {
+  const direct = directory.byJid.get(canonicalJid(participantId));
+  if (direct) {
+    return direct;
+  }
+
+  const lid = lidFromJid(participantId);
+  if (lid) {
+    const byLid = directory.byLid.get(lid);
+    if (byLid) {
+      return byLid;
+    }
+  }
+
+  const phone = phoneFromJid(participantId);
+  if (phone) {
+    const byPhone = directory.byPhone.get(phone);
+    if (byPhone) {
+      return byPhone;
+    }
+  }
+
+  return null;
 }
 
 function readEventTimestamp(value: unknown): Date | null {

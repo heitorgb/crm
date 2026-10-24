@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { isGroupJid, phoneFromJid } from '../../common/whatsapp/jid.js';
+import { isGroupJid, lidFromJid, phoneFromJid } from '../../common/whatsapp/jid.js';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service.js';
 import { RealtimeService } from '../../infrastructure/realtime/realtime.service.js';
 
@@ -12,6 +12,7 @@ export interface SyncInstance {
 
 interface NormalizedParticipant {
   jid: string;
+  lid: string | null;
   phone: string | null;
   name: string | null;
   avatarUrl: string | null;
@@ -296,6 +297,7 @@ export class WhatsAppConversationSyncService {
       where: { conversationId, jid: { in: participants.map((participant) => participant.jid) } },
       select: {
         jid: true,
+        lid: true,
         phone: true,
         name: true,
         avatarUrl: true,
@@ -320,6 +322,7 @@ export class WhatsAppConversationSyncService {
               tenantId: instance.tenantId,
               conversationId,
               jid: participant.jid,
+              lid: participant.lid,
               phone: participant.phone,
               name: participant.name,
               avatarUrl: participant.avatarUrl,
@@ -334,6 +337,9 @@ export class WhatsAppConversationSyncService {
       }
 
       const data: Prisma.ConversationParticipantUpdateInput = {};
+      if (participant.lid && participant.lid !== current.lid) {
+        data.lid = participant.lid;
+      }
       if (participant.phone && participant.phone !== current.phone) {
         data.phone = participant.phone;
       }
@@ -416,6 +422,7 @@ function mergeParticipantData(
     const current = byJid.get(participant.jid);
     byJid.set(participant.jid, {
       jid: participant.jid,
+      lid: participant.lid ?? current?.lid ?? null,
       phone: participant.phone ?? current?.phone ?? null,
       name: participant.name ?? current?.name ?? null,
       avatarUrl: participant.avatarUrl ?? current?.avatarUrl ?? null,
@@ -430,6 +437,7 @@ function normalizeParticipant(value: unknown): NormalizedParticipant | null {
   if (typeof value === 'string' && value.length > 0) {
     return {
       jid: value,
+      lid: lidFromJid(value),
       phone: phoneFromJid(value),
       name: null,
       avatarUrl: null,
@@ -448,6 +456,10 @@ function normalizeParticipant(value: unknown): NormalizedParticipant | null {
     return null;
   }
 
+  const lid =
+    lidFromJid(readString(value.lid)) ??
+    lidFromJid(readString(value.lidJid)) ??
+    lidFromJid(jid);
   const phone =
     normalizePhone(readString(value.phoneNumber) ?? readString(value.phone)) ??
     phoneFromJid(jid);
@@ -471,7 +483,7 @@ function normalizeParticipant(value: unknown): NormalizedParticipant | null {
     isAdmin = value.isAdmin;
   }
 
-  return { jid, phone, name, avatarUrl, ...(isAdmin !== undefined ? { isAdmin } : {}) };
+  return { jid, lid, phone, name, avatarUrl, ...(isAdmin !== undefined ? { isAdmin } : {}) };
 }
 
 function normalizePhone(value: string | null): string | null {

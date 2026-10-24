@@ -121,7 +121,9 @@ humano para grupos usa o JID completo; para contatos, apenas os dígitos.
   `GROUPS_UPSERT`/`GROUP_UPDATE` (quando emitidos). A foto do grupo fica em `Conversation.avatarUrl`.
 - Participantes: `GROUPS_UPSERT` (snapshot completo) e `GROUP_PARTICIPANTS_UPDATE`
   (`add`/`remove`/`promote`/`demote`) alimentam `ConversationParticipant` de forma idempotente
-  (`UNIQUE (conversationId, jid)`). Saídas são marcadas `active = false`/`leftAt`, sem apagar a
+  (`UNIQUE (conversationId, jid)`), incluindo o LID alternativo quando a Evolution o envia
+  (`jid` mantém o endereço preferido e `lid` guarda o outro identificador). Saídas são marcadas
+  `active = false`/`leftAt`, sem apagar a
   linha nem as mensagens; reentradas reativam a mesma linha. Nenhum contato é criado
   automaticamente para participantes.
 - Fotos de participantes são resolvidas sob demanda e cacheadas em `WhatsAppAvatar`
@@ -257,10 +259,13 @@ CRM (sem dependências novas). A tela é **full-bleed**: `MainContent` deixa de 
   lista vazia (convite para conectar o WhatsApp).
 - **Layout mobile**: abaixo de `lg`, o cabeçalho do atendimento mostra o avatar do usuário à
   esquerda e, à direita, os botões de câmera e menu. O título "Conversas"/contador e os filtros de
-  instância/status saem da tela inicial; a busca fica logo abaixo do cabeçalho e as abas logo abaixo
-  da busca. Tema e filtros ficam dentro do menu hambúrguer (com a navegação), continuam valendo após
-  fechar o menu e são compartilhados pela store `attendance-view-store`. No desktop o layout e os
-  filtros permanecem como antes.
+  instância/status saem da tela inicial; a busca fica logo abaixo do cabeçalho e as abas **Caixa de
+  entrada**/**Arquivadas** permanecem logo abaixo da busca, sem exigir a abertura do menu. Filtros
+  de instância/status, limpeza de filtros e limpeza de busca ficam dentro do menu hambúrguer (com a
+  navegação), continuam valendo após fechar o menu e são compartilhados pela store
+  `attendance-view-store`. A configuração de tema não é exibida no menu lateral mobile; o seletor
+  permanece no cabeçalho e em **Configurações → Aparência**, preservando a preferência salva. No
+  desktop o layout e os filtros permanecem como antes.
 - **Foto pela câmera**: o botão de câmera abre um `<input type="file" accept="image/*"
   capture="environment">` (com fallback para a galeria). A imagem é comprimida no navegador (até
   1600 px, JPEG) e o backend revalida/otimiza com `sharp`. Depois da prévia com legenda, o operador
@@ -373,26 +378,50 @@ CRM (sem dependências novas). A tela é **full-bleed**: `MainContent` deixa de 
 - **Respostas citadas (menções)**: mensagens que citam outra exibem, no topo do balão, um bloco com
   barra lateral colorida (cor por remetente, ou cor da marca quando a citada é nossa), o autor citado
   (**Você** quando foi enviada por nós) e um resumo com ícone do tipo de mídia (ex.: microfone para
-  áudio), no estilo do WhatsApp Web. Ao passar o mouse sobre uma mensagem aparece o botão
-  **Responder**; ao responder, o compositor mostra a prévia da citação (com botão de cancelar) e
-  a mensagem é enviada com a referência à original (`quoted` na Evolution, no formato
-  `{ key: { id, remoteJid, fromMe, participant }, message }`; em grupos o `participant` com o JID de
-  quem escreveu a citada é obrigatório). O backend persiste o
-  contexto em `Message.metadata.quoted` (`externalId`, `authorName`, `authorJid`, `fromMe`, `content`,
-  `type` e `messageId` local quando resolvido): no inbound, lendo `contextInfo.quotedMessage` do
-  webhook e enriquecendo com o histórico local para descobrir autor e direção; no outbound, a partir
-  da mensagem referenciada (sempre escopada por tenant/conversa). No reenvio de falha a citação é
-   reconstruída do metadata.
+  áudio), no estilo do WhatsApp Web. Citações de áudio mostram também a duração (`0:28`), obtida do
+  `quotedMessage.audioMessage.seconds` ou do `metadata.audioDurationSeconds` da mensagem original. Ao
+  passar o mouse sobre uma mensagem aparece o botão **Responder**; ao responder, o compositor mostra
+  a prévia da citação (com botão de cancelar) e a mensagem é enviada com a referência à original
+  (`quoted` na Evolution, no formato `{ key: { id, remoteJid, fromMe, participant }, message }`; em
+  grupos o `participant` com o JID de quem escreveu a citada é obrigatório). O backend persiste o
+  contexto em `Message.metadata.quoted` (`externalId`, `remoteJid`, `authorName`, `authorJid`,
+  `fromMe`, `content`, `type`, `audioDurationSeconds` e `messageId` local quando resolvido): no
+  inbound, a resposta só é reconhecida quando o `contextInfo` traz `stanzaId` (a referência explícita
+  à mensagem original); o conteúdo vem de `contextInfo.quotedMessage` e é enriquecido com o histórico
+  local para descobrir autor e direção. O `contextInfo` é procurado tanto dentro da parte da mensagem
+  (`extendedTextMessage`, `audioMessage`, etc.) quanto na raiz do evento (`data.contextInfo`), porque
+  a Evolution 2.4 achata respostas de texto em `conversation` e move o contexto para a raiz. O autor
+  é resolvido também por `@lid`/telefone nos participantes do grupo quando a mensagem original ainda
+  não está local, e a citação é completada automaticamente se a original chegar depois (histórico
+  fora de ordem). `contextInfo` com apenas menções, expiração, atribuições de status ou outros
+  metadados técnicos não cria citação, e registros antigos com citação vazia são ignorados na
+  renderização. No outbound, a citação vem da mensagem referenciada (sempre escopada por
+  tenant/conversa). No reenvio de falha a citação é reconstruída do metadata. Na renderização, a
+  citação é completada com a mensagem original já carregada na timeline (casada por `messageId` ou
+  `externalId`, nunca por conteúdo), garantindo nome, tipo e duração mesmo quando a original chega
+  depois; clicar no bloco navega para a original quando ela está carregada.
+- **Limitação da Evolution em respostas de texto**: a build `2.4.0-rc2` achata
+  `extendedTextMessage` em `conversation` e, nessa versão, o `contextInfo` da raiz é preenchido com
+  `messageContextInfo` (sem `stanzaId`), descartando a referência da citação antes do webhook. O CRM
+  lê o `contextInfo` da raiz quando ele existe (builds corrigidas) e nunca inventa a citação quando
+  o `stanzaId` não chega; nesse caso a resposta é exibida como texto simples. Respostas de mídia
+  (áudio, imagem, vídeo, documento) mantêm o `contextInfo` dentro da parte da mensagem e funcionam
+  normalmente.
 - **Mensagens enviadas pelo celular / WhatsApp Web**: o webhook trata `messages.upsert` com
   `key.fromMe = true` como mensagem `OUTBOUND` enviada pela própria conta conectada, exibindo-a na
-  conversa ao lado das mensagens enviadas pelo CRM. A instância, o contato e a conversa são
-  resolvidos pelo `remoteJid` (com fallback de telefone em `participantAlt`/`remoteJidAlt` e suporte a
-  `@lid`, sem inventar contato quando não há telefone). A mensagem é deduplicada por
-  `(tenantId, externalMessageId)`: um evento do provedor para uma mensagem **já salva pelo envio do
-  CRM** é reconciliado no registro existente (`metadata` enriquecido), sem criar duplicata nem emitir
-  novo `message.created`; eventos repetidos são idempotentes. Mensagens externas de mídia também são
-  baixadas (`getBase64FromMediaMessage` com `fromMe` correspondente) e anexadas. Mensagens `OUTBOUND`
-  não alteram contadores de não lidas nem o estado de leitura.
+  conversa ao lado das mensagens enviadas pelo CRM. A conversa é resolvida pela identidade da
+  conversa, não apenas pelo `remoteJid` bruto: primeiro pelo JID exato; depois pelo LID já registrado
+  em `Conversation.externalLid` (a Evolution 2.4 troca `remoteJid`/`remoteJidAlt` nos eventos
+  inbound de chats endereçados por LID); depois por uma conversa criada quando só o LID era
+  conhecido; por fim, pela única conversa do contato resolvido pela telefone naquela instância. O
+  telefone só é usado quando vem em `remoteJid` (`@s.whatsapp.net`/`@c.us`),
+  `participantAlt`/`remoteJidAlt`; um LID **nunca** é convertido em telefone por suposição. A
+  mensagem é deduplicada por `(tenantId, externalMessageId)`: um evento do provedor para uma
+  mensagem **já salva pelo envio do CRM** é reconciliado no registro existente (`metadata`
+  enriquecido), sem criar duplicata nem emitir novo `message.created`; eventos repetidos são
+  idempotentes. Mensagens externas de mídia também são baixadas (`getBase64FromMediaMessage` com
+  `fromMe` correspondente) e anexadas. Mensagens `OUTBOUND` não alteram contadores de não lidas nem
+  o estado de leitura.
 - **Mensagens de cobrança**: os lembretes enviados pelo módulo Financeiro → Cobranças (manuais e
   automáticos) também aparecem na conversa, como mensagens enviadas (OUTBOUND, alinhadas à direita),
   com o conteúdo real, quebras de linha e o horário da confirmação do envio. A conversa é
@@ -551,7 +580,13 @@ responde `409 CONVERSATION_NOT_HUMAN_OWNED`. O bot só responde enquanto a conve
   `Conversation.preferredAddress`, usado nos envios seguintes. A mensagem guarda
   `metadata.destinationType` e `metadata.fallbackAttempted`, que garante no máximo **um** fallback
   por mensagem (sem loops). O LID é capturado no mesmo evento em que o contato/telefone é resolvido,
-  então um novo inbound popula conversas já existentes.
+  então um novo inbound popula conversas já existentes. Mensagens **enviadas pelo celular** de um
+  chat endereçado por LID podem chegar sem `remoteJidAlt` (a Evolution não as reescreve); nesse caso
+  a conversa é encontrada pelo LID já gravado em `externalLid`, sem inventar telefone nem criar uma
+  segunda conversa para o mesmo contato. Quando não existe nenhuma associação registrada entre o LID
+  e um telefone/contato, o CRM mantém a conversa própria do LID (comportamento seguro) e não a
+  funde por nome, foto ou semelhança de dígitos. A busca é sempre limitada ao `tenantId` e à
+  instância (`whatsappInstanceId`); o vínculo não atravessa tenants nem conexões.
 - O webhook usa `webhook_events` como caixa de entrada durável: o evento é reivindicado antes do
   processamento e só recebe `processedAt` após o sucesso. Eventos já processados são idempotentes;
   eventos reivindicados e não concluídos são reprocessados. Em falha de banco/processamento a API
@@ -565,6 +600,19 @@ responde `409 CONVERSATION_NOT_HUMAN_OWNED`. O bot só responde enquanto a conve
   inclui `state` normalizado (`online`, `offline`, `composing`, `recording`), `participantName`/
   `participantPhone` (participantes de grupo vêm de `ConversationParticipant`), `lastSeenAt`,
   `occurredAt` (ordenação) e `receivedAt` (base do TTL no cliente).
+- O identificador de presença de grupo pode chegar como `@lid` ou `@s.whatsapp.net`, às vezes com
+  sufixo de dispositivo (`:NN`). A resolução remove o sufixo e procura o participante pelo JID
+  principal, pelo LID alternativo (`ConversationParticipant.lid`) e pelo telefone normalizado,
+  nessa ordem, sempre dentro da conversa/tenant/instância. O nome prioriza o contato CRM associado
+  ao telefone (quando não é apenas o telefone), depois o nome sincronizado do participante e, por
+  fim, o `senderName` da mensagem mais recente daquele remetente na conversa. Sem correspondência
+  exata, o payload mantém `participantName`/`participantPhone` nulos e a UI mostra apenas
+  “digitando…”/“gravando áudio…”, nunca o JID técnico.
+- O diretório de participantes é mantido em memória por 30 s (chave tenant + instância + conversa)
+  e os nomes de remetente por 15 s, limitado a 500 conversas. O cache é descartado ao receber
+  `groups.upsert`, `groups.update` ou `group-participants.update`. Assim uma sequência de eventos
+  de digitação/gravação não consulta o banco a cada evento, sem reutilizar identidade entre tenants
+  ou instâncias.
 - Presença é transitória: não grava `WebhookEvent`, não cria mensagem/conversa e não passa pela
   deduplicação de mensagens. A UI mantém o estado apenas em memória, por conversa.
 - No cabeçalho, o indicador mostra `Online`, `Visto por último …` (somente com `lastSeen` válido e

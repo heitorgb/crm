@@ -20,13 +20,17 @@ interface Harness {
       findMany: ReturnType<typeof vi.fn>;
       updateMany: ReturnType<typeof vi.fn>;
     };
-    message: { findFirst: ReturnType<typeof vi.fn> };
+    message: {
+      findFirst: ReturnType<typeof vi.fn>;
+      findMany: ReturnType<typeof vi.fn>;
+    };
     conversation: {
       findFirst: ReturnType<typeof vi.fn>;
       findMany: ReturnType<typeof vi.fn>;
       update: ReturnType<typeof vi.fn>;
     };
-    conversationParticipant: { findUnique: ReturnType<typeof vi.fn> };
+    conversationParticipant: { findMany: ReturnType<typeof vi.fn> };
+    contact: { findMany: ReturnType<typeof vi.fn> };
   };
   instances: {
     resolveByInstanceName: ReturnType<typeof vi.fn>;
@@ -60,13 +64,17 @@ function createHarness(): Harness {
       findMany: vi.fn().mockResolvedValue([]),
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
-    message: { findFirst: vi.fn().mockResolvedValue(null) },
+    message: {
+      findFirst: vi.fn().mockResolvedValue(null),
+      findMany: vi.fn().mockResolvedValue([]),
+    },
     conversation: {
       findFirst: vi.fn().mockResolvedValue(null),
       findMany: vi.fn().mockResolvedValue([]),
       update: vi.fn().mockResolvedValue({}),
     },
-    conversationParticipant: { findUnique: vi.fn().mockResolvedValue(null) },
+    conversationParticipant: { findMany: vi.fn().mockResolvedValue([]) },
+    contact: { findMany: vi.fn().mockResolvedValue([]) },
   };
   const instances = {
     resolveByInstanceName: vi.fn().mockResolvedValue({
@@ -680,10 +688,14 @@ describe('WebhookService presence.update', () => {
       isGroup: true,
       contact: null,
     });
-    prisma.conversationParticipant.findUnique.mockResolvedValue({
-      name: 'Bruno',
-      phone: '5511888888888',
-    });
+    prisma.conversationParticipant.findMany.mockResolvedValue([
+      {
+        jid: '5511888888888@s.whatsapp.net',
+        lid: null,
+        phone: '5511888888888',
+        name: 'Bruno',
+      },
+    ]);
 
     await service.ingestEvolution({
       event: 'presence.update',
@@ -703,6 +715,239 @@ describe('WebhookService presence.update', () => {
         participantName: 'Bruno',
         participantPhone: '5511888888888',
         state: 'composing',
+      }),
+    );
+  });
+
+  it('resolves a group participant whose presence arrives as @lid', async () => {
+    const { service, prisma, realtime } = createHarness();
+    prisma.conversation.findFirst.mockResolvedValue({
+      id: 'conversation-1',
+      isGroup: true,
+      contact: null,
+    });
+    prisma.conversationParticipant.findMany.mockResolvedValue([
+      {
+        jid: '5511888888888@s.whatsapp.net',
+        lid: '63604221026389@lid',
+        phone: '5511888888888',
+        name: 'Ernandes',
+      },
+    ]);
+    prisma.contact.findMany.mockResolvedValue([
+      { phone: '5511888888888', name: 'Ernandes Lourenço' },
+    ]);
+
+    await service.ingestEvolution({
+      event: 'presence.update',
+      instance: 'inst-1',
+      data: {
+        id: '120363000000000000@g.us',
+        presences: {
+          '63604221026389@lid': { lastKnownPresence: 'recording' },
+        },
+      },
+    });
+
+    expect(prisma.contact.findMany).toHaveBeenCalledWith({
+      where: { tenantId: 'tenant-1', phone: { in: ['5511888888888'] } },
+      select: { phone: true, name: true },
+    });
+    expect(realtime.emitToTenant).toHaveBeenCalledWith(
+      'tenant-1',
+      'conversation.presence',
+      expect.objectContaining({
+        participantId: '63604221026389@lid',
+        participantName: 'Ernandes Lourenço',
+        participantPhone: '5511888888888',
+        state: 'recording',
+      }),
+    );
+  });
+
+  it('resolves a PN presence for a participant stored by its LID', async () => {
+    const { service, prisma, realtime } = createHarness();
+    prisma.conversation.findFirst.mockResolvedValue({
+      id: 'conversation-1',
+      isGroup: true,
+      contact: null,
+    });
+    prisma.conversationParticipant.findMany.mockResolvedValue([
+      {
+        jid: '63604221026389@lid',
+        lid: null,
+        phone: '5511888888888',
+        name: 'Ernandes Lourenço',
+      },
+    ]);
+
+    await service.ingestEvolution({
+      event: 'presence.update',
+      instance: 'inst-1',
+      data: {
+        id: '120363000000000000@g.us',
+        presences: {
+          '5511888888888@s.whatsapp.net': { lastKnownPresence: 'composing' },
+        },
+      },
+    });
+
+    expect(realtime.emitToTenant).toHaveBeenCalledWith(
+      'tenant-1',
+      'conversation.presence',
+      expect.objectContaining({
+        participantName: 'Ernandes Lourenço',
+        participantPhone: '5511888888888',
+        state: 'composing',
+      }),
+    );
+  });
+
+  it('falls back to the latest group message sender name for an unsynced @lid', async () => {
+    const { service, prisma, realtime } = createHarness();
+    prisma.conversation.findFirst.mockResolvedValue({
+      id: 'conversation-1',
+      isGroup: true,
+      contact: null,
+    });
+    prisma.conversationParticipant.findMany.mockResolvedValue([]);
+    prisma.message.findMany.mockResolvedValue([
+      { senderId: '63604221026389@lid', senderName: 'Ernandes Lourenço' },
+    ]);
+
+    await service.ingestEvolution({
+      event: 'presence.update',
+      instance: 'inst-1',
+      data: {
+        id: '120363000000000000@g.us',
+        presences: {
+          '63604221026389@lid': { lastKnownPresence: 'recording' },
+        },
+      },
+    });
+
+    expect(prisma.message.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          tenantId: 'tenant-1',
+          conversationId: 'conversation-1',
+          senderId: { in: expect.arrayContaining(['63604221026389@lid']) },
+        }),
+      }),
+    );
+    expect(realtime.emitToTenant).toHaveBeenCalledWith(
+      'tenant-1',
+      'conversation.presence',
+      expect.objectContaining({
+        participantName: 'Ernandes Lourenço',
+        state: 'recording',
+      }),
+    );
+  });
+
+  it('does not expose unresolved participant identifiers as names', async () => {
+    const { service, prisma, realtime } = createHarness();
+    prisma.conversation.findFirst.mockResolvedValue({
+      id: 'conversation-1',
+      isGroup: true,
+      contact: null,
+    });
+    prisma.conversationParticipant.findMany.mockResolvedValue([]);
+
+    await service.ingestEvolution({
+      event: 'presence.update',
+      instance: 'inst-1',
+      data: {
+        id: '120363000000000000@g.us',
+        presences: {
+          '63604221026389@lid': { lastKnownPresence: 'composing' },
+        },
+      },
+    });
+
+    expect(realtime.emitToTenant).toHaveBeenCalledWith(
+      'tenant-1',
+      'conversation.presence',
+      expect.objectContaining({
+        participantId: '63604221026389@lid',
+        participantName: null,
+        participantPhone: null,
+        state: 'composing',
+      }),
+    );
+  });
+
+  it('reuses the participant directory between successive activity events', async () => {
+    const { service, prisma, realtime } = createHarness();
+    prisma.conversation.findFirst.mockResolvedValue({
+      id: 'conversation-1',
+      isGroup: true,
+      contact: null,
+    });
+    prisma.conversationParticipant.findMany.mockResolvedValue([
+      {
+        jid: '63604221026389@lid',
+        lid: null,
+        phone: '5511888888888',
+        name: 'Ernandes Lourenço',
+      },
+    ]);
+
+    for (const state of ['composing', 'recording'] as const) {
+      await service.ingestEvolution({
+        event: 'presence.update',
+        instance: 'inst-1',
+        data: {
+          id: '120363000000000000@g.us',
+          presences: {
+            '63604221026389@lid': { lastKnownPresence: state },
+          },
+        },
+      });
+    }
+
+    expect(prisma.conversationParticipant.findMany).toHaveBeenCalledTimes(1);
+    expect(realtime.emitToTenant).toHaveBeenCalledTimes(2);
+    expect(realtime.emitToTenant).toHaveBeenLastCalledWith(
+      'tenant-1',
+      'conversation.presence',
+      expect.objectContaining({
+        participantName: 'Ernandes Lourenço',
+        state: 'recording',
+      }),
+    );
+  });
+
+  it('scopes participant resolution to the conversation tenant and instance', async () => {
+    const { service, prisma } = createHarness();
+    prisma.conversation.findFirst.mockResolvedValue({
+      id: 'conversation-1',
+      isGroup: true,
+      contact: null,
+    });
+
+    await service.ingestEvolution({
+      event: 'presence.update',
+      instance: 'inst-1',
+      data: {
+        id: '120363000000000000@g.us',
+        presences: {
+          '63604221026389@lid': { lastKnownPresence: 'composing' },
+        },
+      },
+    });
+
+    expect(prisma.conversation.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          tenantId: 'tenant-1',
+          whatsappInstanceId: 'instance-1',
+        }),
+      }),
+    );
+    expect(prisma.conversationParticipant.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { tenantId: 'tenant-1', conversationId: 'conversation-1', active: true },
       }),
     );
   });

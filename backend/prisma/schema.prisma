@@ -744,6 +744,7 @@ model ConversationParticipant {
   tenantId       String    @map("tenant_id") @db.Uuid
   conversationId String    @map("conversation_id") @db.Uuid
   jid            String
+  lid            String?
   phone          String?
   name           String?
   avatarUrl      String?   @map("avatar_url")
@@ -759,6 +760,7 @@ model ConversationParticipant {
 
   @@unique([conversationId, jid])
   @@index([tenantId, conversationId, active])
+  @@index([tenantId, conversationId, lid])
   @@map("conversation_participants")
 }
 
@@ -1099,6 +1101,9 @@ model ScheduledMessage {
   attachmentMimeType     String?                    @map("attachment_mime_type")
   attachmentSize         Int?                       @map("attachment_size")
   recurrence             ScheduledMessageRecurrence @default(ONCE)
+  weekdays               Int[]                      @default([])
+  dayOfMonth             Int?                       @map("day_of_month")
+  recurringTime          String?                    @db.VarChar(5) @map("recurring_time")
   timeZone               String                     @default("America/Sao_Paulo") @map("time_zone")
   scheduledAt            DateTime                   @map("scheduled_at")
   nextRunAt              DateTime?                  @map("next_run_at")

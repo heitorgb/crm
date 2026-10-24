@@ -200,6 +200,22 @@ describe('ConversationPresenceIndicator', () => {
     expect(screen.getByText('Offline')).toBeTruthy();
   });
 
+  it('does not expose technical participant identifiers when the name is unknown', () => {
+    renderIndicator(true);
+
+    emit(
+      presenceEvent({
+        state: 'recording',
+        participantId: '63604221026389@lid',
+        participantName: null,
+        participantPhone: null,
+      }),
+    );
+
+    expect(screen.getByText('gravando áudio...')).toBeTruthy();
+    expect(screen.queryByText(/63604221026389@lid/)).toBeNull();
+  });
+
   it('formats labels independently from the component state', () => {
     const base: ConversationPresence = {
       state: 'unknown',
@@ -216,5 +232,11 @@ describe('ConversationPresenceIndicator', () => {
     expect(
       presenceLabel({ ...base, state: 'online', participantName: 'Ana' }, true),
     ).toBe('Ana online');
+    expect(
+      presenceLabel(
+        { ...base, state: 'recording', participantId: '63604221026389@lid' },
+        true,
+      ),
+    ).toBe('gravando áudio...');
   });
 });

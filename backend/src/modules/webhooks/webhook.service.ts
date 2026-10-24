@@ -59,6 +59,48 @@ export interface HistoryIngestResult {
 const HISTORY_REALTIME_WINDOW_MS = 15 * 60 * 1000;
 const WEBHOOK_REPLAY_LOOKBACK_MS = 24 * 60 * 60 * 1000;
 const WEBHOOK_REPLAY_LIMIT = 100;
+const PRESENCE_DIRECTORY_TTL_MS = 30_000;
+const PRESENCE_NAME_TTL_MS = 15_000;
+const PRESENCE_DIRECTORY_CACHE_LIMIT = 500;
+
+interface PresenceIdentity {
+  name: string | null;
+  phone: string | null;
+}
+
+interface PresenceNameEntry {
+  name: string | null;
+  expiresAt: number;
+}
+
+interface PresenceDirectory {
+  expiresAt: number;
+  byJid: Map<string, PresenceIdentity | null>;
+  byLid: Map<string, PresenceIdentity | null>;
+  byPhone: Map<string, PresenceIdentity | null>;
+  contactNames: Map<string, string | null>;
+  senderNames: Map<string, PresenceNameEntry>;
+}
+
+interface PresenceActivity {
+  participantId: string;
+  state: PresenceState;
+  lastSeenAt: Date | null;
+  identity: PresenceIdentity;
+}
+
+const CONVERSATION_IDENTITY_SELECT = {
+  id: true,
+  status: true,
+  contactId: true,
+  groupName: true,
+  isGroup: true,
+  externalLid: true,
+} satisfies Prisma.ConversationSelect;
+
+type ConversationIdentity = Prisma.ConversationGetPayload<{
+  select: typeof CONVERSATION_IDENTITY_SELECT;
+}>;
 
 class HistoryIngestError extends Error {
   constructor(readonly result: HistoryIngestResult) {
@@ -70,6 +112,7 @@ class HistoryIngestError extends Error {
 @Injectable()
 export class WebhookService implements OnModuleInit {
   private readonly logger = new Logger(WebhookService.name);
+  private readonly presenceDirectories = new Map<string, PresenceDirectory>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -300,11 +343,13 @@ export class WebhookService implements OnModuleInit {
   ): Promise<WebhookIngestResult> {
     if (eventType === 'groups.upsert' || eventType === 'groups.update') {
       await this.handleGroupUpsert(instance, payload, eventType === 'groups.upsert');
+      this.presenceDirectories.clear();
       return { accepted: true };
     }
 
     if (eventType === 'group-participants.update') {
       await this.handleGroupParticipantsUpdate(instance, payload);
+      this.presenceDirectories.clear();
       return { accepted: true };
     }
 
@@ -698,7 +743,8 @@ export class WebhookService implements OnModuleInit {
     const externalMessageId = readString(key?.id);
     const quoted = await this.resolveInboundQuoted(
       instance.tenantId,
-      instance.id,
+      conversation.id,
+      data,
       message,
     );
     const contacts = extractContacts(message);
@@ -752,6 +798,24 @@ export class WebhookService implements OnModuleInit {
         messageId: persisted.id,
       };
     }
+
+    // Replies may arrive before the original message (history out of order or a
+    // live reply to an older message). Once the quoted message is stored, the
+    // quote metadata of those replies is completed so the citation renders with
+    // the correct author, type and audio duration.
+    await this.backfillQuotedReplies({
+      tenantId: instance.tenantId,
+      conversationId: conversation.id,
+      messageId: persisted.id,
+      externalMessageId,
+      direction,
+      senderId,
+      senderName,
+      content,
+      type,
+      remoteJid,
+      audioDurationSeconds,
+    });
 
     // View-once media must never be downloaded or exposed: the UI only renders the privacy notice.
     if (isMediaType(type) && !isViewOnce && processRecentMedia) {
@@ -841,15 +905,30 @@ export class WebhookService implements OnModuleInit {
     }
 
     // A reaction never creates a conversation on its own. If the conversation
-    // is not in the CRM there is nothing to attach the reaction to yet.
-    const conversation = await this.prisma.conversation.findFirst({
-      where: {
-        tenantId: instance.tenantId,
-        whatsappInstanceId: instance.id,
-        externalContactId: remoteJid,
-      },
-      select: { id: true },
-    });
+    // is not in the CRM there is nothing to attach the reaction to yet. The
+    // lookup accepts the LID recorded on the conversation because a reaction
+    // sent from the phone may arrive addressed only by the LID.
+    const remoteLid = lidFromJid(remoteJid);
+    const conversation =
+      (await this.prisma.conversation.findFirst({
+        where: {
+          tenantId: instance.tenantId,
+          whatsappInstanceId: instance.id,
+          externalContactId: remoteJid,
+        },
+        select: { id: true },
+      })) ??
+      (remoteLid
+        ? await this.prisma.conversation.findFirst({
+            where: {
+              tenantId: instance.tenantId,
+              whatsappInstanceId: instance.id,
+              isGroup: false,
+              OR: [{ externalLid: remoteLid }, { externalContactId: remoteLid }],
+            },
+            select: { id: true },
+          })
+        : null);
     if (!conversation) {
       return { accepted: true, ignored: 'reaction_unknown_conversation' };
     }
@@ -923,6 +1002,10 @@ export class WebhookService implements OnModuleInit {
 
     const receivedAt = new Date();
     const occurredAt = readEventTimestamp(payload.date_time) ?? receivedAt;
+    const directory = conversation.isGroup
+      ? await this.getPresenceDirectory(instance.tenantId, instance.id, conversation.id)
+      : null;
+    const activities: PresenceActivity[] = [];
 
     for (const [participantId, presence] of Object.entries(presences)) {
       if (!isRecord(presence)) {
@@ -935,33 +1018,238 @@ export class WebhookService implements OnModuleInit {
         continue;
       }
 
-      let participantName = conversation.isGroup ? null : (conversation.contact?.name ?? null);
-      let participantPhone = phoneFromJid(participantId);
-
-      if (conversation.isGroup) {
-        const participant = await this.prisma.conversationParticipant.findUnique({
-          where: {
-            conversationId_jid: { conversationId: conversation.id, jid: participantId },
-          },
-          select: { name: true, phone: true },
-        });
-        participantName = participant?.name ?? participantName;
-        participantPhone = participant?.phone ?? participantPhone;
+      let identity: PresenceIdentity;
+      if (directory) {
+        identity = resolvePresenceIdentity(directory, participantId) ?? {
+          name: null,
+          phone: phoneFromJid(participantId),
+        };
+        identity.phone ??= phoneFromJid(participantId);
+      } else {
+        identity = {
+          name: conversation.contact?.name ?? null,
+          phone: phoneFromJid(participantId),
+        };
       }
 
       const lastSeenAt =
         state === 'offline' ? readLastSeenTimestamp(presence.lastSeen, receivedAt) : null;
 
+      activities.push({ participantId, state, lastSeenAt, identity });
+    }
+
+    if (directory && activities.length > 0) {
+      await this.fillPresenceNames(instance.tenantId, conversation.id, directory, activities);
+    }
+
+    for (const activity of activities) {
       this.realtime.emitToTenant(instance.tenantId, 'conversation.presence', {
         conversationId: conversation.id,
-        participantId,
-        participantName,
-        participantPhone,
-        state,
-        lastSeenAt: lastSeenAt ? lastSeenAt.toISOString() : null,
+        participantId: activity.participantId,
+        participantName: activity.identity.name,
+        participantPhone: activity.identity.phone,
+        state: activity.state,
+        lastSeenAt: activity.lastSeenAt ? activity.lastSeenAt.toISOString() : null,
         occurredAt: occurredAt.toISOString(),
         receivedAt: receivedAt.toISOString(),
       });
+    }
+  }
+
+  private async getPresenceDirectory(
+    tenantId: string,
+    whatsappInstanceId: string,
+    conversationId: string,
+  ): Promise<PresenceDirectory> {
+    const cacheKey = `${tenantId}:${whatsappInstanceId}:${conversationId}`;
+    const cached = this.presenceDirectories.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached;
+    }
+
+    const participants = await this.prisma.conversationParticipant.findMany({
+      where: { tenantId, conversationId, active: true },
+      select: { jid: true, lid: true, phone: true, name: true },
+    });
+    const phones = [
+      ...new Set(
+        participants
+          .map((participant) => participant.phone)
+          .filter((phone): phone is string => phone !== null),
+      ),
+    ];
+    const contacts =
+      phones.length > 0
+        ? await this.prisma.contact.findMany({
+            where: { tenantId, phone: { in: phones } },
+            select: { phone: true, name: true },
+          })
+        : [];
+    const contactNameByPhone = new Map(
+      contacts.flatMap((contact) =>
+        contact.phone ? [[contact.phone, contact.name] as const] : [],
+      ),
+    );
+
+    const directory: PresenceDirectory = {
+      expiresAt: Date.now() + PRESENCE_DIRECTORY_TTL_MS,
+      byJid: new Map(),
+      byLid: new Map(),
+      byPhone: new Map(),
+      contactNames: new Map(),
+      senderNames: new Map(),
+    };
+
+    for (const participant of participants) {
+      const phone = participant.phone ?? phoneFromJid(participant.jid);
+      const contactName = phone ? (contactNameByPhone.get(phone) ?? null) : null;
+      const name =
+        (contactName && contactName !== phone ? contactName : null) ?? participant.name ?? null;
+      const identity: PresenceIdentity = { name, phone };
+      const lid = participant.lid ?? lidFromJid(participant.jid);
+
+      addPresenceAlias(directory.byJid, canonicalJid(participant.jid), identity);
+      if (lid) {
+        addPresenceAlias(directory.byLid, canonicalJid(lid), identity);
+      }
+      if (phone) {
+        addPresenceAlias(directory.byPhone, phone, identity);
+        directory.contactNames.set(phone, contactName);
+      }
+    }
+
+    this.presenceDirectories.set(cacheKey, directory);
+    this.trimPresenceDirectories();
+    return directory;
+  }
+
+  private async fillPresenceNames(
+    tenantId: string,
+    conversationId: string,
+    directory: PresenceDirectory,
+    activities: PresenceActivity[],
+  ): Promise<void> {
+    const missingName = activities.filter((activity) => activity.identity.name === null);
+    if (missingName.length === 0) {
+      return;
+    }
+
+    const phonesToLoad = new Set<string>();
+    for (const activity of missingName) {
+      const phone = activity.identity.phone;
+      if (phone && !directory.contactNames.has(phone)) {
+        phonesToLoad.add(phone);
+      }
+    }
+    if (phonesToLoad.size > 0) {
+      const contacts = await this.prisma.contact.findMany({
+        where: { tenantId, phone: { in: [...phonesToLoad] } },
+        select: { phone: true, name: true },
+      });
+      const contactNameByPhone = new Map(
+        contacts.flatMap((contact) =>
+          contact.phone ? [[contact.phone, contact.name] as const] : [],
+        ),
+      );
+      for (const phone of phonesToLoad) {
+        directory.contactNames.set(phone, contactNameByPhone.get(phone) ?? null);
+      }
+    }
+
+    for (const activity of missingName) {
+      const phone = activity.identity.phone;
+      const contactName = phone ? (directory.contactNames.get(phone) ?? null) : null;
+      if (contactName && contactName !== phone) {
+        activity.identity.name = contactName;
+      }
+    }
+
+    const stillMissing = missingName.filter((activity) => activity.identity.name === null);
+    if (stillMissing.length === 0) {
+      return;
+    }
+
+    const now = Date.now();
+    const senderIds = new Set<string>();
+    for (const activity of stillMissing) {
+      const aliases = presenceLookupAliases(activity.participantId);
+      const cached = aliases
+        .map((alias) => directory.senderNames.get(alias))
+        .filter((entry): entry is PresenceNameEntry => entry !== undefined && entry.expiresAt > now);
+      const cachedName = cached.find((entry) => entry.name)?.name;
+      if (cachedName) {
+        activity.identity.name = cachedName;
+        continue;
+      }
+      if (cached.length === aliases.length) {
+        continue;
+      }
+      for (const alias of aliases) {
+        const entry = directory.senderNames.get(alias);
+        if (!entry || entry.expiresAt <= now) {
+          senderIds.add(alias);
+        }
+      }
+    }
+
+    const unresolved = stillMissing.filter((activity) => activity.identity.name === null);
+    if (senderIds.size === 0 || unresolved.length === 0) {
+      return;
+    }
+
+    const senders = await this.prisma.message.findMany({
+      where: {
+        tenantId,
+        conversationId,
+        senderId: { in: [...senderIds] },
+        senderName: { not: null },
+      },
+      orderBy: [{ senderId: 'asc' }, { createdAt: 'desc' }],
+      distinct: ['senderId'],
+      select: { senderId: true, senderName: true },
+    });
+    const senderNameById = new Map(
+      senders.flatMap((sender) =>
+        sender.senderId && sender.senderName
+          ? [[sender.senderId, sender.senderName] as const]
+          : [],
+      ),
+    );
+    for (const alias of senderIds) {
+      directory.senderNames.set(alias, {
+        name: senderNameById.get(alias) ?? null,
+        expiresAt: now + PRESENCE_NAME_TTL_MS,
+      });
+    }
+
+    for (const activity of unresolved) {
+      for (const alias of presenceLookupAliases(activity.participantId)) {
+        const name = directory.senderNames.get(alias)?.name;
+        if (name) {
+          activity.identity.name = name;
+          break;
+        }
+      }
+    }
+  }
+
+  private trimPresenceDirectories(): void {
+    if (this.presenceDirectories.size <= PRESENCE_DIRECTORY_CACHE_LIMIT) {
+      return;
+    }
+
+    const now = Date.now();
+    for (const [key, directory] of this.presenceDirectories) {
+      if (directory.expiresAt <= now) {
+        this.presenceDirectories.delete(key);
+      }
+    }
+    while (this.presenceDirectories.size > PRESENCE_DIRECTORY_CACHE_LIMIT) {
+      const oldest = this.presenceDirectories.keys().next().value;
+      if (oldest === undefined) {
+        break;
+      }
+      this.presenceDirectories.delete(oldest);
     }
   }
 
@@ -1241,50 +1529,148 @@ export class WebhookService implements OnModuleInit {
     isGroup: boolean,
     externalLid: string | null,
     reopenClosed = true,
-  ) {
-    const existing = await this.prisma.conversation.findFirst({
-      where: { tenantId, whatsappInstanceId, externalContactId },
-      select: { id: true, status: true, contactId: true, groupName: true, isGroup: true, externalLid: true },
-    });
-
+  ): Promise<ConversationIdentity> {
+    const identity = {
+      tenantId,
+      whatsappInstanceId,
+      externalContactId,
+      contactId,
+      isGroup,
+      externalLid,
+    };
+    const existing = await this.findConversationByIdentity(identity);
     if (existing) {
-      const data: Prisma.ConversationUncheckedUpdateInput = {};
-      if (reopenClosed && existing.status === ConversationStatus.CLOSED) {
-        data.status = ConversationStatus.OPEN;
-        data.closedAt = null;
-      }
-      if (!isGroup && !existing.contactId && contactId) {
-        data.contactId = contactId;
-      }
-      if (!isGroup && externalLid && existing.externalLid !== externalLid) {
-        data.externalLid = externalLid;
-      }
-      if (isGroup && !existing.isGroup) {
-        data.isGroup = true;
-      }
-
-      if (Object.keys(data).length === 0) {
-        return existing;
-      }
-
-      return this.prisma.conversation.update({
-        where: { id: existing.id },
-        data,
-        select: { id: true, status: true, groupName: true },
-      });
+      return this.applyConversationIdentity(existing, identity, reopenClosed);
     }
 
-    return this.prisma.conversation.create({
-      data: {
-        tenantId,
-        whatsappInstanceId,
-        externalContactId,
-        externalLid: isGroup ? null : externalLid,
-        contactId,
-        isGroup,
-        status: ConversationStatus.OPEN,
-      },
-      select: { id: true, status: true, groupName: true },
+    try {
+      return await this.prisma.conversation.create({
+        data: {
+          tenantId,
+          whatsappInstanceId,
+          externalContactId,
+          externalLid: isGroup ? null : externalLid,
+          contactId,
+          isGroup,
+          status: ConversationStatus.OPEN,
+        },
+        select: CONVERSATION_IDENTITY_SELECT,
+      });
+    } catch (error) {
+      if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') {
+        throw error;
+      }
+
+      // A concurrent event created the same conversation between the lookup and
+      // the insert. Rereading includes the LID/contact aliases, so the losing
+      // event reuses the winner instead of failing the webhook.
+      const raced = await this.findConversationByIdentity(identity);
+      if (!raced) {
+        throw error;
+      }
+      return this.applyConversationIdentity(raced, identity, reopenClosed);
+    }
+  }
+
+  /**
+   * Resolves a 1:1 conversation by every identity the provider has already
+   * proven for this chat, in order of strength: the exact remote JID, the LID
+   * recorded on a previous event (Evolution swaps `remoteJid`/`remoteJidAlt`
+   * for LID-addressed inbound chats), a conversation created while only the LID
+   * was known, and finally the contact's single conversation in the instance.
+   * A LID is never converted into a phone: without a recorded association the
+   * message keeps its own LID conversation.
+   */
+  private async findConversationByIdentity(input: {
+    tenantId: string;
+    whatsappInstanceId: string;
+    externalContactId: string;
+    contactId: string | null;
+    isGroup: boolean;
+    externalLid: string | null;
+  }): Promise<ConversationIdentity | null> {
+    const scope = {
+      tenantId: input.tenantId,
+      whatsappInstanceId: input.whatsappInstanceId,
+    };
+    const exact = await this.prisma.conversation.findFirst({
+      where: { ...scope, externalContactId: input.externalContactId },
+      select: CONVERSATION_IDENTITY_SELECT,
+    });
+    if (exact || input.isGroup) {
+      return exact;
+    }
+
+    const lid = input.externalLid;
+    if (lid) {
+      const byRecordedLid = await this.prisma.conversation.findFirst({
+        where: { ...scope, isGroup: false, externalLid: lid },
+        orderBy: { createdAt: 'asc' },
+        select: CONVERSATION_IDENTITY_SELECT,
+      });
+      if (byRecordedLid) {
+        return byRecordedLid;
+      }
+
+      if (lid !== input.externalContactId) {
+        const byLidKey = await this.prisma.conversation.findFirst({
+          where: { ...scope, isGroup: false, externalContactId: lid },
+          select: CONVERSATION_IDENTITY_SELECT,
+        });
+        if (byLidKey) {
+          return byLidKey;
+        }
+      }
+    }
+
+    if (!input.contactId) {
+      return null;
+    }
+
+    const byContact = await this.prisma.conversation.findMany({
+      where: { ...scope, isGroup: false, contactId: input.contactId },
+      orderBy: { createdAt: 'asc' },
+      take: 2,
+      select: CONVERSATION_IDENTITY_SELECT,
+    });
+    // More than one conversation for the same contact means earlier duplicate
+    // data; picking one would split the history, so creation is left to the
+    // caller and the data issue is handled separately.
+    return byContact.length === 1 ? byContact[0] : null;
+  }
+
+  private async applyConversationIdentity(
+    existing: ConversationIdentity,
+    input: {
+      contactId: string | null;
+      isGroup: boolean;
+      externalLid: string | null;
+    },
+    reopenClosed: boolean,
+  ): Promise<ConversationIdentity> {
+    const data: Prisma.ConversationUncheckedUpdateInput = {};
+    if (reopenClosed && existing.status === ConversationStatus.CLOSED) {
+      data.status = ConversationStatus.OPEN;
+      data.closedAt = null;
+    }
+    if (!input.isGroup && !existing.contactId && input.contactId) {
+      data.contactId = input.contactId;
+    }
+    if (!input.isGroup && input.externalLid && existing.externalLid !== input.externalLid) {
+      data.externalLid = input.externalLid;
+    }
+    if (input.isGroup && !existing.isGroup) {
+      data.isGroup = true;
+    }
+
+    if (Object.keys(data).length === 0) {
+      return existing;
+    }
+
+    return this.prisma.conversation.update({
+      where: { id: existing.id },
+      data,
+      select: CONVERSATION_IDENTITY_SELECT,
     });
   }
 
@@ -1490,45 +1876,217 @@ export class WebhookService implements OnModuleInit {
     }
   }
 
-  /** Extracts the quoted message context of a reply, enriching it from the local history. */
+  /**
+   * Completes the quote metadata of replies that were persisted before their
+   * quoted message. Matching is done strictly by the external id inside the
+   * same conversation; content/time/sender are never used, so a reply can never
+   * be linked to an unrelated message.
+   */
+  private async backfillQuotedReplies(input: {
+    tenantId: string;
+    conversationId: string;
+    messageId: string;
+    externalMessageId: string | null;
+    direction: MessageDirection;
+    senderId: string | null;
+    senderName: string | null;
+    content: string | null;
+    type: MessageType;
+    remoteJid: string;
+    audioDurationSeconds: number | null;
+  }): Promise<void> {
+    if (!input.externalMessageId) {
+      return;
+    }
+
+    const replies = await this.prisma.message.findMany({
+      where: {
+        tenantId: input.tenantId,
+        conversationId: input.conversationId,
+        id: { not: input.messageId },
+        metadata: {
+          path: ['quoted', 'externalId'],
+          equals: input.externalMessageId,
+        },
+      },
+      select: { id: true, metadata: true },
+      take: 100,
+    });
+
+    for (const reply of replies) {
+      const metadata = isRecord(reply.metadata) ? reply.metadata : {};
+      const quoted = isRecord(metadata.quoted) ? metadata.quoted : null;
+      if (!quoted) {
+        continue;
+      }
+
+      const existingType =
+        typeof quoted.type === 'string' ? (quoted.type as MessageType) : MessageType.UNKNOWN;
+      const type = input.type === MessageType.UNKNOWN ? existingType : input.type;
+      const nextQuoted: QuotedMessageInfo = {
+        messageId: input.messageId,
+        externalId: input.externalMessageId,
+        remoteJid: readString(quoted.remoteJid) ?? input.remoteJid,
+        authorName: input.senderName ?? readString(quoted.authorName),
+        authorJid: readString(quoted.authorJid) ?? input.senderId,
+        fromMe: input.direction === MessageDirection.OUTBOUND,
+        content: input.content ?? readString(quoted.content),
+        type,
+        audioDurationSeconds:
+          type === MessageType.AUDIO
+            ? (input.audioDurationSeconds ??
+              readAudioDurationFromMetadata(quoted))
+            : null,
+      };
+      const nextMetadata = { ...metadata, quoted: nextQuoted };
+      if (JSON.stringify(nextMetadata) === JSON.stringify(metadata)) {
+        continue;
+      }
+
+      await this.prisma.message.update({
+        where: { id: reply.id },
+        data: { metadata: nextMetadata as unknown as Prisma.InputJsonValue },
+      });
+      this.realtime.emitToConversation(
+        input.tenantId,
+        input.conversationId,
+        'message.updated',
+        {
+          conversationId: input.conversationId,
+          messageId: reply.id,
+        },
+      );
+      this.realtime.emitToTenant(input.tenantId, 'conversation.updated', {
+        conversationId: input.conversationId,
+      });
+    }
+  }
+
+  /**
+   * Extracts the quoted message context of a reply, enriching it from the local
+   * history. Evolution 2.4 flattens an inbound text reply into `conversation`
+   * and drops the `extendedTextMessage` wrapper; the quote context then arrives
+   * at the root of the event (`data.contextInfo`) instead of inside the message
+   * body. Both shapes are accepted here.
+   */
   private async resolveInboundQuoted(
     tenantId: string,
-    whatsappInstanceId: string,
+    conversationId: string,
+    data: Record<string, unknown> | null,
     message: unknown,
   ): Promise<QuotedMessageInfo | null> {
-    const contextInfo = findContextInfo(message);
+    const contextInfo = findReplyContextInfo(data, message);
     if (!contextInfo) {
       return null;
     }
 
+    // `contextInfo` is also used for mentions, ephemeral settings, status
+    // attributions and other technical metadata. Only `stanzaId` identifies an
+    // explicit reply; without it there is no message to quote, even when
+    // `quotedMessage` or other fields are present.
     const externalId = readString(contextInfo.stanzaId);
-    const authorJid = readString(contextInfo.participant);
+    if (!externalId) {
+      return null;
+    }
+
+    const remoteJid =
+      readString(contextInfo.remoteJid) ?? readString(contextInfo.remoteJidAlt);
+    const authorJid =
+      readString(contextInfo.participant) ?? readString(contextInfo.participantAlt);
     const quotedRaw = contextInfo.quotedMessage;
     let content = extractText(quotedRaw);
     let type = detectType(quotedRaw);
+    let audioDurationSeconds = type === MessageType.AUDIO ? readAudioDuration(quotedRaw) : null;
     let authorName: string | null = null;
     let fromMe = false;
     let messageId: string | null = null;
 
-    if (externalId) {
-      const local = await this.prisma.message.findFirst({
-        where: {
-          tenantId,
-          externalMessageId: externalId,
-          conversation: { whatsappInstanceId },
-        },
-        select: { id: true, direction: true, senderName: true, content: true, type: true },
-      });
-      if (local) {
-        messageId = local.id;
-        fromMe = local.direction === MessageDirection.OUTBOUND;
-        authorName = local.senderName;
-        content = local.content ?? content;
-        type = local.type;
+    // The quoted message must belong to the same conversation, which already
+    // scopes the lookup by tenant and instance. The external id alone is used
+    // for the match: text, time or sender name are never considered, since two
+    // distinct messages can share them.
+    const local = await this.prisma.message.findFirst({
+      where: { tenantId, conversationId, externalMessageId: externalId },
+      select: {
+        id: true,
+        direction: true,
+        senderId: true,
+        senderName: true,
+        content: true,
+        type: true,
+        metadata: true,
+      },
+    });
+
+    if (local) {
+      messageId = local.id;
+      fromMe = local.direction === MessageDirection.OUTBOUND;
+      authorName = local.senderName;
+      content = local.content ?? content;
+      type = local.type;
+      if (type === MessageType.AUDIO) {
+        audioDurationSeconds =
+          readAudioDurationFromMetadata(local.metadata) ?? audioDurationSeconds;
       }
     }
 
-    return { messageId, externalId, authorName, authorJid, fromMe, content, type };
+    if (!authorName && authorJid) {
+      authorName = await this.resolveQuotedAuthorName(tenantId, conversationId, authorJid);
+    }
+
+    return {
+      messageId,
+      externalId,
+      remoteJid,
+      authorName,
+      authorJid,
+      fromMe,
+      content,
+      type,
+      audioDurationSeconds,
+    };
+  }
+
+  /**
+   * Resolves the quoted author display name when the original message is not
+   * stored locally. Group participants are addressed by LID in newer WhatsApp
+   * accounts, so jid, lid, and phone are all tried before falling back to the
+   * CRM contact.
+   */
+  private async resolveQuotedAuthorName(
+    tenantId: string,
+    conversationId: string,
+    authorJid: string,
+  ): Promise<string | null> {
+    const canonical = canonicalJid(authorJid);
+    const phone = phoneFromJid(authorJid);
+    const aliases = [...new Set([authorJid, canonical])];
+
+    const participant = await this.prisma.conversationParticipant.findFirst({
+      where: {
+        tenantId,
+        conversationId,
+        OR: [
+          { jid: { in: aliases } },
+          { lid: { in: aliases } },
+          ...(phone ? [{ phone }] : []),
+        ],
+      },
+      select: { name: true },
+    });
+    const participantName = participant?.name?.trim();
+    if (participantName) {
+      return participantName;
+    }
+
+    if (!phone) {
+      return null;
+    }
+    const contact = await this.prisma.contact.findFirst({
+      where: { tenantId, phone },
+      select: { name: true },
+    });
+    return contact?.name?.trim() || null;
   }
 }
 
@@ -1857,14 +2415,42 @@ const CONTEXT_MESSAGE_PARTS = [
   'contactMessage',
 ] as const;
 
-function findContextInfo(message: unknown): Record<string, unknown> | null {
-  if (!isRecord(message)) {
-    return null;
+/**
+ * Finds the context that carries an explicit reply (`stanzaId`). Evolution
+ * versions differ in where they keep it: inside the message part for media and
+ * older builds, or at the event root after flattening a text reply into
+ * `conversation`. Candidates without a `stanzaId` are technical metadata
+ * (mentions, ephemeral settings, threads) and never identify a reply.
+ */
+function findReplyContextInfo(
+  data: Record<string, unknown> | null,
+  message: unknown,
+): Record<string, unknown> | null {
+  const candidates: unknown[] = [];
+
+  if (isRecord(message)) {
+    for (const part of CONTEXT_MESSAGE_PARTS) {
+      const node = message[part];
+      if (isRecord(node)) {
+        candidates.push(node.contextInfo);
+      }
+    }
+    candidates.push(message.contextInfo);
+    candidates.push(message.messageContextInfo);
   }
-  for (const part of CONTEXT_MESSAGE_PARTS) {
-    const node = message[part];
-    if (isRecord(node) && isRecord(node.contextInfo)) {
-      return node.contextInfo;
+
+  if (data) {
+    candidates.push(data.contextInfo);
+    const dataMessage = isRecord(data.message) ? data.message : null;
+    if (dataMessage) {
+      candidates.push(dataMessage.contextInfo);
+      candidates.push(dataMessage.messageContextInfo);
+    }
+  }
+
+  for (const candidate of candidates) {
+    if (isRecord(candidate) && readString(candidate.stanzaId)) {
+      return candidate;
     }
   }
   return null;
@@ -2090,6 +2676,20 @@ function readAudioDuration(message: unknown): number | null {
   return Number.isFinite(seconds) && seconds > 0 ? seconds : null;
 }
 
+function readAudioDurationFromMetadata(metadata: unknown): number | null {
+  if (!isRecord(metadata)) {
+    return null;
+  }
+  const raw = metadata.audioDurationSeconds;
+  const seconds =
+    typeof raw === 'number'
+      ? raw
+      : typeof raw === 'string' && raw.length > 0
+        ? Number(raw)
+        : Number.NaN;
+  return Number.isFinite(seconds) && seconds > 0 ? seconds : null;
+}
+
 function readMessageTimestamp(data: Record<string, unknown> | null): Date | null {
   const raw = data?.messageTimestamp;
   const seconds =
@@ -2130,6 +2730,71 @@ function mapPresenceState(state: string): PresenceState | null {
     default:
       return null;
   }
+}
+
+/**
+ * WhatsApp device suffixes (`:NN`) identify a device, not a different person.
+ * Removing them keeps the same identity comparable across presence and metadata.
+ */
+function canonicalJid(jid: string): string {
+  const separatorIndex = jid.indexOf('@');
+  if (separatorIndex <= 0) {
+    return jid;
+  }
+  const localPart = jid.slice(0, separatorIndex).split(':')[0];
+  return `${localPart}@${jid.slice(separatorIndex + 1)}`;
+}
+
+function presenceLookupAliases(participantId: string): string[] {
+  const aliases = new Set<string>([participantId, canonicalJid(participantId)]);
+  const lid = lidFromJid(participantId);
+  if (lid) {
+    aliases.add(lid);
+  }
+  return [...aliases];
+}
+
+function addPresenceAlias(
+  index: Map<string, PresenceIdentity | null>,
+  alias: string,
+  identity: PresenceIdentity,
+): void {
+  const current = index.get(alias);
+  if (current === undefined) {
+    index.set(alias, identity);
+    return;
+  }
+  if (current !== identity) {
+    index.set(alias, null);
+  }
+}
+
+function resolvePresenceIdentity(
+  directory: PresenceDirectory,
+  participantId: string,
+): PresenceIdentity | null {
+  const direct = directory.byJid.get(canonicalJid(participantId));
+  if (direct) {
+    return direct;
+  }
+
+  const lid = lidFromJid(participantId);
+  if (lid) {
+    const byLid = directory.byLid.get(lid);
+    if (byLid) {
+      return byLid;
+    }
+  }
+
+  const phone = phoneFromJid(participantId);
+  if (phone) {
+    const byPhone = directory.byPhone.get(phone);
+    if (byPhone) {
+      return byPhone;
+    }
+  }
+
+  return null;
 }
 
 function readEventTimestamp(value: unknown): Date | null {

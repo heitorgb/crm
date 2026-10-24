@@ -7,6 +7,9 @@ import {
   canEditMessage,
   computeMessageScrollTop,
   findQuotedMessage,
+  formatAudioDuration,
+  mergeQuotedTarget,
+  readQuotedMessage,
 } from './attendance-utils';
 
 const WINDOW_MS = 5 * 60 * 1000;
@@ -147,6 +150,7 @@ function quoted(overrides: Partial<QuotedMessage> = {}): QuotedMessage {
     fromMe: false,
     content: 'texto citado',
     type: 'TEXT',
+    audioDurationSeconds: null,
     ...overrides,
   };
 }
@@ -206,6 +210,169 @@ describe('findQuotedMessage', () => {
     expect(
       findQuotedMessage([message({ id: 'orig-1' })], 'conv-1', quoted({ messageId: 'orig-1' })),
     ).not.toBeNull();
+  });
+});
+
+describe('readQuotedMessage', () => {
+  it('ignores the empty quote persisted by older normalization', () => {
+    const audio = message({
+      type: 'AUDIO',
+      metadata: {
+        quoted: {
+          messageId: null,
+          externalId: null,
+          authorName: null,
+          authorJid: null,
+          fromMe: false,
+          content: null,
+          type: 'UNKNOWN',
+        },
+      },
+    });
+
+    expect(readQuotedMessage(audio)).toBeNull();
+  });
+
+  it('keeps a quote whose referenced message is still unavailable locally', () => {
+    const audio = message({
+      type: 'AUDIO',
+      metadata: {
+        quoted: {
+          messageId: null,
+          externalId: 'wamid.original',
+          authorName: 'Ana',
+          authorJid: 'ana@s.whatsapp.net',
+          fromMe: false,
+          content: null,
+          type: 'TEXT',
+        },
+      },
+    });
+
+    expect(readQuotedMessage(audio)).toEqual({
+      messageId: null,
+      externalId: 'wamid.original',
+      authorName: 'Ana',
+      authorJid: 'ana@s.whatsapp.net',
+      fromMe: false,
+      content: null,
+      type: 'TEXT',
+      audioDurationSeconds: null,
+    });
+  });
+
+  it('keeps the duration of a quoted audio message', () => {
+    const audio = message({
+      metadata: {
+        quoted: {
+          messageId: null,
+          externalId: 'wamid.audio',
+          authorName: 'Ana',
+          authorJid: 'ana@s.whatsapp.net',
+          fromMe: false,
+          content: null,
+          type: 'AUDIO',
+          audioDurationSeconds: 28,
+        },
+      },
+    });
+
+    expect(readQuotedMessage(audio)).toMatchObject({
+      type: 'AUDIO',
+      audioDurationSeconds: 28,
+    });
+  });
+
+  it('keeps a quote resolved to a local message by its internal id', () => {
+    const audio = message({
+      type: 'AUDIO',
+      metadata: {
+        quoted: {
+          messageId: 'original-1',
+          externalId: null,
+          authorName: null,
+          authorJid: null,
+          fromMe: true,
+          content: null,
+          type: 'AUDIO',
+        },
+      },
+    });
+
+    expect(readQuotedMessage(audio)).toMatchObject({
+      messageId: 'original-1',
+      fromMe: true,
+      type: 'AUDIO',
+      audioDurationSeconds: null,
+    });
+  });
+});
+
+describe('quote rendering helpers', () => {
+  it('formats an audio duration like WhatsApp', () => {
+    expect(formatAudioDuration(28)).toBe('0:28');
+    expect(formatAudioDuration(75)).toBe('1:15');
+    expect(formatAudioDuration(null)).toBeNull();
+    expect(formatAudioDuration(0)).toBeNull();
+  });
+
+  it('completes a quote with the original message loaded later', () => {
+    const original = message({
+      id: 'orig-1',
+      type: 'AUDIO',
+      direction: 'INBOUND',
+      senderName: 'Kkroto',
+      senderId: 'kkroto@lid',
+      content: null,
+      metadata: { audioDurationSeconds: 28 },
+    });
+
+    expect(
+      mergeQuotedTarget(
+        quoted({
+          messageId: null,
+          externalId: 'wamid.audio',
+          authorName: null,
+          authorJid: null,
+          type: 'UNKNOWN',
+          content: null,
+        }),
+        original,
+      ),
+    ).toMatchObject({
+      authorName: 'Kkroto',
+      authorJid: 'kkroto@lid',
+      fromMe: false,
+      type: 'AUDIO',
+      audioDurationSeconds: 28,
+    });
+  });
+
+  it('does not change a quote when the original is not loaded', () => {
+    const original = quoted({ externalId: 'wamid.audio', type: 'AUDIO' });
+
+    expect(mergeQuotedTarget(original, null)).toBe(original);
+  });
+
+  it('marks an outbound original as sent by the current user', () => {
+    const original = message({
+      id: 'orig-2',
+      direction: 'OUTBOUND',
+      type: 'TEXT',
+      senderName: 'Atendente',
+      content: 'texto enviado',
+    });
+
+    expect(
+      mergeQuotedTarget(
+        quoted({ messageId: 'orig-2', fromMe: false, type: 'UNKNOWN', content: null }),
+        original,
+      ),
+    ).toMatchObject({
+      fromMe: true,
+      type: 'TEXT',
+      content: 'texto enviado',
+    });
   });
 });
 

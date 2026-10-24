@@ -661,6 +661,7 @@ export class ConversationsService {
         direction: true,
         content: true,
         type: true,
+        metadata: true,
       },
     });
     if (!message) {
@@ -670,11 +671,16 @@ export class ConversationsService {
     return {
       messageId: message.id,
       externalId: message.externalMessageId,
+      remoteJid: null,
       authorName: message.senderName,
       authorJid: message.senderId,
       fromMe: message.direction === MessageDirection.OUTBOUND,
       content: message.content,
       type: message.type,
+      audioDurationSeconds:
+        message.type === MessageType.AUDIO
+          ? readMetadataAudioDuration(message.metadata)
+          : null,
     };
   }
 
@@ -858,4 +864,18 @@ function toConversationView(
     createdAt: conversation.createdAt,
     updatedAt: conversation.updatedAt,
   };
+}
+
+function readMetadataAudioDuration(metadata: unknown): number | null {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+    return null;
+  }
+  const raw = (metadata as Record<string, unknown>).audioDurationSeconds;
+  const seconds =
+    typeof raw === 'number'
+      ? raw
+      : typeof raw === 'string' && raw.length > 0
+        ? Number(raw)
+        : Number.NaN;
+  return Number.isFinite(seconds) && seconds > 0 ? seconds : null;
 }

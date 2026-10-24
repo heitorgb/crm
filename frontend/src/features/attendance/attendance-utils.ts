@@ -224,15 +224,72 @@ export function readQuotedMessage(message: ConversationMessage): QuotedMessage |
     return null;
   }
   const quoted = raw as Record<string, unknown>;
+  const messageId = typeof quoted.messageId === 'string' ? quoted.messageId : null;
+  const externalId = typeof quoted.externalId === 'string' ? quoted.externalId : null;
+  // Legacy rows may carry an empty `quoted` object created from technical
+  // `contextInfo` metadata. A reply is only renderable when it points to a
+  // message through one of its identifiers; without that there is nothing to
+  // cite and the block must not appear.
+  if (!messageId && !externalId) {
+    return null;
+  }
   return {
-    messageId: typeof quoted.messageId === 'string' ? quoted.messageId : null,
-    externalId: typeof quoted.externalId === 'string' ? quoted.externalId : null,
+    messageId,
+    externalId,
     authorName: typeof quoted.authorName === 'string' ? quoted.authorName : null,
     authorJid: typeof quoted.authorJid === 'string' ? quoted.authorJid : null,
     fromMe: quoted.fromMe === true,
     content: typeof quoted.content === 'string' ? quoted.content : null,
     type: typeof quoted.type === 'string' ? (quoted.type as MessageType) : 'UNKNOWN',
+    audioDurationSeconds: readSeconds(quoted.audioDurationSeconds),
   };
+}
+
+function readSeconds(value: unknown): number | null {
+  const seconds =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string' && value.length > 0
+        ? Number(value)
+        : Number.NaN;
+  return Number.isFinite(seconds) && seconds > 0 ? seconds : null;
+}
+
+export function readMessageAudioDuration(message: ConversationMessage): number | null {
+  return readSeconds(message.metadata?.audioDurationSeconds);
+}
+
+/**
+ * Completes a stored quote with the message already loaded in the timeline.
+ * This covers replies received before their original (history out of order) and
+ * older rows whose quote was persisted without author/type details: the target
+ * is always matched by identifier, never by content.
+ */
+export function mergeQuotedTarget(
+  quoted: QuotedMessage,
+  target: ConversationMessage | null,
+): QuotedMessage {
+  if (!target) {
+    return quoted;
+  }
+  return {
+    ...quoted,
+    authorName: target.senderName ?? quoted.authorName,
+    authorJid: target.senderId ?? quoted.authorJid,
+    fromMe: target.direction === 'OUTBOUND',
+    content: target.content ?? quoted.content,
+    type: target.type === 'UNKNOWN' ? quoted.type : target.type,
+    audioDurationSeconds: readMessageAudioDuration(target) ?? quoted.audioDurationSeconds,
+  };
+}
+
+/** WhatsApp-style duration (`0:28`) for an audio citation. */
+export function formatAudioDuration(seconds: number | null | undefined): string | null {
+  if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds <= 0) {
+    return null;
+  }
+  const total = Math.round(seconds);
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
 }
 
 export function quotedAuthorLabel(quoted: QuotedMessage): string {

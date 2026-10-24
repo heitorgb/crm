@@ -34,9 +34,20 @@ import {
 } from './queries';
 import { RecipientPicker } from './recipient-picker';
 import {
+  ALL_WEEKDAYS,
+  SCHEDULED_MESSAGE_TIMEZONE,
+  dayOfMonthOfLocalInput,
   defaultLocalDateTime,
+  isFutureLocalDateTime,
+  isoWeekdayOfLocalInput,
+  isValidDayOfMonth,
+  isValidTimeOfDay,
+  localDayOfMonthOf,
+  localIsoWeekdayOf,
+  localTimeInput,
   previewScheduledMessage,
   recurrenceLabel,
+  scheduledWeekdays,
   toLocalInput,
 } from './scheduled-message-utils';
 
@@ -45,6 +56,13 @@ interface ScheduledMessageFormProps {
   onOpenChange: (open: boolean) => void;
   schedule?: ScheduledMessage | null;
   initialRecipients?: ScheduledMessageRecipientDefinition[];
+}
+
+interface ScheduleFieldErrors {
+  scheduledAt?: string;
+  recurringTime?: string;
+  weekdays?: string;
+  dayOfMonth?: string;
 }
 
 const variableChips = ['{nome}', '{empresa}', '{valor}'];
@@ -79,6 +97,8 @@ export function ScheduledMessageForm({
     [initialRecipients],
   );
 
+  const defaultDateTime = defaultLocalDateTime();
+  const formTimeZone = schedule?.timeZone ?? SCHEDULED_MESSAGE_TIMEZONE;
   const [type, setType] = useState<ScheduledMessageType>(schedule?.type ?? 'CAMPAIGN');
   const [title, setTitle] = useState(schedule?.title ?? '');
   const [content, setContent] = useState(schedule?.content ?? '');
@@ -86,14 +106,47 @@ export function ScheduledMessageForm({
   const [recurrence, setRecurrence] = useState<ScheduledMessageRecurrence>(
     schedule?.recurrence ?? 'ONCE',
   );
-  const [scheduledAt, setScheduledAt] = useState(
+  const [scheduledAt, setScheduledAt] = useState(() =>
     schedule
       ? toLocalInput(schedule.nextRunAt ?? schedule.scheduledAt, schedule.timeZone)
-      : defaultLocalDateTime(),
+      : defaultDateTime,
   );
+  const [recurringTime, setRecurringTime] = useState(() => {
+    if (schedule?.recurringTime) {
+      return schedule.recurringTime;
+    }
+    if (schedule) {
+      return localTimeInput(schedule.scheduledAt, schedule.timeZone);
+    }
+    return defaultDateTime.slice(11, 16);
+  });
+  const [weekdays, setWeekdays] = useState<number[]>(() => {
+    if (!schedule) {
+      return [];
+    }
+    if (schedule.recurrence !== 'DAILY' && schedule.recurrence !== 'WEEKLY') {
+      return [];
+    }
+    if (schedule.weekdays.length > 0) {
+      return [...schedule.weekdays];
+    }
+    if (schedule.recurrence === 'DAILY') {
+      return [...ALL_WEEKDAYS];
+    }
+    return [localIsoWeekdayOf(schedule.nextRunAt ?? schedule.scheduledAt, schedule.timeZone)];
+  });
+  const [dayOfMonth, setDayOfMonth] = useState(() => {
+    if (schedule) {
+      return String(
+        schedule.dayOfMonth ?? localDayOfMonthOf(schedule.scheduledAt, schedule.timeZone),
+      );
+    }
+    return String(localDayOfMonthOf(new Date(), SCHEDULED_MESSAGE_TIMEZONE));
+  });
   const [selectedIds, setSelectedIds] = useState<Set<string>>(initialIds);
   const [file, setFile] = useState<File | null>(null);
   const [removeAttachment, setRemoveAttachment] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState<ScheduleFieldErrors>({});
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -114,6 +167,65 @@ export function ScheduledMessageForm({
 
   const appendVariable = (variable: string): void => {
     setContent((current) => `${current}${current.endsWith(' ') || current.length === 0 ? '' : ' '}${variable}`);
+  };
+
+  const toggleWeekday = (day: number): void => {
+    setFieldErrors((current) => ({ ...current, weekdays: undefined }));
+    setWeekdays((current) =>
+      current.includes(day)
+        ? current.filter((value) => value !== day)
+        : [...current, day].sort((left, right) => left - right),
+    );
+  };
+
+  const handleRecurrenceChange = (next: ScheduledMessageRecurrence): void => {
+    if (next === recurrence) {
+      return;
+    }
+    if (
+      schedule &&
+      recurrence === 'ONCE' &&
+      (next === 'DAILY' || next === 'WEEKLY') &&
+      weekdays.length === 0 &&
+      scheduledAt
+    ) {
+      setWeekdays([isoWeekdayOfLocalInput(scheduledAt)]);
+    }
+    if (recurrence === 'ONCE' && next !== 'ONCE' && scheduledAt) {
+      setRecurringTime(scheduledAt.slice(11, 16));
+    }
+    if (next === 'MONTHLY' && recurrence !== 'MONTHLY' && scheduledAt) {
+      setDayOfMonth(String(dayOfMonthOfLocalInput(scheduledAt)));
+    }
+    setFieldErrors({});
+    setError(null);
+    setRecurrence(next);
+  };
+
+  const validateScheduleFields = (): boolean => {
+    const errors: ScheduleFieldErrors = {};
+    if (recurrence === 'ONCE') {
+      if (!scheduledAt) {
+        errors.scheduledAt = 'Informe a data e a hora do envio.';
+      } else if (!isFutureLocalDateTime(scheduledAt, formTimeZone)) {
+        errors.scheduledAt = 'Informe uma data e hora futura.';
+      }
+    } else {
+      if (!isValidTimeOfDay(recurringTime)) {
+        errors.recurringTime = 'Informe um horário válido no formato HH:mm.';
+      }
+      if (
+        (recurrence === 'DAILY' || recurrence === 'WEEKLY') &&
+        weekdays.length === 0
+      ) {
+        errors.weekdays = 'Selecione pelo menos um dia da semana para continuar.';
+      }
+      if (recurrence === 'MONTHLY' && !isValidDayOfMonth(dayOfMonth)) {
+        errors.dayOfMonth = 'Informe um dia do mês entre 1 e 31.';
+      }
+    }
+    setFieldErrors(errors);
+    return Object.keys(errors).length === 0;
   };
 
   const handleFileSelected = (event: ChangeEvent<HTMLInputElement>): void => {
@@ -139,8 +251,7 @@ export function ScheduledMessageForm({
       setError('Selecione ao menos um destinatário.');
       return;
     }
-    if (!scheduledAt) {
-      setError('Informe a data e a hora do envio.');
+    if (!validateScheduleFields()) {
       return;
     }
 
@@ -150,11 +261,20 @@ export function ScheduledMessageForm({
       content: content.trim(),
       valor: valor.trim() || null,
       recurrence,
-      scheduledAt,
       conversationIds: [...selectedIds],
       file,
       removeAttachment,
     };
+    if (recurrence === 'ONCE') {
+      input.scheduledAt = scheduledAt;
+    } else {
+      input.recurringTime = recurringTime;
+      if (recurrence === 'MONTHLY') {
+        input.dayOfMonth = Number(dayOfMonth);
+      } else {
+        input.weekdays = [...weekdays];
+      }
+    }
 
     try {
       if (schedule) {
@@ -199,7 +319,7 @@ export function ScheduledMessageForm({
               <Select
                 value={recurrence}
                 onValueChange={(value) =>
-                  setRecurrence(value as ScheduledMessageRecurrence)
+                  handleRecurrenceChange(value as ScheduledMessageRecurrence)
                 }
               >
                 <SelectTrigger id="scheduled-recurrence">
@@ -264,16 +384,122 @@ export function ScheduledMessageForm({
                 placeholder="Ex.: R$ 150,00"
               />
             </FormField>
-            <FormField id="scheduled-at" label="Data e hora" required>
-              <Input
+            {recurrence === 'ONCE' ? (
+              <FormField
                 id="scheduled-at"
-                type="datetime-local"
-                value={scheduledAt}
-                onChange={(event) => setScheduledAt(event.target.value)}
-              />
-              <p className="text-xs text-muted-foreground">Fuso: America/Sao_Paulo</p>
-            </FormField>
+                label="Data e hora do envio"
+                required
+                error={fieldErrors.scheduledAt}
+                errorId="scheduled-at-error"
+              >
+                <Input
+                  id="scheduled-at"
+                  type="datetime-local"
+                  value={scheduledAt}
+                  onChange={(event) => {
+                    setScheduledAt(event.target.value);
+                    setFieldErrors((current) => ({ ...current, scheduledAt: undefined }));
+                  }}
+                  aria-invalid={Boolean(fieldErrors.scheduledAt)}
+                  aria-describedby={fieldErrors.scheduledAt ? 'scheduled-at-error' : undefined}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Fuso: {formTimeZone}
+                </p>
+              </FormField>
+            ) : (
+              <FormField
+                id="scheduled-time"
+                label="Horário do envio"
+                required
+                error={fieldErrors.recurringTime}
+                errorId="scheduled-time-error"
+              >
+                <Input
+                  id="scheduled-time"
+                  type="time"
+                  value={recurringTime}
+                  onChange={(event) => {
+                    setRecurringTime(event.target.value);
+                    setFieldErrors((current) => ({ ...current, recurringTime: undefined }));
+                  }}
+                  aria-invalid={Boolean(fieldErrors.recurringTime)}
+                  aria-describedby={fieldErrors.recurringTime ? 'scheduled-time-error' : undefined}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Fuso: {formTimeZone}
+                </p>
+              </FormField>
+            )}
           </div>
+
+          {recurrence === 'DAILY' || recurrence === 'WEEKLY' ? (
+            <FormField
+              id="scheduled-weekdays"
+              label="Dias da semana"
+              required
+              description="Selecione os dias em que a mensagem será enviada."
+              error={fieldErrors.weekdays}
+              errorId="scheduled-weekdays-error"
+            >
+              <div
+                id="scheduled-weekdays"
+                role="group"
+                aria-label="Dias da semana"
+                aria-invalid={Boolean(fieldErrors.weekdays)}
+                aria-describedby={
+                  fieldErrors.weekdays ? 'scheduled-weekdays-error' : undefined
+                }
+                className="grid grid-cols-2 gap-2 sm:grid-cols-4"
+              >
+                {scheduledWeekdays.map((day) => {
+                  const selected = weekdays.includes(day.value);
+                  return (
+                    <Button
+                      key={day.value}
+                      type="button"
+                      variant={selected ? 'default' : 'outline'}
+                      size="sm"
+                      aria-pressed={selected}
+                      onClick={() => toggleWeekday(day.value)}
+                      className="justify-start"
+                    >
+                      <span className="truncate">{day.label}</span>
+                    </Button>
+                  );
+                })}
+              </div>
+            </FormField>
+          ) : null}
+
+          {recurrence === 'MONTHLY' ? (
+            <FormField
+              id="scheduled-day-of-month"
+              label="Dia do mês"
+              required
+              description="Em meses mais curtos, o envio ocorre no último dia disponível."
+              error={fieldErrors.dayOfMonth}
+              errorId="scheduled-day-of-month-error"
+            >
+              <Input
+                id="scheduled-day-of-month"
+                type="number"
+                min={1}
+                max={31}
+                inputMode="numeric"
+                value={dayOfMonth}
+                onChange={(event) => {
+                  setDayOfMonth(event.target.value);
+                  setFieldErrors((current) => ({ ...current, dayOfMonth: undefined }));
+                }}
+                aria-invalid={Boolean(fieldErrors.dayOfMonth)}
+                aria-describedby={
+                  fieldErrors.dayOfMonth ? 'scheduled-day-of-month-error' : undefined
+                }
+                className="max-w-32"
+              />
+            </FormField>
+          ) : null}
 
           <FormField id="scheduled-attachment" label="Anexo (opcional)">
             <div className="flex flex-wrap items-center gap-2">

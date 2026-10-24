@@ -192,3 +192,88 @@ describe('MessageBubble reactions', () => {
     expect(container.querySelector('[data-message-id="message-1"]')).toBeNull();
   });
 });
+
+describe('MessageBubble quoted replies', () => {
+  const audioQuote = {
+    messageId: 'original-1',
+    externalId: 'wamid.audio',
+    authorName: 'Kkroto',
+    authorJid: 'kkroto@lid',
+    fromMe: false,
+    content: null,
+    type: 'AUDIO' as const,
+    audioDurationSeconds: 28,
+  };
+
+  it('renders the author, audio icon and duration of a quoted audio', () => {
+    renderBubble('RECEIVED', {
+      direction: 'INBOUND',
+      content: 'Matar resolve logo',
+      senderName: 'Caio',
+      metadata: { quoted: audioQuote },
+    });
+
+    expect(screen.getByText('Kkroto')).toBeTruthy();
+    expect(screen.getByText('0:28')).toBeTruthy();
+    expect(screen.getByText('Matar resolve logo')).toBeTruthy();
+  });
+
+  it('completes the quote when the original audio is loaded later', () => {
+    const original: ConversationMessage = buildMessage('RECEIVED', {
+      id: 'original-1',
+      direction: 'INBOUND',
+      type: 'AUDIO',
+      content: null,
+      senderId: 'kkroto@lid',
+      senderName: 'Kkroto',
+      metadata: { audioDurationSeconds: 28 },
+    });
+
+    render(
+      <MessageBubble
+        conversationId="conversation-1"
+        message={buildMessage('RECEIVED', {
+          direction: 'INBOUND',
+          content: 'Matar resolve logo',
+          metadata: {
+            quoted: {
+              ...audioQuote,
+              messageId: null,
+              authorName: null,
+              authorJid: null,
+              type: 'UNKNOWN',
+            },
+          },
+        })}
+        quoteTarget={original}
+        isGroup={false}
+        whatsappInstanceId="instance-1"
+      />,
+    );
+
+    expect(screen.getByText('Kkroto')).toBeTruthy();
+    expect(screen.getByText('0:28')).toBeTruthy();
+  });
+
+  it('keeps text quotes rendered as before', () => {
+    renderBubble('RECEIVED', {
+      direction: 'INBOUND',
+      content: 'Exatamente',
+      metadata: {
+        quoted: {
+          ...audioQuote,
+          messageId: 'original-2',
+          authorName: 'Ana',
+          authorJid: 'ana@s.whatsapp.net',
+          type: 'TEXT',
+          content: 'Seria o que, umas 8 instâncias?',
+          audioDurationSeconds: null,
+        },
+      },
+    });
+
+    expect(screen.getByText('Ana')).toBeTruthy();
+    expect(screen.getByText('Seria o que, umas 8 instâncias?')).toBeTruthy();
+    expect(screen.getByText('Exatamente')).toBeTruthy();
+  });
+});

@@ -112,13 +112,12 @@ export function ConversationList({
         <Tabs
           value={archived ? 'archived' : 'inbox'}
           onValueChange={(value) => onArchivedChange(value === 'archived')}
-          className="hidden lg:block"
         >
-          <TabsList className="w-full">
-            <TabsTrigger value="inbox" className="flex-1">
+          <TabsList className="h-auto w-full p-0.5 lg:h-9 lg:p-1">
+            <TabsTrigger value="inbox" className="min-h-11 min-w-0 flex-1 px-2 lg:min-h-0 lg:px-3">
               Caixa de entrada
             </TabsTrigger>
-            <TabsTrigger value="archived" className="flex-1">
+            <TabsTrigger value="archived" className="min-h-11 min-w-0 flex-1 px-2 lg:min-h-0 lg:px-3">
               Arquivadas
             </TabsTrigger>
           </TabsList>

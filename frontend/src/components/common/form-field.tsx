@@ -7,6 +7,7 @@ interface FormFieldProps {
   label: string;
   description?: string;
   error?: string;
+  errorId?: string;
   required?: boolean;
   children: ReactNode;
   className?: string;
@@ -17,6 +18,7 @@ export function FormField({
   label,
   description,
   error,
+  errorId,
   required,
   children,
   className,
@@ -29,7 +31,11 @@ export function FormField({
       </Label>
       {description ? <p className="text-xs text-muted-foreground">{description}</p> : null}
       {children}
-      {error ? <p className="text-xs font-medium text-danger">{error}</p> : null}
+      {error ? (
+        <p id={errorId} role="alert" className="text-xs font-medium text-danger">
+          {error}
+        </p>
+      ) : null}
     </div>
   );
 }

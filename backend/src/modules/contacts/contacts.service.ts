@@ -7,7 +7,9 @@ import {
 } from '../../common/dates/date-only.js';
 import { buildPage, skipOf, type PageResult } from '../../common/http/pagination.js';
 import { TenantContextService } from '../../common/tenant-context/tenant-context.service.js';
+import { isGroupJid, phoneFromJid } from '../../common/whatsapp/jid.js';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service.js';
+import { RealtimeService } from '../../infrastructure/realtime/realtime.service.js';
 import {
   ContactCustomerNotFoundError,
   ContactInvalidBirthDateError,
@@ -66,6 +68,19 @@ export interface ImportContactsResult {
   updated: number;
 }
 
+export interface WhatsAppContactEventInput {
+  tenantId: string;
+  jid: string;
+  name?: string | null;
+  avatarUrl?: string | null;
+}
+
+export interface WhatsAppContactEventResult {
+  contactId: string;
+  changed: boolean;
+  conversationIds: string[];
+}
+
 const IMPORT_BATCH_SIZE = 500;
 
 const INCOMPLETE_CONTACT_CONDITIONS: Prisma.ContactWhereInput[] = [
@@ -86,6 +101,7 @@ export class ContactsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly tenantContext: TenantContextService,
+    private readonly realtime: RealtimeService,
   ) {}
 
   async list(query: ListContactsQueryDto): Promise<ContactListResult> {
@@ -365,6 +381,112 @@ export class ContactsService {
     return { created, updated: toUpdate.length };
   }
 
+  /**
+   * Incremental synchronization from an Evolution contact event. The event is
+   * resolved to a phone-based contact only; groups, broadcast lists, bots and
+   * LID-only identifiers are not turned into CRM contacts (they remain available
+   * on the conversation row as their original JID).
+   *
+   * Manual CRM data wins: a name is only replaced while it is still the phone
+   * placeholder and an avatar is only replaced when it is empty or points to a
+   * WhatsApp profile picture. Events never delete contacts or conversations.
+   */
+  async syncFromWhatsAppEvent(
+    input: WhatsAppContactEventInput,
+  ): Promise<WhatsAppContactEventResult | null> {
+    if (isGroupJid(input.jid)) {
+      return null;
+    }
+
+    const phone = phoneFromJid(input.jid);
+    if (!phone) {
+      return null;
+    }
+
+    const incomingName = normalizeNullableString(input.name) ?? null;
+    const incomingAvatar = normalizeNullableString(input.avatarUrl) ?? null;
+
+    let existing = await this.prisma.contact.findFirst({
+      where: { tenantId: input.tenantId, phone },
+      include: CONTACT_INCLUDE,
+    });
+
+    if (!existing) {
+      try {
+        const created = await this.prisma.contact.create({
+          data: {
+            tenantId: input.tenantId,
+            phone,
+            name: incomingName ?? phone,
+            avatarUrl: incomingAvatar,
+          },
+          include: CONTACT_INCLUDE,
+        });
+        return this.publishContactEvent(input.tenantId, created.id);
+      } catch (error) {
+        if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') {
+          throw error;
+        }
+        existing = await this.prisma.contact.findFirst({
+          where: { tenantId: input.tenantId, phone },
+          include: CONTACT_INCLUDE,
+        });
+        if (!existing) {
+          throw error;
+        }
+      }
+    }
+
+    const data: Prisma.ContactUpdateInput = {};
+    if (
+      incomingName &&
+      incomingName !== existing.name &&
+      isPlaceholderContactName(existing.name, phone)
+    ) {
+      data.name = incomingName;
+    }
+    if (incomingAvatar && shouldReplaceAvatar(existing.avatarUrl, incomingAvatar)) {
+      data.avatarUrl = incomingAvatar;
+    }
+
+    if (Object.keys(data).length === 0) {
+      const conversationIds = await this.conversationIdsForContact(input.tenantId, existing.id);
+      return { contactId: existing.id, changed: false, conversationIds };
+    }
+
+    await this.prisma.contact.update({ where: { id: existing.id }, data });
+    return this.publishContactEvent(input.tenantId, existing.id);
+  }
+
+  private async publishContactEvent(
+    tenantId: string,
+    contactId: string,
+  ): Promise<WhatsAppContactEventResult> {
+    const conversationIds = await this.conversationIdsForContact(tenantId, contactId);
+    this.realtime.emitToTenant(tenantId, 'contact.updated', {
+      contactId,
+      conversationIds,
+    });
+    for (const conversationId of conversationIds) {
+      this.realtime.emitToTenant(tenantId, 'conversation.updated', {
+        conversationId,
+      });
+    }
+
+    return { contactId, changed: true, conversationIds };
+  }
+
+  private async conversationIdsForContact(
+    tenantId: string,
+    contactId: string,
+  ): Promise<string[]> {
+    const conversations = await this.prisma.conversation.findMany({
+      where: { tenantId, contactId },
+      select: { id: true },
+    });
+    return conversations.map((conversation) => conversation.id);
+  }
+
   private async requireContact(tenantId: string, id: string): Promise<void> {
     const existing = await this.prisma.contact.findFirst({
       where: { id, tenantId },
@@ -500,6 +622,30 @@ export function normalizePhone(value: string | null | undefined): string | null 
 
   const digits = value.replace(/\D/g, '');
   return digits.length > 0 ? digits : null;
+}
+
+function isPlaceholderContactName(name: string, phone: string): boolean {
+  const trimmed = name.trim();
+  return trimmed.length === 0 || normalizePhone(trimmed) === phone;
+}
+
+/**
+ * Contact avatars are sourced from WhatsApp. A previous WhatsApp picture may be
+ * replaced by a newer one, but a picture already stored elsewhere (for example a
+ * user-uploaded file path) is preserved.
+ */
+function shouldReplaceAvatar(current: string | null, incoming: string): boolean {
+  if (!current) {
+    return true;
+  }
+  if (current === incoming) {
+    return false;
+  }
+  return isWhatsAppAvatarUrl(current);
+}
+
+function isWhatsAppAvatarUrl(value: string): boolean {
+  return value.includes('pps.whatsapp.net') || value.startsWith('https://pps.');
 }
 
 function mapPhoneConflict(error: unknown): unknown {

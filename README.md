@@ -96,7 +96,7 @@ docker compose -f docker-compose.yml -f docker-compose.evolution.yml up -d
 docker compose -f docker-compose.evolution.yml up -d
 ```
 
-A porta `8080` fica exposta no host. A imagem padrão é `evoapicloud/evolution-api:v2.3.7` e a chave
+A porta `8080` fica exposta no host. A imagem padrão é `evoapicloud/evolution-api:2.4.0-rc2` e a chave
 padrão é `change-me-evolution-api-key` (mude em produção).
 
 ### 2. Configurar o backend (`backend/.env`)

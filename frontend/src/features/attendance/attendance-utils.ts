@@ -4,6 +4,7 @@ import type {
   Conversation,
   ConversationMessage,
   ConversationStatus,
+  MessageReaction,
   MessageType,
   QuotedMessage,
 } from '@/types/attendance';
@@ -73,6 +74,20 @@ export function formatListTime(value: string): string {
     return 'Ontem';
   }
   return format(date, 'dd/MM/yyyy');
+}
+
+export function formatLastSeen(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+  if (isToday(date)) {
+    return `às ${format(date, 'HH:mm')}`;
+  }
+  if (isYesterday(date)) {
+    return `ontem às ${format(date, 'HH:mm')}`;
+  }
+  return format(date, "dd/MM/yyyy 'às' HH:mm");
 }
 
 export function dayKey(value: string): string {
@@ -186,6 +201,21 @@ export function areGrouped(
   }
   const gap = new Date(message.occurredAt).getTime() - new Date(previous.occurredAt).getTime();
   return gap >= 0 && gap <= GROUP_WINDOW_MS;
+}
+
+export function readMessageReactions(message: ConversationMessage): MessageReaction[] {
+  if (!Array.isArray(message.reactions)) {
+    return [];
+  }
+  return message.reactions.filter(
+    (reaction): reaction is MessageReaction =>
+      typeof reaction === 'object' &&
+      reaction !== null &&
+      typeof reaction.id === 'string' &&
+      typeof reaction.reactorId === 'string' &&
+      typeof reaction.emoji === 'string' &&
+      reaction.emoji.length > 0,
+  );
 }
 
 export function readQuotedMessage(message: ConversationMessage): QuotedMessage | null {

@@ -13,18 +13,37 @@ import type { WhatsAppInstancesService } from '../../../src/modules/whatsapp/wha
 interface Harness {
   service: WebhookService;
   prisma: {
-    webhookEvent: { create: ReturnType<typeof vi.fn> };
+    webhookEvent: {
+      create: ReturnType<typeof vi.fn>;
+      findFirst: ReturnType<typeof vi.fn>;
+      findUnique: ReturnType<typeof vi.fn>;
+      findMany: ReturnType<typeof vi.fn>;
+      updateMany: ReturnType<typeof vi.fn>;
+    };
     message: { findFirst: ReturnType<typeof vi.fn> };
-    conversation: { update: ReturnType<typeof vi.fn> };
+    conversation: {
+      findFirst: ReturnType<typeof vi.fn>;
+      findMany: ReturnType<typeof vi.fn>;
+      update: ReturnType<typeof vi.fn>;
+    };
+    conversationParticipant: { findUnique: ReturnType<typeof vi.fn> };
   };
   instances: {
     resolveByInstanceName: ReturnType<typeof vi.fn>;
     applyProviderConnectionState: ReturnType<typeof vi.fn>;
+    applyHistorySyncUpdate: ReturnType<typeof vi.fn>;
+    markHistorySyncInterrupted: ReturnType<typeof vi.fn>;
   };
   messages: {
     updateOutboundStatusByExternalId: ReturnType<typeof vi.fn>;
     markFallbackAttempted: ReturnType<typeof vi.fn>;
   };
+  conversationSync: {
+    syncChat: ReturnType<typeof vi.fn>;
+    syncGroup: ReturnType<typeof vi.fn>;
+    syncGroupParticipants: ReturnType<typeof vi.fn>;
+  };
+  contacts: { syncFromWhatsAppEvent: ReturnType<typeof vi.fn> };
   realtime: {
     emitToTenant: ReturnType<typeof vi.fn>;
     emitToConversation: ReturnType<typeof vi.fn>;
@@ -34,9 +53,20 @@ interface Harness {
 
 function createHarness(): Harness {
   const prisma = {
-    webhookEvent: { create: vi.fn().mockResolvedValue({}) },
+    webhookEvent: {
+      create: vi.fn().mockResolvedValue({ id: 'event-1' }),
+      findFirst: vi.fn().mockResolvedValue(null),
+      findUnique: vi.fn().mockResolvedValue(null),
+      findMany: vi.fn().mockResolvedValue([]),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+    },
     message: { findFirst: vi.fn().mockResolvedValue(null) },
-    conversation: { update: vi.fn().mockResolvedValue({}) },
+    conversation: {
+      findFirst: vi.fn().mockResolvedValue(null),
+      findMany: vi.fn().mockResolvedValue([]),
+      update: vi.fn().mockResolvedValue({}),
+    },
+    conversationParticipant: { findUnique: vi.fn().mockResolvedValue(null) },
   };
   const instances = {
     resolveByInstanceName: vi.fn().mockResolvedValue({
@@ -46,10 +76,20 @@ function createHarness(): Harness {
       status: 'CONNECTED',
     }),
     applyProviderConnectionState: vi.fn().mockResolvedValue(null),
+    applyHistorySyncUpdate: vi.fn().mockResolvedValue(null),
+    markHistorySyncInterrupted: vi.fn().mockResolvedValue(null),
   };
   const messages = {
     updateOutboundStatusByExternalId: vi.fn().mockResolvedValue(null),
     markFallbackAttempted: vi.fn().mockResolvedValue(undefined),
+  };
+  const conversationSync = {
+    syncChat: vi.fn().mockResolvedValue(false),
+    syncGroup: vi.fn().mockResolvedValue(false),
+    syncGroupParticipants: vi.fn().mockResolvedValue(false),
+  };
+  const contacts = {
+    syncFromWhatsAppEvent: vi.fn().mockResolvedValue(null),
   };
   const realtime = { emitToTenant: vi.fn(), emitToConversation: vi.fn() };
   const queue = { enqueue: vi.fn().mockResolvedValue(undefined) };
@@ -57,8 +97,9 @@ function createHarness(): Harness {
   const service = new WebhookService(
     prisma as unknown as PrismaService,
     instances as unknown as WhatsAppInstancesService,
-    {} as unknown as ContactsService,
+    contacts as unknown as ContactsService,
     {} as unknown as WhatsAppDirectoryService,
+    conversationSync as never,
     messages as unknown as MessagesService,
     realtime as unknown as RealtimeService,
     { isAutoEnabled: vi.fn().mockResolvedValue(false) } as never,
@@ -66,7 +107,7 @@ function createHarness(): Harness {
     queue as unknown as JobQueue,
   );
 
-  return { service, prisma, instances, messages, realtime, queue };
+  return { service, prisma, instances, messages, conversationSync, contacts, realtime, queue };
 }
 
 describe('WebhookService messages.update', () => {
@@ -87,6 +128,7 @@ describe('WebhookService messages.update', () => {
     expect(result.accepted).toBe(true);
     expect(messages.updateOutboundStatusByExternalId).toHaveBeenCalledWith({
       tenantId: 'tenant-1',
+      whatsappInstanceId: 'instance-1',
       externalMessageId: 'ext-1',
       status: 'FAILED',
     });
@@ -109,7 +151,11 @@ describe('WebhookService messages.update', () => {
     });
 
     expect(messages.updateOutboundStatusByExternalId).toHaveBeenCalledWith(
-      expect.objectContaining({ tenantId: 'tenant-1', externalMessageId: 'ext-foreign' }),
+      expect.objectContaining({
+        tenantId: 'tenant-1',
+        whatsappInstanceId: 'instance-1',
+        externalMessageId: 'ext-foreign',
+      }),
     );
     expect(realtime.emitToConversation).not.toHaveBeenCalled();
     expect(realtime.emitToTenant).not.toHaveBeenCalled();
@@ -189,6 +235,10 @@ describe('WebhookService messages.update', () => {
         clientVersion: 'test',
       }),
     );
+    prisma.webhookEvent.findFirst.mockResolvedValue({
+      id: 'event-1',
+      processedAt: new Date(),
+    });
 
     const result = await service.ingestEvolution({
       event: 'messages.update',
@@ -200,17 +250,71 @@ describe('WebhookService messages.update', () => {
     expect(messages.updateOutboundStatusByExternalId).not.toHaveBeenCalled();
   });
 
-  it('acknowledges a malformed event instead of failing the webhook', async () => {
+  it('fails with a retryable status when the event cannot be claimed', async () => {
     const { service, prisma } = createHarness();
     prisma.webhookEvent.create.mockRejectedValue(new Error('database unavailable'));
+
+    await expect(
+      service.ingestEvolution({
+        event: 'messages.update',
+        instance: 'inst-1',
+        data: [{ keyId: 'ext-1', status: 'ERROR' }],
+      }),
+    ).rejects.toMatchObject({ code: 'WEBHOOK_PROCESSING_FAILED', statusCode: 503 });
+  });
+
+  it('reprocesses a previously claimed event that was not marked as processed', async () => {
+    const { service, prisma, messages } = createHarness();
+    prisma.webhookEvent.create.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+        code: 'P2002',
+        clientVersion: 'test',
+      }),
+    );
+    prisma.webhookEvent.findFirst.mockResolvedValue({
+      id: 'event-1',
+      processedAt: null,
+    });
+    messages.updateOutboundStatusByExternalId.mockResolvedValue({
+      messageId: 'message-1',
+      conversationId: 'conversation-1',
+      status: 'READ',
+    });
 
     const result = await service.ingestEvolution({
       event: 'messages.update',
       instance: 'inst-1',
-      data: [{ keyId: 'ext-1', status: 'ERROR' }],
+      data: [{ keyId: 'ext-1', status: 'READ' }],
     });
 
-    expect(result).toEqual({ accepted: false, ignored: 'processing_error' });
+    expect(result.accepted).toBe(true);
+    expect(messages.updateOutboundStatusByExternalId).toHaveBeenCalled();
+    expect(prisma.webhookEvent.updateMany).toHaveBeenCalledWith({
+      where: { id: 'event-1', processedAt: null },
+      data: { processedAt: expect.any(Date) },
+    });
+  });
+});
+
+describe('WebhookService messages.set', () => {
+  it('ignores history batches while automatic history import is disabled', async () => {
+    const { service, prisma, instances } = createHarness();
+
+    const result = await service.ingestEvolution({
+      event: 'messages.set',
+      instance: 'inst-1',
+      data: [
+        {
+          key: { remoteJid: '5511999999999@s.whatsapp.net', fromMe: false, id: 'ext-1' },
+          message: { conversation: 'histórico' },
+          messageTimestamp: 1_700_000_000,
+        },
+      ],
+    });
+
+    expect(result).toEqual({ accepted: true, ignored: 'history_import_disabled' });
+    expect(instances.resolveByInstanceName).toHaveBeenCalledWith('inst-1');
+    expect(prisma.webhookEvent.create).not.toHaveBeenCalled();
   });
 });
 
@@ -255,5 +359,483 @@ describe('WebhookService connection.update', () => {
     });
 
     expect(realtime.emitToTenant).not.toHaveBeenCalled();
+  });
+});
+
+describe('WebhookService history synchronization state', () => {
+  function enableHistory(config: Record<string, unknown> = {}): void {
+    config.WHATSAPP_HISTORY_IMPORT_ENABLED = true;
+  }
+
+  function createHistoryHarness(): Harness & {
+    config: Record<string, unknown>;
+  } {
+    const original = createHarness();
+    const config: Record<string, unknown> = { WHATSAPP_HISTORY_IMPORT_ENABLED: true };
+    // Rebuild only to inject a config that enables history import.
+    const service = new WebhookService(
+      original.prisma as unknown as PrismaService,
+      original.instances as unknown as WhatsAppInstancesService,
+      original.contacts as unknown as ContactsService,
+      {} as unknown as WhatsAppDirectoryService,
+      original.conversationSync as never,
+      original.messages as unknown as MessagesService,
+      original.realtime as unknown as RealtimeService,
+      { isAutoEnabled: vi.fn().mockResolvedValue(false) } as never,
+      {
+        get: vi.fn((key: string) => config[key]),
+      } as unknown as ConfigService<Env, true>,
+      original.queue as unknown as JobQueue,
+    );
+    enableHistory(config);
+    return { ...original, service, config };
+  }
+
+  it('exposes provider progress without treating isLatest as completion', async () => {
+    const { service, instances } = createHistoryHarness();
+    vi.spyOn(service, 'ingestHistoryMessages').mockResolvedValue({
+      received: 1,
+      imported: 1,
+      skipped: 0,
+      failed: 0,
+      conversations: 1,
+    });
+    instances.applyHistorySyncUpdate.mockResolvedValue({
+      instanceId: 'instance-1',
+      tenantId: 'tenant-1',
+      status: 'SYNCING',
+      progress: 42,
+      startedAt: new Date(),
+      completedAt: null,
+      error: null,
+      changed: true,
+    });
+
+    await service.ingestEvolution({
+      event: 'MESSAGES_SET',
+      instance: 'inst-1',
+      isLatest: true,
+      progress: 42,
+      data: [],
+    });
+
+    expect(instances.applyHistorySyncUpdate).toHaveBeenCalledWith('inst-1', {
+      progress: 42,
+      completed: false,
+      failed: false,
+      error: null,
+    });
+  });
+
+  it('marks completion only when the provider reports progress 100', async () => {
+    const { service, instances } = createHistoryHarness();
+    vi.spyOn(service, 'ingestHistoryMessages').mockResolvedValue({
+      received: 1,
+      imported: 1,
+      skipped: 0,
+      failed: 0,
+      conversations: 1,
+    });
+    instances.applyHistorySyncUpdate.mockResolvedValue({
+      instanceId: 'instance-1',
+      tenantId: 'tenant-1',
+      status: 'COMPLETED',
+      progress: 100,
+      startedAt: new Date(),
+      completedAt: new Date(),
+      error: null,
+      changed: true,
+    });
+
+    await service.ingestEvolution({
+      event: 'messages.set',
+      instance: 'inst-1',
+      isLatest: false,
+      progress: 100,
+      data: [],
+    });
+
+    expect(instances.applyHistorySyncUpdate).toHaveBeenCalledWith('inst-1', {
+      progress: 100,
+      completed: true,
+      failed: false,
+      error: null,
+    });
+  });
+
+  it('accepts the explicit messaging-history.set completion event', async () => {
+    const { service, instances } = createHistoryHarness();
+    instances.applyHistorySyncUpdate.mockResolvedValue({
+      instanceId: 'instance-1',
+      tenantId: 'tenant-1',
+      status: 'COMPLETED',
+      progress: 100,
+      startedAt: new Date(),
+      completedAt: new Date(),
+      error: null,
+      changed: true,
+    });
+
+    await service.ingestEvolution({
+      event: 'MESSAGING_HISTORY_SET',
+      instance: 'inst-1',
+      data: { messageCount: 10, chatCount: 2, contactCount: 1, progress: 100 },
+    });
+
+    expect(instances.applyHistorySyncUpdate).toHaveBeenCalledWith('inst-1', {
+      progress: 100,
+      completed: true,
+    });
+  });
+
+  it('marks a batch with failed messages as failed and asks Evolution to retry', async () => {
+    const { service, instances } = createHistoryHarness();
+    vi.spyOn(service, 'ingestHistoryMessages').mockRejectedValue(
+      new (class extends Error {
+        readonly result = { received: 2, imported: 1, skipped: 0, failed: 1, conversations: 1 };
+      })(),
+    );
+    instances.applyHistorySyncUpdate.mockResolvedValue({
+      instanceId: 'instance-1',
+      tenantId: 'tenant-1',
+      status: 'FAILED',
+      progress: 30,
+      startedAt: new Date(),
+      completedAt: null,
+      error: 'history_import_failed',
+      changed: true,
+    });
+
+    await expect(
+      service.ingestEvolution({
+        event: 'messages.set',
+        instance: 'inst-1',
+        progress: 30,
+        data: [],
+      }),
+    ).rejects.toMatchObject({ code: 'WEBHOOK_PROCESSING_FAILED' });
+
+    expect(instances.applyHistorySyncUpdate).toHaveBeenCalledWith('inst-1', {
+      progress: 30,
+      failed: true,
+      error: 'history_import_failed',
+    });
+  });
+});
+
+describe('WebhookService presence.update', () => {
+  it('broadcasts online presence without creating conversations or messages', async () => {
+    const { service, prisma, realtime } = createHarness();
+    prisma.conversation.findFirst.mockResolvedValue({
+      id: 'conversation-1',
+      isGroup: false,
+      contact: { name: 'Ana' },
+    });
+
+    const result = await service.ingestEvolution({
+      event: 'presence.update',
+      instance: 'inst-1',
+      date_time: '2026-10-24T12:00:00.000Z',
+      data: {
+        id: '5511999999999@s.whatsapp.net',
+        presences: {
+          '5511999999999@s.whatsapp.net': { lastKnownPresence: 'available' },
+        },
+      },
+    });
+
+    expect(result).toEqual({ accepted: true });
+    expect(prisma.conversation.update).not.toHaveBeenCalled();
+    expect(realtime.emitToTenant).toHaveBeenCalledWith(
+      'tenant-1',
+      'conversation.presence',
+      expect.objectContaining({
+        conversationId: 'conversation-1',
+        participantName: 'Ana',
+        participantPhone: '5511999999999',
+        state: 'online',
+        lastSeenAt: null,
+        occurredAt: '2026-10-24T12:00:00.000Z',
+      }),
+    );
+  });
+
+  it('includes last seen only when a valid timestamp is provided', async () => {
+    const { service, prisma, realtime } = createHarness();
+    prisma.conversation.findFirst.mockResolvedValue({
+      id: 'conversation-1',
+      isGroup: false,
+      contact: { name: 'Ana' },
+    });
+    const lastSeen = Date.parse('2026-10-24T11:35:00.000Z');
+
+    await service.ingestEvolution({
+      event: 'presence.update',
+      instance: 'inst-1',
+      date_time: '2026-10-24T12:00:00.000Z',
+      data: {
+        id: '5511999999999@s.whatsapp.net',
+        presences: {
+          '5511999999999@s.whatsapp.net': {
+            lastKnownPresence: 'unavailable',
+            lastSeen,
+          },
+        },
+      },
+    });
+
+    expect(realtime.emitToTenant).toHaveBeenCalledWith(
+      'tenant-1',
+      'conversation.presence',
+      expect.objectContaining({
+        state: 'offline',
+        lastSeenAt: '2026-10-24T11:35:00.000Z',
+      }),
+    );
+  });
+
+  it('does not invent a last seen timestamp when it is absent or in the future', async () => {
+    const { service, prisma, realtime } = createHarness();
+    prisma.conversation.findFirst.mockResolvedValue({
+      id: 'conversation-1',
+      isGroup: false,
+      contact: null,
+    });
+
+    await service.ingestEvolution({
+      event: 'presence.update',
+      instance: 'inst-1',
+      date_time: '2026-10-24T12:00:00.000Z',
+      data: {
+        id: '5511999999999@s.whatsapp.net',
+        presences: {
+          '5511999999999@s.whatsapp.net': { lastKnownPresence: 'unavailable' },
+        },
+      },
+    });
+    await service.ingestEvolution({
+      event: 'presence.update',
+      instance: 'inst-1',
+      date_time: '2026-10-24T12:00:00.000Z',
+      data: {
+        id: '5511999999999@s.whatsapp.net',
+        presences: {
+          '5511999999999@s.whatsapp.net': {
+            lastKnownPresence: 'unavailable',
+            lastSeen: Date.parse('2026-10-25T12:00:00.000Z'),
+          },
+        },
+      },
+    });
+
+    expect(realtime.emitToTenant).toHaveBeenCalledTimes(2);
+    for (const call of realtime.emitToTenant.mock.calls) {
+      expect(call[2]).toEqual(expect.objectContaining({ lastSeenAt: null }));
+    }
+  });
+
+  it('broadcasts typing and recording activity', async () => {
+    const { service, prisma, realtime } = createHarness();
+    prisma.conversation.findFirst.mockResolvedValue({
+      id: 'conversation-1',
+      isGroup: false,
+      contact: null,
+    });
+
+    await service.ingestEvolution({
+      event: 'presence.update',
+      instance: 'inst-1',
+      data: {
+        id: '5511999999999@s.whatsapp.net',
+        presences: { '5511999999999@s.whatsapp.net': { lastKnownPresence: 'composing' } },
+      },
+    });
+    await service.ingestEvolution({
+      event: 'presence.update',
+      instance: 'inst-1',
+      data: {
+        id: '5511999999999@s.whatsapp.net',
+        presences: { '5511999999999@s.whatsapp.net': { lastKnownPresence: 'recording' } },
+      },
+    });
+
+    expect(realtime.emitToTenant).toHaveBeenNthCalledWith(
+      1,
+      'tenant-1',
+      'conversation.presence',
+      expect.objectContaining({ state: 'composing' }),
+    );
+    expect(realtime.emitToTenant).toHaveBeenNthCalledWith(
+      2,
+      'tenant-1',
+      'conversation.presence',
+      expect.objectContaining({ state: 'recording' }),
+    );
+  });
+
+  it('resolves the group participant name from the synchronized participant list', async () => {
+    const { service, prisma, realtime } = createHarness();
+    prisma.conversation.findFirst.mockResolvedValue({
+      id: 'conversation-1',
+      isGroup: true,
+      contact: null,
+    });
+    prisma.conversationParticipant.findUnique.mockResolvedValue({
+      name: 'Bruno',
+      phone: '5511888888888',
+    });
+
+    await service.ingestEvolution({
+      event: 'presence.update',
+      instance: 'inst-1',
+      data: {
+        id: '120363000000000000@g.us',
+        presences: {
+          '5511888888888@s.whatsapp.net': { lastKnownPresence: 'composing' },
+        },
+      },
+    });
+
+    expect(realtime.emitToTenant).toHaveBeenCalledWith(
+      'tenant-1',
+      'conversation.presence',
+      expect.objectContaining({
+        participantName: 'Bruno',
+        participantPhone: '5511888888888',
+        state: 'composing',
+      }),
+    );
+  });
+
+  it('ignores presence for an unknown conversation and unsupported states', async () => {
+    const { service, realtime } = createHarness();
+
+    await service.ingestEvolution({
+      event: 'presence.update',
+      instance: 'inst-1',
+      data: {
+        id: '5511999999999@s.whatsapp.net',
+        presences: {
+          '5511999999999@s.whatsapp.net': { lastKnownPresence: 'available' },
+        },
+      },
+    });
+
+    expect(realtime.emitToTenant).not.toHaveBeenCalled();
+  });
+});
+
+describe('WebhookService contacts and chats synchronization', () => {
+  it('normalizes a single contact event object', async () => {
+    const { service, contacts } = createHarness();
+
+    await service.ingestEvolution({
+      event: 'contacts.upsert',
+      instance: 'inst-1',
+      data: {
+        remoteJid: '5511999999999@s.whatsapp.net',
+        pushName: 'Ana',
+        profilePicUrl: 'https://pps.whatsapp.net/a.jpg',
+      },
+    });
+
+    expect(contacts.syncFromWhatsAppEvent).toHaveBeenCalledWith({
+      tenantId: 'tenant-1',
+      jid: '5511999999999@s.whatsapp.net',
+      name: 'Ana',
+      avatarUrl: 'https://pps.whatsapp.net/a.jpg',
+    });
+  });
+
+  it('processes contact arrays and keeps the event tenant scoped', async () => {
+    const { service, contacts } = createHarness();
+
+    await service.ingestEvolution({
+      event: 'CONTACTS_UPDATE',
+      instance: 'inst-1',
+      data: [
+        { remoteJid: '5511911111111@s.whatsapp.net', name: 'Alice' },
+        { remoteJid: '5511922222222@s.whatsapp.net', verifiedName: 'Empresa' },
+        { remoteJid: '120363000000000000@g.us', name: 'Grupo' },
+      ],
+    });
+
+    expect(contacts.syncFromWhatsAppEvent).toHaveBeenCalledTimes(3);
+    expect(contacts.syncFromWhatsAppEvent).toHaveBeenNthCalledWith(1, {
+      tenantId: 'tenant-1',
+      jid: '5511911111111@s.whatsapp.net',
+      name: 'Alice',
+      avatarUrl: null,
+    });
+    expect(contacts.syncFromWhatsAppEvent).toHaveBeenNthCalledWith(3, {
+      tenantId: 'tenant-1',
+      jid: '120363000000000000@g.us',
+      name: 'Grupo',
+      avatarUrl: null,
+    });
+  });
+
+  it('forwards chat metadata updates without creating conversations', async () => {
+    const { service, conversationSync, prisma } = createHarness();
+
+    await service.ingestEvolution({
+      event: 'CHATS_UPSERT',
+      instance: 'inst-1',
+      data: [{ remoteJid: '120363000000000000@g.us', name: 'Grupo novo' }],
+    });
+
+    expect(conversationSync.syncChat).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'instance-1', tenantId: 'tenant-1' }),
+      { remoteJid: '120363000000000000@g.us', name: 'Grupo novo' },
+    );
+    expect(prisma.conversation.update).not.toHaveBeenCalled();
+  });
+
+  it('replaces participants on groups.upsert and preserves them on groups.update', async () => {
+    const { service, conversationSync } = createHarness();
+
+    await service.ingestEvolution({
+      event: 'GROUPS_UPSERT',
+      instance: 'inst-1',
+      data: [{ id: '120363000000000000@g.us', subject: 'Grupo' }],
+    });
+    await service.ingestEvolution({
+      event: 'GROUP_UPDATE',
+      instance: 'inst-1',
+      data: [{ id: '120363000000000000@g.us', subject: 'Grupo novo' }],
+    });
+
+    expect(conversationSync.syncGroup).toHaveBeenNthCalledWith(
+      1,
+      expect.anything(),
+      { id: '120363000000000000@g.us', subject: 'Grupo' },
+      { replaceParticipants: true },
+    );
+    expect(conversationSync.syncGroup).toHaveBeenNthCalledWith(
+      2,
+      expect.anything(),
+      { id: '120363000000000000@g.us', subject: 'Grupo novo' },
+      { replaceParticipants: false },
+    );
+  });
+
+  it('forwards group participant membership events', async () => {
+    const { service, conversationSync } = createHarness();
+
+    await service.ingestEvolution({
+      event: 'GROUP_PARTICIPANTS_UPDATE',
+      instance: 'inst-1',
+      data: {
+        id: '120363000000000000@g.us',
+        action: 'add',
+        participants: ['5511999999999@s.whatsapp.net'],
+        participantsData: [],
+      },
+    });
+
+    expect(conversationSync.syncGroupParticipants).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'instance-1', tenantId: 'tenant-1' }),
+      expect.objectContaining({ id: '120363000000000000@g.us', action: 'add' }),
+    );
   });
 });

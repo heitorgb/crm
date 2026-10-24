@@ -32,8 +32,8 @@ function buildMessage(
 function renderBubble(
   status: ConversationMessage['status'],
   overrides: Partial<ConversationMessage> = {},
-): void {
-  render(
+): ReturnType<typeof render> {
+  return render(
     <MessageBubble
       conversationId="conversation-1"
       message={buildMessage(status, overrides)}
@@ -150,5 +150,45 @@ describe('MessageBubble link preview', () => {
     expect(screen.getByText('https://exemplo.com/artigo').closest('a')?.href).toBe(
       'https://exemplo.com/artigo',
     );
+  });
+});
+
+describe('MessageBubble reactions', () => {
+  it('renders reactions on the original message bubble', () => {
+    renderBubble('RECEIVED', {
+      direction: 'INBOUND',
+      content: 'Mensagem original',
+      reactions: [
+        {
+          id: 'reaction-1',
+          reactorId: '5511999999999@s.whatsapp.net',
+          reactorName: 'Ana',
+          fromMe: false,
+          emoji: '❤️',
+          occurredAt: '2026-01-01T10:01:00.000Z',
+        },
+        {
+          id: 'reaction-2',
+          reactorId: 'self',
+          reactorName: null,
+          fromMe: true,
+          emoji: '❤️',
+          occurredAt: '2026-01-01T10:02:00.000Z',
+        },
+      ],
+    });
+
+    expect(screen.getByText('Mensagem original')).toBeTruthy();
+    expect(screen.getByLabelText('Reação de Ana, Você: ❤️')).toBeTruthy();
+  });
+
+  it('does not render a legacy reaction row as a standalone message bubble', () => {
+    const { container } = renderBubble('RECEIVED', {
+      type: 'REACTION',
+      direction: 'INBOUND',
+      content: '👍',
+    });
+
+    expect(container.querySelector('[data-message-id="message-1"]')).toBeNull();
   });
 });

@@ -196,7 +196,7 @@ docker compose logs -f evolution
 ```
 
 Variáveis aceitas pelo compose: `EVOLUTION_IMAGE` (default
-`evoapicloud/evolution-api:v2.3.7`), `EVOLUTION_PORT` (default `8080`), `EVOLUTION_API_KEY`,
+`evoapicloud/evolution-api:2.4.0-rc2`), `EVOLUTION_PORT` (default `8080`), `EVOLUTION_API_KEY`,
 `EVOLUTION_POSTGRES_*`.
 
 ### Configurar o backend (`backend/.env`)
@@ -205,6 +205,7 @@ Variáveis aceitas pelo compose: `EVOLUTION_IMAGE` (default
 EVOLUTION_API_BASE_URL=http://localhost:8080
 EVOLUTION_API_KEY=change-me-evolution-api-key
 EVOLUTION_WEBHOOK_SECRET=change-me-webhook-secret
+EVOLUTION_REQUEST_TIMEOUT_MS=20000
 CREDENTIALS_ENCRYPTION_KEY=<segredo com 32+ caracteres>
 PUBLIC_API_URL=https://<url-publica-do-backend>
 ```
@@ -223,17 +224,23 @@ PUBLIC_API_URL=https://<url-publica-do-backend>
 ### Usar
 
 1. **Atendimento → WhatsApp → Nova instância** (nome, `instanceName` único, telefone opcional).
-2. **Conectar** → a API verifica a existência (`GET /instance/fetchInstances`). Se não existir,
-   cria (`POST /instance/create`); se existir, remove a instância antiga (`DELETE /instance/delete`),
-   aguarda a remoção e recria para obter credenciais limpas. Só grava `CONNECTING` com um ticket
-   válido (QR/pairing).
-3. O webhook (`MESSAGES_UPSERT`) é configurado automaticamente.
+2. **Conectar** → a API verifica a existência e o estado (`GET /instance/fetchInstances` +
+   `GET /instance/connectionState`). Se não existir, cria; se existir e estiver `open`, reutiliza
+   sem QR; se estiver `close`/`connecting`, reutiliza via `GET /instance/connect`. Só recria quando
+   o reuso não devolve ticket válido. Só grava `CONNECTING` com QR/pairing válido.
+3. O webhook (`MESSAGES_UPSERT` e demais eventos) é configurado automaticamente. `MESSAGES_SET` e
+   `MESSAGING_HISTORY_SET` só são assinados com `WHATSAPP_HISTORY_IMPORT_ENABLED=true`.
 4. Mensagens recebidas criam/reutilizam o **Contact** por telefone e a **Conversation** da instância.
 
 Endpoints da Evolution usados por `EvolutionClient` (`src/modules/whatsapp/evolution/`):
 `/instance/create`, `/instance/connect/{name}`, `/instance/fetchInstances`,
 `/instance/logout/{name}`, `/instance/delete/{name}`, `/instance/connectionState/{name}`,
-`/message/sendText/{name}`, `/webhook/set/{name}`.
+`/chat/findMessages/{name}`, `/message/sendText/{name}`, `/webhook/set/{name}`.
+
+A importação automática de histórico (`MESSAGES_SET`) é desligada por padrão. Quando habilitada,
+usa a janela `WHATSAPP_HISTORY_IMPORT_DAYS` (padrão 30) e persiste o progresso/estado por instância
+(`historySync` na API; `progress` 100 ou `MESSAGING_HISTORY_SET` indicam conclusão). Lacunas podem
+ser recuperadas manualmente por `POST /api/whatsapp/instances/:id/backfill`.
 
 ## Frontend
 

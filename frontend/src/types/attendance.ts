@@ -86,6 +86,15 @@ export interface MessageTranscription {
   transcribedAt: string | null;
 }
 
+export interface MessageReaction {
+  id: string;
+  reactorId: string;
+  reactorName: string | null;
+  fromMe: boolean;
+  emoji: string;
+  occurredAt: string;
+}
+
 export interface ConversationMessage {
   id: string;
   conversationId: string;
@@ -109,6 +118,7 @@ export interface ConversationMessage {
     hasThumbnail: boolean;
   }[];
   transcription: MessageTranscription | null;
+  reactions?: MessageReaction[];
 }
 
 export interface LinkPreview {
@@ -135,3 +145,20 @@ export interface ContactEntry {
   phone: string | null;
 }
 
+
+export type ConversationPresenceState =
+  | 'online'
+  | 'offline'
+  | 'composing'
+  | 'recording'
+  | 'unknown';
+
+export interface ConversationPresence {
+  state: ConversationPresenceState;
+  participantId: string | null;
+  participantName: string | null;
+  participantPhone: string | null;
+  lastSeenAt: string | null;
+  occurredAt: string | null;
+  receivedAt: string | null;
+}

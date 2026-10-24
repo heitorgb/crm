@@ -54,7 +54,9 @@ Destaques: `Lead` único por `(tenantId, phone)`; `PipelineStage` único por `(p
 atendimento (ver [`quick-replies.md`](./quick-replies.md)).
 Idempotência: `Message` único por `(tenantId, externalMessageId)`, `WebhookEvent` por
 `(provider, externalEventId)` e `LeadDigestDelivery` por `(tenantUserId, periodStart)`.
-Credenciais de instância são criptografadas. Detalhes, retenção e endpoints em
+`ConversationParticipant` guarda o snapshot incremental de participantes de grupos
+(`UNIQUE (conversationId, jid)`, `active`/`leftAt` para saída e reentrada sem perder o vínculo
+histórico). Credenciais de instância são criptografadas. Detalhes, retenção e endpoints em
 [`attendance.md`](./attendance.md).
 
 ### Menu personalizado

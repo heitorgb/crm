@@ -32,6 +32,7 @@ import { WhatsAppInstanceForm } from '@/features/whatsapp/whatsapp-instance-form
 import { ApiError } from '@/lib/api-client';
 import type {
   WhatsAppConnectionTicket,
+  WhatsAppHistorySync,
   WhatsAppInstance,
   WhatsAppInstanceStatus,
   WhatsAppQuota,
@@ -51,6 +52,47 @@ const statusLabel: Record<WhatsAppInstanceStatus, string> = {
   ERROR: 'Erro',
 };
 
+function historySyncLabel(sync: WhatsAppHistorySync | undefined): {
+  tone: StatusTone;
+  text: string;
+} | null {
+  if (!sync || sync.status === 'IDLE') {
+    return null;
+  }
+  if (sync.status === 'SYNCING') {
+    return {
+      tone: 'warning',
+      text:
+        sync.progress === null
+          ? 'Sincronizando histórico'
+          : `Sincronizando histórico: ${sync.progress}%`,
+    };
+  }
+  if (sync.status === 'COMPLETED') {
+    return { tone: 'info', text: 'Histórico sincronizado' };
+  }
+  return { tone: 'danger', text: 'Falha ao sincronizar o histórico' };
+}
+
+function HistorySyncIndicator({ sync }: { sync: WhatsAppHistorySync | undefined }) {
+  const label = historySyncLabel(sync);
+  if (!label) {
+    return null;
+  }
+
+  return (
+    <p
+      className={
+        label.tone === 'danger'
+          ? 'mt-1 text-xs font-medium text-danger'
+          : 'mt-1 text-xs text-muted-foreground'
+      }
+    >
+      {label.text}
+    </p>
+  );
+}
+
 export function WhatsAppTab() {
   const query = useWhatsAppInstances({ perPage: 100 });
   const quota = useWhatsAppQuota();
@@ -69,8 +111,10 @@ export function WhatsAppTab() {
       void queryClient.invalidateQueries({ queryKey: whatsappKeys.all });
     };
     socket.on('whatsapp.instance.updated', invalidate);
+    socket.on('whatsapp.history.updated', invalidate);
     return () => {
       socket.off('whatsapp.instance.updated', invalidate);
+      socket.off('whatsapp.history.updated', invalidate);
     };
   }, [socket, queryClient]);
 
@@ -139,6 +183,23 @@ export function WhatsAppTab() {
         tone: 'danger',
         message: error instanceof ApiError ? error.message : 'Não foi possível gerar o QR.',
       });
+    }
+  };
+
+  const handleDisconnect = async (instance: WhatsAppInstance): Promise<void> => {
+    setFeedback(null);
+    try {
+      await disconnect.mutateAsync(instance.id);
+      setFeedback({ tone: 'success', message: 'Instância desconectada.' });
+    } catch (error) {
+      setFeedback({
+        tone: 'danger',
+        message:
+          error instanceof ApiError
+            ? error.message
+            : 'Não foi possível confirmar a desconexão. O estado será atualizado.',
+      });
+      void query.refetch();
     }
   };
 
@@ -232,6 +293,7 @@ export function WhatsAppTab() {
                   <StatusBadge tone={statusTone[instance.status]}>
                     {statusLabel[instance.status]}
                   </StatusBadge>
+                  <HistorySyncIndicator sync={instance.historySync} />
                   <div className="flex flex-wrap items-center gap-1">
                     <Button
                       variant="outline"
@@ -248,7 +310,7 @@ export function WhatsAppTab() {
                         variant="ghost"
                         size="icon"
                         className="size-9"
-                        onClick={() => void disconnect.mutateAsync(instance.id)}
+                        onClick={() => void handleDisconnect(instance)}
                         disabled={disconnect.isPending}
                         aria-label="Desconectar"
                       >
@@ -315,6 +377,7 @@ export function WhatsAppTab() {
                         <StatusBadge tone={statusTone[instance.status]}>
                           {statusLabel[instance.status]}
                         </StatusBadge>
+                        <HistorySyncIndicator sync={instance.historySync} />
                       </TableCell>
                       <TableCell className="hidden sm:table-cell">
                         {instance.hasCredentials ? (
@@ -339,7 +402,7 @@ export function WhatsAppTab() {
                               variant="ghost"
                               size="icon"
                               className="size-8"
-                              onClick={() => void disconnect.mutateAsync(instance.id)}
+                              onClick={() => void handleDisconnect(instance)}
                               disabled={disconnect.isPending}
                               aria-label="Desconectar"
                             >

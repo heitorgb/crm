@@ -20,6 +20,15 @@ export interface MessageAttachmentView {
   hasThumbnail: boolean;
 }
 
+export interface MessageReactionView {
+  id: string;
+  reactorId: string;
+  reactorName: string | null;
+  fromMe: boolean;
+  emoji: string;
+  occurredAt: Date;
+}
+
 export interface MessageView {
   id: string;
   conversationId: string;
@@ -35,6 +44,7 @@ export interface MessageView {
   createdAt: Date;
   attachments: MessageAttachmentView[];
   transcription: MessageTranscriptionView | null;
+  reactions: MessageReactionView[];
 }
 
 export interface PersistInboundInput {
@@ -90,6 +100,29 @@ export interface AppliedMessageEdit {
   conversationId: string;
 }
 
+export interface ApplyMessageReactionInput {
+  tenantId: string;
+  conversationId: string;
+  targetExternalId: string;
+  targetFromMe: boolean;
+  reactorId: string;
+  reactorName: string | null;
+  fromMe: boolean;
+  emoji: string;
+  occurredAt: Date;
+}
+
+export type AppliedMessageReaction =
+  | {
+      applied: true;
+      removed: boolean;
+      changed: boolean;
+      messageId: string | null;
+      conversationId: string;
+      reactions: MessageReactionView[];
+    }
+  | { applied: false; reason: 'cross_conversation_target' };
+
 export interface CreateAttachmentInput {
   tenantId: string;
   messageId: string;
@@ -126,6 +159,7 @@ const MESSAGE_INCLUDE = {
 } satisfies Prisma.MessageInclude;
 
 type PrismaMessage = Prisma.MessageGetPayload<{ include: typeof MESSAGE_INCLUDE }>;
+type PrismaMessageReaction = Prisma.MessageReactionGetPayload<object>;
 
 @Injectable()
 export class MessagesService {
@@ -165,8 +199,25 @@ export class MessagesService {
     ]);
 
     const ascending = [...messages].reverse();
+    const reactions = await this.reactionsByTargetExternalId(
+      tenantId,
+      conversationId,
+      ascending.flatMap((message) =>
+        message.externalMessageId ? [message.externalMessageId] : [],
+      ),
+    );
 
-    return buildPage(ascending.map(toMessageView), total, page, perPage);
+    return buildPage(
+      ascending.map((message) =>
+        toMessageView(
+          message,
+          message.externalMessageId ? (reactions.get(message.externalMessageId) ?? []) : [],
+        ),
+      ),
+      total,
+      page,
+      perPage,
+    );
   }
 
   async findOne(id: string): Promise<MessageView> {
@@ -180,7 +231,11 @@ export class MessagesService {
       throw new MessageNotFoundError();
     }
 
-    return toMessageView(message);
+    const reactions = message.externalMessageId
+      ? await this.listReactionsForTarget(tenantId, message.conversationId, message.externalMessageId)
+      : [];
+
+    return toMessageView(message, reactions);
   }
 
   /** Idempotent inbound persistence by (tenantId, externalMessageId). */
@@ -384,12 +439,16 @@ export class MessagesService {
     tenantId: string;
     externalMessageId: string;
     status: MessageStatus;
+    whatsappInstanceId?: string;
   }): Promise<{ messageId: string; conversationId: string; status: MessageStatus } | null> {
     const message = await this.prisma.message.findFirst({
       where: {
         tenantId: input.tenantId,
         externalMessageId: input.externalMessageId,
         direction: MessageDirection.OUTBOUND,
+        ...(input.whatsappInstanceId
+          ? { conversation: { whatsappInstanceId: input.whatsappInstanceId } }
+          : {}),
       },
       select: { id: true, conversationId: true, status: true },
     });
@@ -482,6 +541,124 @@ export class MessagesService {
     return { messageId: message.id, conversationId: message.conversationId };
   }
 
+  /**
+   * Stores a WhatsApp reaction against the external id of its target message.
+   * Reactions never become Message rows, so they cannot affect the inbox
+   * preview, unread counters or conversation ordering. A reaction whose target
+   * has not been synchronized yet is kept and becomes visible as soon as the
+   * target message is imported.
+   */
+  async applyReaction(input: ApplyMessageReactionInput): Promise<AppliedMessageReaction> {
+    const target = await this.prisma.message.findFirst({
+      where: { tenantId: input.tenantId, externalMessageId: input.targetExternalId },
+      select: { id: true, conversationId: true },
+    });
+
+    if (target && target.conversationId !== input.conversationId) {
+      return { applied: false, reason: 'cross_conversation_target' };
+    }
+
+    const reactionKey = {
+      tenantId: input.tenantId,
+      conversationId: input.conversationId,
+      targetExternalId: input.targetExternalId,
+      reactorId: input.reactorId,
+    };
+
+    if (!input.emoji) {
+      const deleted = await this.prisma.messageReaction.deleteMany({ where: reactionKey });
+      return {
+        applied: true,
+        removed: true,
+        changed: deleted.count > 0,
+        messageId: target?.id ?? null,
+        conversationId: input.conversationId,
+        reactions: target
+          ? await this.listReactionsForTarget(
+              input.tenantId,
+              input.conversationId,
+              input.targetExternalId,
+            )
+          : [],
+      };
+    }
+
+    await this.prisma.messageReaction.upsert({
+      where: {
+        message_reactions_target_reactor_key: reactionKey,
+      },
+      create: {
+        ...reactionKey,
+        targetFromMe: input.targetFromMe,
+        reactorName: input.reactorName,
+        fromMe: input.fromMe,
+        emoji: input.emoji,
+        occurredAt: input.occurredAt,
+      },
+      update: {
+        targetFromMe: input.targetFromMe,
+        reactorName: input.reactorName,
+        fromMe: input.fromMe,
+        emoji: input.emoji,
+        occurredAt: input.occurredAt,
+      },
+    });
+
+    return {
+      applied: true,
+      removed: false,
+      changed: true,
+      messageId: target?.id ?? null,
+      conversationId: input.conversationId,
+      reactions: target
+        ? await this.listReactionsForTarget(
+            input.tenantId,
+            input.conversationId,
+            input.targetExternalId,
+          )
+        : [],
+    };
+  }
+
+  private async reactionsByTargetExternalId(
+    tenantId: string,
+    conversationId: string,
+    targetExternalIds: string[],
+  ): Promise<Map<string, MessageReactionView[]>> {
+    if (targetExternalIds.length === 0) {
+      return new Map();
+    }
+
+    const reactions = await this.prisma.messageReaction.findMany({
+      where: {
+        tenantId,
+        conversationId,
+        targetExternalId: { in: [...new Set(targetExternalIds)] },
+      },
+      orderBy: { occurredAt: 'asc' },
+    });
+
+    const grouped = new Map<string, MessageReactionView[]>();
+    for (const reaction of reactions) {
+      const list = grouped.get(reaction.targetExternalId) ?? [];
+      list.push(toMessageReactionView(reaction));
+      grouped.set(reaction.targetExternalId, list);
+    }
+    return grouped;
+  }
+
+  private async listReactionsForTarget(
+    tenantId: string,
+    conversationId: string,
+    targetExternalId: string,
+  ): Promise<MessageReactionView[]> {
+    const reactions = await this.prisma.messageReaction.findMany({
+      where: { tenantId, conversationId, targetExternalId },
+      orderBy: { occurredAt: 'asc' },
+    });
+    return reactions.map(toMessageReactionView);
+  }
+
   private async requireConversation(tenantId: string, conversationId: string): Promise<void> {
     const conversation = await this.prisma.conversation.findFirst({
       where: { id: conversationId, tenantId },
@@ -493,7 +670,10 @@ export class MessagesService {
   }
 }
 
-function toMessageView(message: PrismaMessage): MessageView {
+function toMessageView(
+  message: PrismaMessage,
+  reactions: MessageReactionView[] = [],
+): MessageView {
   return {
     id: message.id,
     conversationId: message.conversationId,
@@ -520,6 +700,18 @@ function toMessageView(message: PrismaMessage): MessageView {
       };
     }),
     transcription: message.transcription ? toTranscriptionView(message.transcription) : null,
+    reactions,
+  };
+}
+
+function toMessageReactionView(reaction: PrismaMessageReaction): MessageReactionView {
+  return {
+    id: reaction.id,
+    reactorId: reaction.reactorId,
+    reactorName: reaction.reactorName,
+    fromMe: reaction.fromMe,
+    emoji: reaction.emoji,
+    occurredAt: reaction.occurredAt,
   };
 }
 

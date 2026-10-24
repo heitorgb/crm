@@ -76,6 +76,13 @@ enum WhatsAppInstanceStatus {
   ERROR
 }
 
+enum WhatsAppHistorySyncStatus {
+  IDLE
+  SYNCING
+  COMPLETED
+  FAILED
+}
+
 enum ConversationStatus {
   OPEN
   CLOSED
@@ -220,9 +227,11 @@ model Tenant {
   whatsappInstances          WhatsAppInstance[]
   whatsappAvatars            WhatsAppAvatar[]
   conversations              Conversation[]
+  conversationParticipants   ConversationParticipant[]
   messages                   Message[]
   messageAttachments         MessageAttachment[]
   messageTranscriptions      MessageTranscription[]
+  messageReactions           MessageReaction[]
   webhookEvents              WebhookEvent[]
   billingCharges             BillingCharge[]
   billingRecurrences         BillingRecurrence[]
@@ -658,17 +667,22 @@ model CustomerTag {
 }
 
 model WhatsAppInstance {
-  id                   String                 @id @default(uuid()) @db.Uuid
-  tenantId             String                 @map("tenant_id") @db.Uuid
-  name                 String
-  instanceName         String                 @unique @map("instance_name")
-  externalInstanceId   String?                @map("external_instance_id")
-  phone                String?
-  status               WhatsAppInstanceStatus @default(DISCONNECTED)
-  credentialsEncrypted String?                @map("credentials_encrypted")
-  active               Boolean                @default(true)
-  createdAt            DateTime               @default(now()) @map("created_at")
-  updatedAt            DateTime               @updatedAt @map("updated_at")
+  id                     String                    @id @default(uuid()) @db.Uuid
+  tenantId               String                    @map("tenant_id") @db.Uuid
+  name                   String
+  instanceName           String                    @unique @map("instance_name")
+  externalInstanceId     String?                   @map("external_instance_id")
+  phone                  String?
+  status                 WhatsAppInstanceStatus    @default(DISCONNECTED)
+  credentialsEncrypted   String?                   @map("credentials_encrypted")
+  active                 Boolean                   @default(true)
+  historySyncStatus      WhatsAppHistorySyncStatus @default(IDLE) @map("history_sync_status")
+  historySyncProgress    Int?                      @map("history_sync_progress")
+  historySyncStartedAt   DateTime?                 @map("history_sync_started_at")
+  historySyncCompletedAt DateTime?                 @map("history_sync_completed_at")
+  historySyncError       String?                   @map("history_sync_error")
+  createdAt              DateTime                  @default(now()) @map("created_at")
+  updatedAt              DateTime                  @updatedAt @map("updated_at")
 
   tenant              Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   conversations       Conversation[]
@@ -711,6 +725,8 @@ model Conversation {
   customer           Customer?               @relation(fields: [customerId], references: [id], onDelete: SetNull)
   contact            Contact?                @relation(fields: [contactId], references: [id], onDelete: SetNull)
   messages           Message[]
+  participants       ConversationParticipant[]
+  reactions          MessageReaction[]
   commercialContexts LeadCommercialContext[]
   recommendations    LeadRecommendation[]
   followUps          LeadFollowUp[]
@@ -721,6 +737,29 @@ model Conversation {
   @@index([tenantId, isPinned, lastMessageAt])
   @@index([tenantId, isArchived, isPinned, lastMessageAt])
   @@map("conversations")
+}
+
+model ConversationParticipant {
+  id             String    @id @default(uuid()) @db.Uuid
+  tenantId       String    @map("tenant_id") @db.Uuid
+  conversationId String    @map("conversation_id") @db.Uuid
+  jid            String
+  phone          String?
+  name           String?
+  avatarUrl      String?   @map("avatar_url")
+  isAdmin        Boolean   @default(false) @map("is_admin")
+  active         Boolean   @default(true)
+  joinedAt       DateTime  @default(now()) @map("joined_at")
+  leftAt         DateTime? @map("left_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, jid])
+  @@index([tenantId, conversationId, active])
+  @@map("conversation_participants")
 }
 
 model ConversationTag {
@@ -762,6 +801,27 @@ model Message {
   @@index([tenantId, conversationId, occurredAt])
   @@index([tenantId, createdAt])
   @@map("messages")
+}
+
+model MessageReaction {
+  id               String   @id @default(uuid()) @db.Uuid
+  tenantId         String   @map("tenant_id") @db.Uuid
+  conversationId   String   @map("conversation_id") @db.Uuid
+  targetExternalId String   @map("target_external_id")
+  targetFromMe     Boolean  @default(false) @map("target_from_me")
+  reactorId        String   @map("reactor_id")
+  reactorName      String?  @map("reactor_name")
+  fromMe           Boolean  @default(false) @map("from_me")
+  emoji            String
+  occurredAt       DateTime @default(now()) @map("occurred_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, conversationId, targetExternalId, reactorId], name: "message_reactions_target_reactor_key")
+  @@index([tenantId, conversationId], map: "message_reactions_tenant_conversation_idx")
+  @@map("message_reactions")
 }
 
 model MessageTranscription {

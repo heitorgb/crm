@@ -37,6 +37,13 @@ vi.mock('@/features/whatsapp/queries', () => ({
           status: 'CONNECTED',
           active: true,
           hasCredentials: false,
+          historySync: {
+            status: 'SYNCING',
+            progress: 42,
+            startedAt: new Date().toISOString(),
+            completedAt: null,
+            error: null,
+          },
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         },
@@ -83,6 +90,13 @@ describe('WhatsAppTab instance limit', () => {
     ).toBeTruthy();
     expect(screen.queryByText(/limite/i)).toBeNull();
     expect(screen.queryByText(/administrador da plataforma/i)).toBeNull();
+  });
+
+  it('shows the real synchronization progress instead of claiming completion', () => {
+    renderTab();
+
+    expect(screen.getAllByText('Sincronizando histórico: 42%').length).toBeGreaterThan(0);
+    expect(screen.queryByText('Histórico sincronizado')).toBeNull();
   });
 
   it('opens the form when there is an available slot', async () => {

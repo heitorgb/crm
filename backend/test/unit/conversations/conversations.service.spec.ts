@@ -53,6 +53,9 @@ function createService(): {
   realtime: RealtimeMock;
   processing: ProcessingMock;
   linkPreviews: LinkPreviewsMock;
+  directory: { resolveGroupInfo: ReturnType<typeof vi.fn> };
+  evolution: { findGroupParticipants: ReturnType<typeof vi.fn> };
+  conversationSync: { syncGroupParticipantsSnapshot: ReturnType<typeof vi.fn> };
 } {
   const prisma: PrismaMock = {
     contact: { findFirst: vi.fn() },
@@ -81,19 +84,39 @@ function createService(): {
 
   const processing: ProcessingMock = { deliverText: vi.fn().mockResolvedValue(undefined) };
   const linkPreviews: LinkPreviewsMock = { resolveMany: vi.fn().mockResolvedValue([]) };
+  const directory = {
+    resolveGroupInfo: vi
+      .fn()
+      .mockResolvedValue({ name: 'Grupo', avatarUrl: 'https://cdn/group.jpg' }),
+  };
+  const evolution = { findGroupParticipants: vi.fn().mockResolvedValue([]) };
+  const conversationSync = {
+    syncGroupParticipantsSnapshot: vi.fn().mockResolvedValue(false),
+  };
 
   const service = new ConversationsService(
     prisma as unknown as PrismaService,
     tenantContext,
     processing as never,
     { findOne: vi.fn() } as never,
-    {} as never,
+    directory as never,
+    evolution as never,
+    conversationSync as never,
     realtime as never,
     linkPreviews as never,
     {} as never,
   );
 
-  return { service, prisma, realtime, processing, linkPreviews };
+  return {
+    service,
+    prisma,
+    realtime,
+    processing,
+    linkPreviews,
+    directory,
+    evolution,
+    conversationSync,
+  };
 }
 
 const conversationView = { id: 'conv-1' } as unknown as ConversationView;
@@ -369,5 +392,53 @@ describe('ConversationsService.sendHumanMessage', () => {
       null,
       { linkPreview: undefined, preview: null },
     );
+  });
+});
+
+
+describe('ConversationsService.refreshGroupMetadata', () => {
+  it('refreshes name/avatar and participant snapshot', async () => {
+    const { service, prisma, evolution, conversationSync } = createService();
+    prisma.conversation.findFirst.mockResolvedValue({
+      id: 'conv-1',
+      externalContactId: '120363000000000000@g.us',
+      whatsappInstanceId: 'instance-1',
+      instance: { instanceName: 'inst-1' },
+    });
+    evolution.findGroupParticipants.mockResolvedValue([
+      { id: '5511888888888@s.whatsapp.net', name: 'Maria', admin: 'admin' },
+    ]);
+    const findOne = vi.spyOn(service, 'findOne').mockResolvedValue(conversationView);
+
+    const result = await service.refreshGroupMetadata('conv-1');
+
+    expect(prisma.conversation.update).toHaveBeenCalledWith({
+      where: { id: 'conv-1' },
+      data: { isGroup: true, groupName: 'Grupo', avatarUrl: 'https://cdn/group.jpg' },
+    });
+    expect(conversationSync.syncGroupParticipantsSnapshot).toHaveBeenCalledWith(
+      { id: 'instance-1', tenantId: 'tenant-1', instanceName: 'inst-1' },
+      '120363000000000000@g.us',
+      [expect.objectContaining({ id: '5511888888888@s.whatsapp.net' })],
+    );
+    expect(result).toBe(conversationView);
+    expect(findOne).toHaveBeenCalledWith('conv-1');
+  });
+
+  it('keeps the metadata refresh working when the participant lookup fails', async () => {
+    const { service, prisma, evolution, conversationSync } = createService();
+    prisma.conversation.findFirst.mockResolvedValue({
+      id: 'conv-1',
+      externalContactId: '120363000000000000@g.us',
+      whatsappInstanceId: 'instance-1',
+      instance: { instanceName: 'inst-1' },
+    });
+    evolution.findGroupParticipants.mockRejectedValue(new Error('evolution down'));
+    vi.spyOn(service, 'findOne').mockResolvedValue(conversationView);
+
+    await expect(service.refreshGroupMetadata('conv-1')).resolves.toBe(conversationView);
+
+    expect(prisma.conversation.update).toHaveBeenCalled();
+    expect(conversationSync.syncGroupParticipantsSnapshot).not.toHaveBeenCalled();
   });
 });

@@ -36,7 +36,13 @@ Lead no WhatsApp
   (`UNIQUE (tenantId, externalMessageId)` = idempotência), `status`, `senderId?` (JID do
   participante em grupos **ou** `userId` do atendente em `OUTBOUND`), `senderName?` (pushName em
   grupos **ou** nome do atendente em `OUTBOUND`), `metadata` (guarda `remoteJid`, `viewOnce`,
-  `showAgentName`, `contacts`, `quoted` e `reaction`), `occurredAt`.
+  `showAgentName`, `contacts` e `quoted`), `occurredAt`.
+- `MessageReaction`: reação a uma mensagem (`tenantId`, `conversationId`, `targetExternalId`,
+  `targetFromMe`, `reactorId`, `reactorName?`, `fromMe`, `emoji`, `occurredAt`), com
+  `UNIQUE (tenantId, conversationId, targetExternalId, reactorId)` = idempotência por autor/alvo.
+  Reações **não** são `Message`: não entram no histórico, no contador de não lidas nem no preview da
+  conversa. O alvo é referenciado pelo id externo do WhatsApp, então uma reação que chega antes da
+  mensagem original fica pendente e aparece quando a mensagem for sincronizada.
 - `WhatsAppAvatar`: cache de foto de perfil por instância/JID (`tenantId`, `whatsappInstanceId`,
   `jid`, `url?`, `fetchedAt`), `UNIQUE (whatsappInstanceId, jid)`.
 - `MessageAttachment`: **metadados** de mídia (`storageKey`, `fileName`, `mimeType`, `size`,
@@ -93,8 +99,12 @@ GET    /instance/connectionState/{instanceName}
 POST   /message/sendText/{instanceName}   body { number, text, linkPreview? }
 POST   /webhook/set/{instanceName}        body { webhook: { enabled, url, events, base64 } }
 GET    /group/findGroupInfos/{instanceName}?groupJid={jid}
+GET    /group/fetchAllGroups/{instanceName}?getParticipants=false
+GET    /group/participants/{instanceName}?groupJid={jid}
 POST   /chat/fetchProfilePictureUrl/{instanceName}   body { number }
 POST   /chat/findContacts/{instanceName}             agenda do número (importação de contatos)
+POST   /chat/findChats/{instanceName}                conversas persistidas na Evolution
+POST   /chat/findMessages/{instanceName}             histórico paginado por período
 ```
 
 `number` aceita tanto telefone (dígitos) quanto JID completo de grupo (`...@g.us`). O envio
@@ -107,39 +117,98 @@ humano para grupos usa o JID completo; para contatos, apenas os dígitos.
   `Contact`.
 - O remetente de cada mensagem é persistido em `senderId` (JID de `key.participant`) e
   `senderName` (pushName), permitindo exibir nome e foto por mensagem.
-- Nome e foto do grupo: na primeira mensagem (`GET /group/findGroupInfos`) e via evento
-  `GROUPS_UPSERT` (atualizações). A foto do grupo fica em `Conversation.avatarUrl`.
+- Nome e foto do grupo: na primeira mensagem (`GET /group/findGroupInfos`) e via eventos
+  `GROUPS_UPSERT`/`GROUP_UPDATE` (quando emitidos). A foto do grupo fica em `Conversation.avatarUrl`.
+- Participantes: `GROUPS_UPSERT` (snapshot completo) e `GROUP_PARTICIPANTS_UPDATE`
+  (`add`/`remove`/`promote`/`demote`) alimentam `ConversationParticipant` de forma idempotente
+  (`UNIQUE (conversationId, jid)`). Saídas são marcadas `active = false`/`leftAt`, sem apagar a
+  linha nem as mensagens; reentradas reativam a mesma linha. Nenhum contato é criado
+  automaticamente para participantes.
 - Fotos de participantes são resolvidas sob demanda e cacheadas em `WhatsAppAvatar`
   (`POST /chat/fetchProfilePictureUrl`). A Evolution pode retornar `null` por privacidade; nesse
   caso a UI usa as iniciais.
+- Limitação confirmada na Evolution `2.4.0-rc2`: o evento interno `groups.update` é emitido, mas o
+  schema de webhook só aceita `GROUP_UPDATE`, cuja comparação não casa com `GROUPS_UPDATE`.
+  Por isso mudanças de assunto podem não chegar por evento; o botão **Atualizar dados do grupo**
+  continua sendo o caminho determinístico para reconciliar nome/foto e, via
+  `GET /group/participants`, a lista de participantes (falha dessa consulta não bloqueia
+  nome/foto).
 - Conversas de grupo criadas antes desta funcionalidade não têm nome/foto no banco. Elas são
   atualizadas automaticamente no boot (`backfill` limitado, best-effort) e podem ser forçadas
   pela ação **Atualizar dados do grupo** (`POST /api/conversations/:id/refresh-group`).
-- Instâncias existentes precisam de **Reconfigurar webhook** para receber `GROUPS_UPSERT`.
+- Instâncias existentes precisam de **Reconfigurar webhook** (ou de um restart do backend, que reconcilia os webhooks) para receber eventos adicionados posteriormente, como `GROUPS_UPSERT` e `MESSAGES_SET`.
 
 ### Conectar um número (UI)
 
 Em **Configurações → WhatsApp** (`/configuracoes?tab=whatsapp`):
 
 1. **Nova instância** (nome, `instanceName`, telefone, credenciais opcionais).
-2. **Conectar** → o backend consulta `GET /instance/fetchInstances`.
+2. **Conectar** → o backend consulta `GET /instance/fetchInstances` e o estado atual.
    - Se a instância **não existe**, cria com `POST /instance/create`.
-   - Se **já existe**, remove a instância antiga com `DELETE /instance/delete` e aguarda a
-     confirmação de remoção antes de recriá-la. Isso evita o bug da Evolution `2.4.0-rc2`, que
-     não é idempotente no `create` duplicado e deixa a sessão inconsistente.
+   - Se **já existe e está `open`**, reutiliza: grava `CONNECTED` e não gera QR nem recria.
+   - Se **já existe e está `close`/`connecting`**, reutiliza via `GET /instance/connect` e devolve
+     o QR/ticket atual. Não há remoção nem recriação.
+   - Só recria (`DELETE /instance/delete` + `POST /instance/create`) quando a tentativa de reuso
+     não devolve ticket utilizável (sessão em memória quebrada ou resposta de erro).
    - O CRM só grava `CONNECTING` quando recebe um **ticket válido** (QR base64, pairing code ou
      código). Respostas `{ error: true }` da Evolution são tratadas como falha.
 3. A tela exibe o QR, permite **gerar novo QR** e faz *poll* de status até **Conectado**.
 4. O **webhook é configurado automaticamente** (eventos `MESSAGES_UPSERT`, `MESSAGES_UPDATE`,
-   `MESSAGES_EDITED`, `GROUPS_UPSERT`, `PRESENCE_UPDATE` e `CONNECTION_UPDATE`) com o token do
-   segredo (da instância ou `EVOLUTION_WEBHOOK_SECRET`); há também a ação **Reconfigurar webhook**.
+   `MESSAGES_EDITED`, `CONTACTS_UPSERT`, `CONTACTS_UPDATE`, `CHATS_SET`, `CHATS_UPSERT`,
+   `CHATS_UPDATE`, `GROUPS_UPSERT`, `GROUP_UPDATE`, `GROUP_PARTICIPANTS_UPDATE`,
+   `PRESENCE_UPDATE` e `CONNECTION_UPDATE`; `MESSAGES_SET` e `MESSAGING_HISTORY_SET` somente quando
+   a importação automática de histórico está habilitada) com o token do segredo (da instância ou
+   `EVOLUTION_WEBHOOK_SECRET`); há também a ação **Reconfigurar webhook**.
    No boot do backend o webhook é **reconciliado** para todas as instâncias conectadas/ativas, de
    modo que mudar `PUBLIC_API_URL` se autocorrige no próximo restart sem depender de reconfiguração
    manual.
 5. **Desconectar** usa `DELETE /instance/logout` e só grava `DISCONNECTED` após
-   `GET /instance/connectionState` confirmar `close`/`disconnected`.
+   `GET /instance/connectionState` confirmar `close`/`disconnected` (com algumas tentativas
+   curtas para absorver a latência do provedor). Se o logout responder erro/timeout mas o estado
+   confirmar `close`, a desconexão é considerada concluída; se o estado não confirmar, a API
+   responde erro e o CRM **não** declara sucesso. Cada chamada HTTP à Evolution tem timeout
+   (`EVOLUTION_REQUEST_TIMEOUT_MS`, padrão 20 s). Eventos `connection.update` atrasados de uma
+   sessão anterior não reativam uma instância explicitamente desconectada.
 6. **Excluir** remove a instância na Evolution com `DELETE /instance/delete` antes de apagar a
    linha local; falhas de rede mantêm a linha local para permitir nova tentativa.
+
+### Histórico e recuperação de mensagens
+
+- Por padrão, a importação automática de `MESSAGES_SET` fica **desligada**
+  (`WHATSAPP_HISTORY_IMPORT_ENABLED=false`). O CRM recebe mensagens novas por `MESSAGES_UPSERT` e
+  recupera lacunas pelo backfill. Isso evita a "chuva" de histórico a cada reconexão.
+- Se habilitada (`WHATSAPP_HISTORY_IMPORT_ENABLED=true`), o `MESSAGES_SET` é assinado e processado
+  com o mesmo pipeline de `MESSAGES_UPSERT`, importando apenas mensagens dentro de
+  `WHATSAPP_HISTORY_IMPORT_DAYS` (padrão 30 dias). Mensagens mais antigas são ignoradas.
+- O CRM persiste o estado da sincronização em `WhatsAppInstance` (`history_sync_status`,
+  `history_sync_progress`, `history_sync_started_at`, `history_sync_completed_at`,
+  `history_sync_error`) e o expõe em `GET /api/whatsapp/instances[/:id]` como `historySync`.
+  Os estados são `IDLE`, `SYNCING`, `COMPLETED` e `FAILED`.
+- `progress` é copiado apenas quando a Evolution o envia (0–100). `isLatest` **não** significa
+  conclusão (é apenas um indicador de lote do Baileys) e nunca é usado para declarar o histórico
+  completo. A conclusão vem de `progress === 100` no `MESSAGES_SET` ou do
+  evento `MESSAGING_HISTORY_SET` (`progress: 100`), ambos confirmados na Evolution 2.4.0.
+- Se um lote tiver mensagens que falharam, o estado fica `FAILED` e o webhook responde `5xx` para a
+  Evolution reenviar o lote. Mensagens já importadas são ignoradas por idempotência no retry.
+  Reconexão/queda de conexão durante um sync também marca `FAILED`. O frontend só mostra
+  “Histórico sincronizado” quando o estado persistido é `COMPLETED`.
+- O progresso é publicado em tempo real por `whatsapp.history.updated` na sala do tenant.
+- A ingestão é deduplicada por `(tenantId, externalMessageId)` e pelo contexto da instância.
+  Webhook e backfill podem rodar simultaneamente sem duplicar mensagens.
+- Mensagens recentes recuperadas do histórico emitem eventos realtime; mensagens antigas são
+  persistidas silenciosamente e emitem apenas `conversation.updated`. A importação histórica não
+  move `Conversation.lastMessageAt` para trás.
+- Mídia e transcrição automática são processadas apenas para mensagens recentes do histórico, para
+  não enfileirar milhares de downloads/transcrições antigas.
+- Mensagens individuais e de grupos usam o mesmo fluxo; grupos mantêm `isGroup`, participante e
+  nome do remetente.
+- **Backfill manual:** `POST /api/whatsapp/instances/:id/backfill` (OWNER/ADMIN), body opcional
+  `{ "days": 30, "maxMessages": 1000 }`. A rotina consulta `POST /chat/findMessages` paginado,
+  importa o que falta e retorna `{ scanned, imported, skipped, failed, pages }`.
+- Logs: `whatsapp.history.batch`, `whatsapp.history.import`, `whatsapp.history.backfill`,
+  `whatsapp.message.persisted` e `whatsapp.history.message.failed` (sem conteúdo sensível).
+- Instâncias existentes recebem `MESSAGES_SET` na reconciliação de webhook do boot ou pela ação
+  **Reconfigurar webhook**.
 
 ### Importação automática de contatos
 
@@ -157,6 +226,13 @@ manual:
 - falhas na Evolution são registradas e ignoradas, sem interromper a conexão.
 - A foto fica em `Contact.avatarUrl` e aparece na lista e no detalhe de contatos (fallback: iniciais).
 - Instâncias já conectadas antes desta funcionalidade são importadas no próximo boot, sem ação manual.
+- **Atualização incremental:** `CONTACTS_UPSERT`/`CONTACTS_UPDATE` (v2.4.0) atualizam o contato por
+  `(tenantId, phone)` sem recriar. Nome só substitui placeholder (telefone/vazio); foto só substitui
+  vazio ou uma URL anterior do WhatsApp (`pps.whatsapp.net`) — avatar manual é preservado. Eventos
+  sem foto mantêm a anterior. Grupos, `status@broadcast`, bots, newsletters e identificadores
+  `@lid` sem telefone convencional não viram `Contact`; o JID original permanece na conversa.
+- Mudanças de contato publicam `contact.updated` (e `conversation.updated` para cada conversa
+  vinculada), sem invalidar mensagens/mídias.
 
 ### Requisitos de configuração
 
@@ -232,8 +308,8 @@ CRM (sem dependências novas). A tela é **full-bleed**: `MainContent` deixa de 
   participante (mesma direção, mesma identidade de remetente, mesmo dia e intervalo curto) são
   agrupadas com espaçamento reduzido, exibindo nome e foto apenas no primeiro balão do grupo. A
   identidade em grupos usa `senderId` e, como fallback, `senderName`; mensagens sem identificação
-  não são agrupadas entre si, evitando confundir remetentes diferentes. Reações nunca entram em um
-  bloco, para que continuem identificáveis; a rolagem é automática somente quando o
+  não são agrupadas entre si, evitando confundir remetentes diferentes. Reações são exibidas como
+  selos sobre o balão da mensagem original (e não como balões próprios); a rolagem é automática somente quando o
   usuário está no fim do histórico, e um botão flutuante ("Ir para as últimas mensagens") aparece ao
   navegar por mensagens antigas. Ao abrir ou trocar de conversa (individual ou grupo), o histórico
   carregado é posicionado no fim mesmo depois da renderização de mídias e pré-visualizações; ao
@@ -284,12 +360,16 @@ CRM (sem dependências novas). A tela é **full-bleed**: `MainContent` deixa de 
   **Conversar** (resolve/cria o contato por telefone e inicia um atendimento 1:1 na mesma instância)
   e **Salvar contato** (`POST /api/contacts/resolve`, find-or-create idempotente por telefone). O
   webhook faz o parse do vCard (`FN`/`TEL`) e guarda `metadata.contacts = [{ name, phone }]`.
-- **Reações**: eventos `messages.upsert` com `data.message.reactionMessage` são reconhecidos como
-  `MessageType.REACTION`. O autor é o remetente do evento (`key.participant`, com o telefone em
-  `key.participantAlt` quando o JID é `@lid`), exibido com o `pushName` (também em conversas
-  individuais); o alvo fica em `metadata.reaction` (`{ targetMessageId, targetFromMe }`). Remoções
-  de reação (`text` vazio) são ignoradas para não gerar bolhas `[unknown]`. O chat mostra a reação
-  como um selo compacto com o nome do participante e o emoji.
+- **Reações**: eventos `messages.upsert` com `data.message.reactionMessage` são desviados do fluxo
+  de mensagens e gravados em `MessageReaction`, associados ao `targetExternalId` da mensagem
+  original. O autor é o remetente do evento (`key.participant`, com o telefone em
+  `key.participantAlt` quando o JID é `@lid`) e o `pushName` vira `reactorName`; reações feitas no
+  próprio dispositivo conectado (`key.fromMe = true`) usam `reactorId = self` e aparecem como
+  **Você**. O mesmo autor/alvo faz upsert do emoji, e um `text` vazio remove a reação. Reações não
+  criam `Message`, não movem `lastMessageAt`, não alteram não lidas/arquivamento e são publicadas no
+  evento realtime `message.reaction`, que atualiza apenas o cache de mensagens da conversa. O chat
+  mostra um selo compacto com o emoji (e a quantidade, quando mais de uma pessoa usa o mesmo emoji)
+  no balão original.
 - **Respostas citadas (menções)**: mensagens que citam outra exibem, no topo do balão, um bloco com
   barra lateral colorida (cor por remetente, ou cor da marca quando a citada é nossa), o autor citado
   (**Você** quando foi enviada por nós) e um resumo com ícone do tipo de mídia (ex.: microfone para
@@ -472,17 +552,34 @@ responde `409 CONVERSATION_NOT_HUMAN_OWNED`. O bot só responde enquanto a conve
   `metadata.destinationType` e `metadata.fallbackAttempted`, que garante no máximo **um** fallback
   por mensagem (sem loops). O LID é capturado no mesmo evento em que o contato/telefone é resolvido,
   então um novo inbound popula conversas já existentes.
-- O webhook é resiliente: qualquer erro inesperado ao processar um evento é registrado em log e a
-  Evolution recebe `200` (`ignored: processing_error`), evitando *retry storm* que trava o
-  processamento da instância.
+- O webhook usa `webhook_events` como caixa de entrada durável: o evento é reivindicado antes do
+  processamento e só recebe `processedAt` após o sucesso. Eventos já processados são idempotentes;
+  eventos reivindicados e não concluídos são reprocessados. Em falha de banco/processamento a API
+  responde `503` (em vez de `200`), a Evolution reenvia e uma cópia é enfileirada em
+  `webhook.evolution.process`; no boot, eventos pendentes das últimas 24 h são reenfileirados.
+  Assim uma falha temporária não descarta silenciosamente a mensagem.
+- `messages.update` só altera mensagens `OUTBOUND` da **mesma instância e tenant**, e a progressão
+  de status é monotônica (`SENT → DELIVERED → READ`); `ERROR` não regride `DELIVERED`/`READ`.
 - O webhook aceita `presence.update` da Evolution e publica `conversation.presence` somente na
-  sala do tenant da instância, após localizar a conversa por tenant, instância e JID.
-- Presença é transitória: não grava `WebhookEvent` nem passa pela deduplicação de mensagens.
-  Assim, sequências repetidas de digitação continuam aparecendo. A interface mostra
-  “digitando…”/“gravando áudio…” na lista e no cabeçalho, limpa ao desconectar e expira em 10 segundos.
+  sala do tenant da instância, após localizar a conversa por tenant, instância e JID. O payload
+  inclui `state` normalizado (`online`, `offline`, `composing`, `recording`), `participantName`/
+  `participantPhone` (participantes de grupo vêm de `ConversationParticipant`), `lastSeenAt`,
+  `occurredAt` (ordenação) e `receivedAt` (base do TTL no cliente).
+- Presença é transitória: não grava `WebhookEvent`, não cria mensagem/conversa e não passa pela
+  deduplicação de mensagens. A UI mantém o estado apenas em memória, por conversa.
+- No cabeçalho, o indicador mostra `Online`, `Visto por último …` (somente com `lastSeen` válido e
+  não futuro), `Offline` apenas após `unavailable`, ou `Status indisponível` quando não há evento
+  confiável. A ausência de eventos **não** é tratada como offline.
+- `composing`/`recording` expiram em 12 s na UI caso o evento de encerramento não chegue; `online`
+  expira em 2 min para não apresentar estado antigo como atual. `offline`/última visualização
+  permanecem até um evento mais novo. Eventos fora de ordem são descartados por `occurredAt`.
+- Atividade de um participante não é encerrada por evento `available` de outro participante do
+  grupo. O indicador fica isolado no componente do cabeçalho, sem invalidar queries nem remontar
+  mensagens/players de áudio e vídeo.
 - Instâncias novas assinam `PRESENCE_UPDATE`. Nas já conectadas, executar **Reconfigurar webhook**
   em Atendimento → WhatsApp para ativar esse evento. O indicador depende de a Evolution emitir
-  a presença do contato.
+  a presença do contato; a v2.4.0 não expõe um endpoint de “apenas assinar presença”, então alguns
+  contatos podem permanecer como `Status indisponível`.
 - Fotos dos contatos são buscadas na lista e no cabeçalho pelo endpoint autenticado
   `participant-avatar`, reutilizando o cache de 6 horas para fotos encontradas e de 1 minuto para
   respostas sem foto, sempre com validação de vínculo com a conversa. Enquanto a foto estiver
@@ -494,9 +591,11 @@ responde `409 CONVERSATION_NOT_HUMAN_OWNED`. O bot só responde enquanto a conve
   recolhido. Os balões limitam a largura no contêiner externo e acomodam textos longos e mídias.
 - As etiquetas da conversa podem ser alteradas diretamente pelo cabeçalho ou pelo menu de ações da
   lista, sem depender da abertura do painel de detalhes.
-- Não há dependências ou migrations novas. Testes: `npm test` e
-  `npm run test:e2e -- test/integration/whatsapp.integration-spec.ts` no backend com PostgreSQL e
-  Redis configurados. Execução local: `npm run start:dev` no backend e `npm run dev` no frontend.
+- A P2 adiciona a tabela `ConversationParticipant` (migration
+  `20261024150000_conversation_participants`). Testes unitários: `webhook.service.spec.ts`,
+  `contacts.service.sync.spec.ts`, `whatsapp-conversation-sync.service.spec.ts` (backend) e
+  `conversation-presence.test.tsx`, `use-realtime.test.tsx` (frontend). Execução local:
+  `npm run start:dev` no backend e `npm run dev` no frontend.
 
 Referência do evento: [implementação da Evolution](https://github.com/EvolutionAPI/evolution-api/blob/main/src/api/integrations/channel/whatsapp/whatsapp.baileys.service.ts).
 
@@ -572,7 +671,7 @@ Referência do evento: [implementação da Evolution](https://github.com/Evoluti
 
 ### Edição de mensagem
 
-- A Evolution v2.3.7 (Baileys 7.0.0-rc.9) reporta edições de duas formas: `messages.edited`, cujo
+- A Evolution 2.4.0 (Baileys 7.0.0-rc.9) reporta edições de duas formas: `messages.edited`, cujo
   `data` **é** o `protocolMessage` (`key` = mensagem original + `editedMessage` = novo conteúdo), e
   `messages.update`, no formato real `{ keyId: <id original>, status: "SERVER_ACK",
   message: { editedMessage: { message: <novo conteúdo> } } }`. O webhook reconhece ambos, além de
@@ -700,10 +799,13 @@ preserva mensagens recebidas após a leitura e exclui arquivadas do total do ten
 `test/integration/conversation-delete.integration-spec.ts` cobre a exclusão lógica (some da caixa de
 entrada e das arquivadas, detalhe 404, some do total de não lidas, é escopada por tenant, exige
 autenticação, não é revertida por nova mensagem, publica `conversation.deleted` e preserva
-fixar/arquivar/desarquivar/ler/encerrar/reabrir). No frontend, `npm test` (Vitest) cobre o
-agrupamento visual em `src/features/attendance/attendance-utils.test.ts` (mesmo participante,
-participantes diferentes, sem identificação, direções, janela temporal, mudança de dia, reações e
-mídia).
+fixar/arquivar/desarquivar/ler/encerrar/reabrir). A suíte de WhatsApp também cobre reações:
+mensagem comum sem regressão, reação individual e em grupo, reação do próprio dispositivo, troca,
+remoção, alvo ainda não sincronizado, reentrega idempotente, isolamento entre tenants e ausência de
+nova mensagem/não lida. No frontend, `npm test` (Vitest) cobre o agrupamento visual em
+`src/features/attendance/attendance-utils.test.ts` (mesmo participante, participantes diferentes,
+sem identificação, direções, janela temporal, mudança de dia, reações e mídia) e a renderização das
+reações sobre o balão em `message-bubble.test.tsx`.
 
 ## Fora de escopo
 

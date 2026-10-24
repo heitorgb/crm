@@ -46,8 +46,10 @@ class FakeEvolution {
   readonly webhooks: { instance: string; url: string; events: string[] }[] = [];
   readonly groupLookups: string[] = [];
   readonly avatarLookups: string[] = [];
-  createInstanceError?: { status: number };
+  createInstanceError?: { status: number; register?: boolean };
   createInstancePayload?: unknown;
+  connectPayload?: unknown;
+  historyRecords: Record<string, unknown>[] = [];
   updateMessageError?: { status: number };
   mediaBase64?: string;
   mediaError?: { status: number };
@@ -56,6 +58,7 @@ class FakeEvolution {
   mediaSize?: number;
   groupSubject: string | null = 'Grupo Teste';
   groupPictureUrl: string | null = 'https://cdn.example/group.jpg';
+  groupParticipants: unknown[] = [];
   avatarUrl: string | null = 'https://cdn.example/avatar.jpg';
   private counter = 0;
 
@@ -64,6 +67,9 @@ class FakeEvolution {
       return this.createInstancePayload;
     }
     if (this.createInstanceError) {
+      if (this.createInstanceError.register) {
+        this.instances.set(instanceName, 'close');
+      }
       throw new EvolutionRequestError('instance exists', this.createInstanceError.status);
     }
     this.created.push(instanceName);
@@ -78,6 +84,9 @@ class FakeEvolution {
   }
 
   async connect(instance: string) {
+    if (this.connectPayload !== undefined) {
+      return this.connectPayload;
+    }
     this.instances.set(instance, 'connecting');
     return { code: '2@existing', base64: 'ZXhpc3Rpbmc=' };
   }
@@ -91,6 +100,18 @@ class FakeEvolution {
     this.deleted.push(instance);
     this.instances.delete(instance);
     return {};
+  }
+
+  async findMessages(
+    _instance: string,
+    query: { page: number; limit: number },
+  ) {
+    const start = (query.page - 1) * query.limit;
+    return {
+      total: this.historyRecords.length,
+      pages: Math.max(1, Math.ceil(this.historyRecords.length / query.limit)),
+      records: this.historyRecords.slice(start, start + query.limit),
+    };
   }
 
   async instanceExists(instance: string) {
@@ -158,6 +179,10 @@ class FakeEvolution {
     };
   }
 
+  async findGroupParticipants(_instance: string, _groupJid: string) {
+    return this.groupParticipants;
+  }
+
   async fetchProfilePictureUrl(_instance: string, jid: string) {
     this.avatarLookups.push(jid);
     return this.avatarUrl;
@@ -208,6 +233,8 @@ describe('WhatsApp attendance (integration)', () => {
     evolution.addressBook = [];
     evolution.createInstanceError = undefined;
     evolution.createInstancePayload = undefined;
+    evolution.connectPayload = undefined;
+    evolution.historyRecords = [];
     evolution.updateMessageError = undefined;
     evolution.mediaBase64 = undefined;
     evolution.mediaError = undefined;
@@ -216,6 +243,7 @@ describe('WhatsApp attendance (integration)', () => {
     evolution.mediaSize = undefined;
     evolution.groupSubject = 'Grupo Teste';
     evolution.groupPictureUrl = 'https://cdn.example/group.jpg';
+    evolution.groupParticipants = [];
     evolution.avatarUrl = 'https://cdn.example/avatar.jpg';
     ownerA = await seedTenant(app, prisma, { name: 'Wa Owner A', role: 'OWNER' });
     userA = await seedMember(app, prisma, ownerA.tenantId, { name: 'Wa User A', role: 'USER' });
@@ -360,6 +388,7 @@ describe('WhatsApp attendance (integration)', () => {
       pushName?: string;
       targetId?: string;
       targetFromMe?: boolean;
+      fromMe?: boolean;
     } = {},
   ) {
     const {
@@ -369,6 +398,7 @@ describe('WhatsApp attendance (integration)', () => {
       pushName = 'Contato Teste',
       targetId = randomUUID(),
       targetFromMe = false,
+      fromMe = false,
     } = options;
 
     return {
@@ -377,7 +407,7 @@ describe('WhatsApp attendance (integration)', () => {
       data: {
         key: {
           remoteJid,
-          fromMe: false,
+          fromMe,
           id: messageId,
           ...(participant ? { participant } : {}),
           ...(participantAlt ? { participantAlt } : {}),
@@ -661,10 +691,19 @@ describe('WhatsApp attendance (integration)', () => {
       expect(evolution.created).toContain(instanceName);
       const webhook = evolution.webhooks.find((item) => item.instance === instanceName);
       expect(webhook?.events).toEqual([
+        'MESSAGES_SET',
+        'MESSAGING_HISTORY_SET',
         'MESSAGES_UPSERT',
         'MESSAGES_UPDATE',
         'MESSAGES_EDITED',
+        'CONTACTS_UPSERT',
+        'CONTACTS_UPDATE',
+        'CHATS_SET',
+        'CHATS_UPSERT',
+        'CHATS_UPDATE',
         'GROUPS_UPSERT',
+        'GROUP_UPDATE',
+        'GROUP_PARTICIPANTS_UPDATE',
         'PRESENCE_UPDATE',
         'CONNECTION_UPDATE',
       ]);
@@ -672,10 +711,45 @@ describe('WhatsApp attendance (integration)', () => {
       expect(JSON.stringify(response.json())).not.toContain('super-secret-webhook');
     });
 
-    it('recreates an existing Evolution instance without duplicating the create', async () => {
+    it('reuses an existing Evolution instance without recreating it', async () => {
       const instanceName = `existing-${randomUUID()}`;
       const instanceId = await createInstance(ownerA, instanceName);
       evolution.instances.set(instanceName, 'close');
+
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/whatsapp/instances/${instanceId}/connect`,
+        headers: authHeaders(ownerA),
+      });
+
+      expect(response.statusCode).toBe(201);
+      expect(response.json().code).toBe('2@existing');
+      expect(evolution.deleted).not.toContain(instanceName);
+      expect(evolution.created).not.toContain(instanceName);
+    });
+
+    it('returns CONNECTED without a new ticket when the instance is already open', async () => {
+      const instanceName = `open-${randomUUID()}`;
+      const instanceId = await createInstance(ownerA, instanceName, 'CONNECTED');
+      evolution.instances.set(instanceName, 'open');
+
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/whatsapp/instances/${instanceId}/connect`,
+        headers: authHeaders(ownerA),
+      });
+
+      expect(response.statusCode).toBe(201);
+      expect(response.json()).toMatchObject({ status: 'CONNECTED', code: null });
+      expect(evolution.deleted).not.toContain(instanceName);
+      expect(evolution.created).not.toContain(instanceName);
+    });
+
+    it('recreates an existing instance only when it returns no usable ticket', async () => {
+      const instanceName = `stale-${randomUUID()}`;
+      const instanceId = await createInstance(ownerA, instanceName);
+      evolution.instances.set(instanceName, 'close');
+      evolution.connectPayload = { error: true, message: 'instance does not exist' };
 
       const response = await app.inject({
         method: 'POST',
@@ -692,7 +766,7 @@ describe('WhatsApp attendance (integration)', () => {
     it('reuses a concurrent instance when create loses the race', async () => {
       const instanceName = `race-${randomUUID()}`;
       const instanceId = await createInstance(ownerA, instanceName);
-      evolution.createInstanceError = { status: 409 };
+      evolution.createInstanceError = { status: 409, register: true };
 
       const response = await app.inject({
         method: 'POST',
@@ -736,6 +810,28 @@ describe('WhatsApp attendance (integration)', () => {
       expect(response.json().status).toBe('DISCONNECTED');
       const stored = await prisma.whatsAppInstance.findUnique({ where: { id: instanceId } });
       expect(stored?.status).toBe('DISCONNECTED');
+    });
+
+    it('ignores a delayed connection open event after an explicit disconnect', async () => {
+      const instanceName = `disconnect-stale-${randomUUID()}`;
+      const instanceId = await createInstance(ownerA, instanceName, 'CONNECTED');
+
+      await app.inject({
+        method: 'POST',
+        url: `/api/whatsapp/instances/${instanceId}/disconnect`,
+        headers: authHeaders(ownerA),
+      });
+
+      await postWebhook({
+        event: 'connection.update',
+        instance: instanceName,
+        data: { instance: instanceName, state: 'open' },
+      });
+
+      const stored = await prisma.whatsAppInstance.findUniqueOrThrow({
+        where: { id: instanceId },
+      });
+      expect(stored.status).toBe('DISCONNECTED');
     });
 
     it('does not mark the instance disconnected when Evolution remains connecting', async () => {
@@ -902,6 +998,45 @@ describe('WhatsApp attendance (integration)', () => {
       const contacts = await prisma.contact.findMany({ where: { tenantId: ownerB.tenantId } });
       expect(contacts).toHaveLength(0);
     });
+
+    it('updates existing contacts from incremental events without duplicating or overwriting manual names', async () => {
+      const instanceName = `contact-event-${randomUUID()}`;
+      const phone = '5511977777777';
+      await createInstance(ownerA, instanceName);
+      await prisma.contact.create({
+        data: { tenantId: ownerA.tenantId, phone, name: 'Nome Manual' },
+      });
+
+      const first = await postWebhook({
+        event: 'CONTACTS_UPSERT',
+        instance: instanceName,
+        data: {
+          remoteJid: `${phone}@s.whatsapp.net`,
+          pushName: 'Nome WhatsApp',
+          profilePicUrl: 'https://pps.whatsapp.net/avatar.jpg',
+        },
+      });
+      const second = await postWebhook({
+        event: 'CONTACTS_UPDATE',
+        instance: instanceName,
+        data: {
+          remoteJid: `${phone}@s.whatsapp.net`,
+          pushName: 'Outro Nome',
+          profilePicUrl: 'https://pps.whatsapp.net/avatar-2.jpg',
+        },
+      });
+
+      expect(first.statusCode).toBe(200);
+      expect(second.statusCode).toBe(200);
+      const contacts = await prisma.contact.findMany({
+        where: { tenantId: ownerA.tenantId, phone },
+      });
+      expect(contacts).toHaveLength(1);
+      expect(contacts[0]).toMatchObject({
+        name: 'Nome Manual',
+        avatarUrl: 'https://pps.whatsapp.net/avatar-2.jpg',
+      });
+    });
   });
 
   describe('webhook', () => {
@@ -946,6 +1081,262 @@ describe('WhatsApp attendance (integration)', () => {
 
       // The messaging bot no longer answers automatically.
       expect(evolution.sent).toHaveLength(0);
+    });
+
+    it('imports recent messages.set history, filters old messages and deduplicates', async () => {
+      const instanceName = `history-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      const now = Math.floor(Date.now() / 1000);
+      const old = now - 60 * 24 * 60 * 60;
+      const recentId = randomUUID();
+      const oldId = randomUUID();
+      const groupId = randomUUID();
+      const payload = {
+        event: 'messages.set',
+        instance: instanceName,
+        isLatest: true,
+        progress: 100,
+        data: [
+          {
+            key: { remoteJid: '5511977777777@s.whatsapp.net', fromMe: false, id: recentId },
+            pushName: 'Histórico',
+            message: { conversation: 'mensagem recente do histórico' },
+            messageTimestamp: now,
+          },
+          {
+            key: { remoteJid: '5511977777777@s.whatsapp.net', fromMe: false, id: oldId },
+            pushName: 'Histórico',
+            message: { conversation: 'mensagem antiga' },
+            messageTimestamp: old,
+          },
+          {
+            key: {
+              remoteJid: '120363000000000001@g.us',
+              fromMe: false,
+              id: groupId,
+              participant: '5511888888888@s.whatsapp.net',
+            },
+            pushName: 'Maria',
+            message: { conversation: 'mensagem de grupo do histórico' },
+            messageTimestamp: now,
+          },
+        ],
+      };
+
+      const response = await postWebhook(payload);
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json().accepted).toBe(true);
+
+      const messages = await prisma.message.findMany({ where: { tenantId: ownerA.tenantId } });
+      expect(messages).toHaveLength(2);
+      expect(messages.map((message) => message.content)).toEqual(
+        expect.arrayContaining(['mensagem recente do histórico', 'mensagem de grupo do histórico']),
+      );
+      expect(messages.some((message) => message.content === 'mensagem antiga')).toBe(false);
+
+      await postWebhook(payload);
+      expect(await prisma.message.count({ where: { tenantId: ownerA.tenantId } })).toBe(2);
+    });
+
+    it('persists history synchronization progress without completing on isLatest', async () => {
+      const instanceName = `history-state-${randomUUID()}`;
+      const instanceId = await createInstance(ownerA, instanceName);
+
+      await postWebhook({
+        event: 'messages.set',
+        instance: instanceName,
+        isLatest: true,
+        progress: 40,
+        data: [],
+      });
+
+      let stored = await prisma.whatsAppInstance.findUniqueOrThrow({
+        where: { id: instanceId },
+      });
+      expect(stored.historySyncStatus).toBe('SYNCING');
+      expect(stored.historySyncProgress).toBe(40);
+      expect(stored.historySyncCompletedAt).toBeNull();
+
+      const response = await app.inject({
+        method: 'GET',
+        url: `/api/whatsapp/instances/${instanceId}`,
+        headers: authHeaders(ownerA),
+      });
+      expect(response.json().historySync).toMatchObject({
+        status: 'SYNCING',
+        progress: 40,
+        completedAt: null,
+      });
+
+      await postWebhook({
+        event: 'messages.set',
+        instance: instanceName,
+        isLatest: false,
+        progress: 100,
+        data: [],
+      });
+
+      stored = await prisma.whatsAppInstance.findUniqueOrThrow({ where: { id: instanceId } });
+      expect(stored.historySyncStatus).toBe('COMPLETED');
+      expect(stored.historySyncProgress).toBe(100);
+      expect(stored.historySyncCompletedAt).not.toBeNull();
+    });
+
+    it('accepts the explicit messaging-history.set completion signal', async () => {
+      const instanceName = `history-complete-${randomUUID()}`;
+      const instanceId = await createInstance(ownerA, instanceName);
+
+      await postWebhook({
+        event: 'messaging-history.set',
+        instance: instanceName,
+        data: { messageCount: 4, chatCount: 2, contactCount: 1, progress: 100 },
+      });
+
+      const stored = await prisma.whatsAppInstance.findUniqueOrThrow({
+        where: { id: instanceId },
+      });
+      expect(stored.historySyncStatus).toBe('COMPLETED');
+      expect(stored.historySyncProgress).toBe(100);
+    });
+
+    it('keeps messages received during history synchronization', async () => {
+      const instanceName = `history-live-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      const now = Math.floor(Date.now() / 1000);
+
+      await postWebhook({
+        event: 'messages.set',
+        instance: instanceName,
+        progress: 50,
+        data: [
+          {
+            key: { remoteJid: '5511777777777@s.whatsapp.net', fromMe: false, id: randomUUID() },
+            pushName: 'Histórico',
+            message: { conversation: 'do histórico' },
+            messageTimestamp: now,
+          },
+        ],
+      });
+      await postWebhook(
+        evolutionPayload(instanceName, randomUUID(), 'recebida durante a sincronização'),
+      );
+      await postWebhook({
+        event: 'messages.set',
+        instance: instanceName,
+        progress: 100,
+        data: [],
+      });
+
+      const messages = await prisma.message.findMany({
+        where: { tenantId: ownerA.tenantId },
+        orderBy: { occurredAt: 'asc' },
+      });
+      expect(messages.map((message) => message.content)).toEqual(
+        expect.arrayContaining(['do histórico', 'recebida durante a sincronização']),
+      );
+    });
+
+    it('accepts uppercase webhook event names from the provider', async () => {
+      const instanceName = `uppercase-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+
+      const response = await postWebhook({
+        event: 'MESSAGES_UPSERT',
+        instance: instanceName,
+        data: {
+          key: { remoteJid: '5511666666666@s.whatsapp.net', fromMe: false, id: randomUUID() },
+          pushName: 'Contato Teste',
+          message: { conversation: 'evento em maiúsculas' },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(
+        await prisma.message.count({
+          where: { tenantId: ownerA.tenantId, content: 'evento em maiúsculas' },
+        }),
+      ).toBe(1);
+    });
+
+    it('does not move an active conversation back in time when importing older history', async () => {
+      const instanceName = `history-order-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      await postWebhook(evolutionPayload(instanceName, randomUUID(), 'mensagem atual'));
+      const before = await prisma.conversation.findFirst({
+        where: { tenantId: ownerA.tenantId },
+        select: { id: true, lastMessageAt: true },
+      });
+
+      const old = Math.floor(Date.now() / 1000) - 60 * 60;
+      await postWebhook({
+        event: 'messages.set',
+        instance: instanceName,
+        data: [
+          {
+            key: { remoteJid: '5511999999999@s.whatsapp.net', fromMe: false, id: randomUUID() },
+            pushName: 'Contato Teste',
+            message: { conversation: 'mensagem de uma hora atrás' },
+            messageTimestamp: old,
+          },
+        ],
+      });
+
+      const after = await prisma.conversation.findUnique({
+        where: { id: before?.id },
+        select: { lastMessageAt: true },
+      });
+      expect(after?.lastMessageAt?.toISOString()).toBe(before?.lastMessageAt?.toISOString());
+    });
+
+    it('backfills missing messages from Evolution and keeps tenant isolation', async () => {
+      const instanceName = `backfill-${randomUUID()}`;
+      const instanceId = await createInstance(ownerA, instanceName);
+      const now = Math.floor(Date.now() / 1000);
+      evolution.historyRecords = [
+        {
+          key: { remoteJid: '5511966666666@s.whatsapp.net', fromMe: false, id: randomUUID() },
+          pushName: 'Backfill',
+          message: { conversation: 'recuperada individual' },
+          messageTimestamp: now,
+        },
+        {
+          key: {
+            remoteJid: '120363000000000002@g.us',
+            fromMe: false,
+            id: randomUUID(),
+            participant: '5511888888888@s.whatsapp.net',
+          },
+          pushName: 'Maria',
+          message: { conversation: 'recuperada de grupo' },
+          messageTimestamp: now,
+        },
+      ];
+
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/whatsapp/instances/${instanceId}/backfill`,
+        headers: authHeaders(ownerA),
+        payload: { days: 7, maxMessages: 100 },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({ scanned: 2, imported: 2, skipped: 0, failed: 0 });
+
+      const messages = await prisma.message.findMany({ where: { tenantId: ownerA.tenantId } });
+      expect(messages).toHaveLength(2);
+      const groupConversation = await prisma.conversation.findFirst({
+        where: { tenantId: ownerA.tenantId, externalContactId: '120363000000000002@g.us' },
+      });
+      expect(groupConversation?.isGroup).toBe(true);
+
+      const foreign = await app.inject({
+        method: 'POST',
+        url: `/api/whatsapp/instances/${instanceId}/backfill`,
+        headers: authHeaders(ownerB),
+        payload: { days: 7 },
+      });
+      expect(foreign.statusCode).toBe(404);
     });
 
     it('ignores inbound messages from a blocked contact', async () => {
@@ -1200,6 +1591,36 @@ describe('WhatsApp attendance (integration)', () => {
         where: { tenantId: ownerA.tenantId, direction: 'INBOUND' },
       });
       expect(inbound).toHaveLength(1);
+    });
+
+    it('retries a webhook whose message persistence failed instead of dropping it', async () => {
+      const instanceName = `transient-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      const messageId = randomUUID();
+      const payload = evolutionPayload(instanceName, messageId, 'não pode ser perdida');
+
+      const create = vi
+        .spyOn(prisma.message, 'create')
+        .mockRejectedValueOnce(new Error('database unavailable'));
+      try {
+        const first = await postWebhook(payload);
+        expect(first.statusCode).toBe(503);
+      } finally {
+        create.mockRestore();
+      }
+
+      const stored = await prisma.message.findFirst({
+        where: { tenantId: ownerA.tenantId, externalMessageId: messageId },
+      });
+      expect(stored?.content).toBe('não pode ser perdida');
+
+      const retry = await postWebhook(payload);
+      expect(retry.statusCode).toBe(200);
+      expect(
+        await prisma.message.count({
+          where: { tenantId: ownerA.tenantId, externalMessageId: messageId },
+        }),
+      ).toBe(1);
     });
 
     it('reopens a closed conversation when a new message arrives', async () => {
@@ -1649,6 +2070,17 @@ describe('WhatsApp attendance (integration)', () => {
 
       expect(response.statusCode).toBe(200);
       expect(response.json().accepted).toBe(true);
+    });
+
+    it('scopes status updates to the owning instance inside the same tenant', async () => {
+      const { messageId, externalMessageId } = await seedOutbound();
+      const otherInstance = `status-same-tenant-${randomUUID()}`;
+      await createInstance(ownerA, otherInstance);
+
+      await postWebhook(statusPayload(otherInstance, externalMessageId, 'READ'));
+
+      const message = await prisma.message.findUniqueOrThrow({ where: { id: messageId } });
+      expect(message.status).toBe('SENT');
     });
 
     it('scopes status updates to the owning tenant', async () => {
@@ -2255,6 +2687,88 @@ describe('WhatsApp attendance (integration)', () => {
       expect(conversation.avatarUrl).toBe('https://cdn.example/updated.jpg');
     });
 
+    it('syncs chat metadata and participants without changing inbox state or history', async () => {
+      const instanceName = `group-sync-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      await postWebhook(groupPayload(instanceName, randomUUID(), 'Olá', groupJid, participant));
+
+      const conversation = await prisma.conversation.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId },
+      });
+      const readMarker = new Date('2026-10-20T12:00:00.000Z');
+      await prisma.conversation.update({
+        where: { id: conversation.id },
+        data: { isArchived: true, isPinned: true, lastReadAt: readMarker },
+      });
+
+      await postWebhook({
+        event: 'CHATS_UPSERT',
+        instance: instanceName,
+        data: [{ remoteJid: groupJid, name: 'Grupo Sincronizado' }],
+      });
+      await postWebhook({
+        event: 'GROUPS_UPSERT',
+        instance: instanceName,
+        data: [
+          {
+            id: groupJid,
+            subject: 'Grupo Sincronizado',
+            participants: [
+              {
+                id: participant,
+                admin: 'admin',
+                phoneNumber: '5511888888888',
+                name: 'Maria',
+              },
+            ],
+          },
+        ],
+      });
+
+      const synced = await prisma.conversation.findUniqueOrThrow({
+        where: { id: conversation.id },
+      });
+      expect(synced.groupName).toBe('Grupo Sincronizado');
+      expect(synced.isArchived).toBe(true);
+      expect(synced.isPinned).toBe(true);
+      expect(synced.lastReadAt?.toISOString()).toBe(readMarker.toISOString());
+
+      const participantRow = await prisma.conversationParticipant.findUniqueOrThrow({
+        where: {
+          conversationId_jid: { conversationId: conversation.id, jid: participant },
+        },
+      });
+      expect(participantRow).toMatchObject({
+        tenantId: ownerA.tenantId,
+        phone: '5511888888888',
+        name: 'Maria',
+        isAdmin: true,
+        active: true,
+      });
+
+      const removed = await postWebhook({
+        event: 'GROUP_PARTICIPANTS_UPDATE',
+        instance: instanceName,
+        data: {
+          id: groupJid,
+          action: 'remove',
+          participants: [participant],
+          participantsData: [],
+        },
+      });
+      expect(removed.statusCode).toBe(200);
+      const afterRemoval = await prisma.conversationParticipant.findUniqueOrThrow({
+        where: {
+          conversationId_jid: { conversationId: conversation.id, jid: participant },
+        },
+      });
+      expect(afterRemoval.active).toBe(false);
+      expect(afterRemoval.leftAt).not.toBeNull();
+      expect(
+        await prisma.message.count({ where: { tenantId: ownerA.tenantId, conversationId: conversation.id } }),
+      ).toBe(1);
+    });
+
     it('refreshes an existing group conversation on demand', async () => {
       const instanceName = `group-refresh-${randomUUID()}`;
       await createInstance(ownerA, instanceName);
@@ -2265,6 +2779,14 @@ describe('WhatsApp attendance (integration)', () => {
       });
 
       evolution.groupSubject = 'Nome Atualizado';
+      evolution.groupParticipants = [
+        {
+          id: participant,
+          admin: 'superadmin',
+          phoneNumber: '5511888888888',
+          name: 'Maria',
+        },
+      ];
 
       const response = await app.inject({
         method: 'POST',
@@ -2279,6 +2801,13 @@ describe('WhatsApp attendance (integration)', () => {
       });
       expect(refreshed.groupName).toBe('Nome Atualizado');
       expect(refreshed.isGroup).toBe(true);
+      expect(
+        await prisma.conversationParticipant.findUnique({
+          where: {
+            conversationId_jid: { conversationId: conversation.id, jid: participant },
+          },
+        }),
+      ).toMatchObject({ name: 'Maria', isAdmin: true, active: true });
     });
 
     it('rejects refreshing a conversation that is not a group', async () => {
@@ -2347,7 +2876,118 @@ describe('WhatsApp attendance (integration)', () => {
   });
 
   describe('reactions', () => {
-    it('attributes a group reaction to its participant instead of leaving it unknown', async () => {
+    async function listMessages(conversationId: string, tenant: SeededTenant) {
+      const response = await app.inject({
+        method: 'GET',
+        url: `/api/conversations/${conversationId}/messages`,
+        headers: authHeaders(tenant),
+      });
+      expect(response.statusCode).toBe(200);
+      return response.json().data as Array<{
+        id: string;
+        externalMessageId: string | null;
+        reactions: Array<{ emoji: string; fromMe: boolean; reactorName: string | null }>;
+      }>;
+    }
+
+    it('attaches a reaction to the original message without creating a message or unread item', async () => {
+      const instanceName = `reaction-direct-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      const targetId = randomUUID();
+
+      await postWebhook(evolutionPayload(instanceName, targetId, 'Mensagem original'));
+      const conversation = await prisma.conversation.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId },
+      });
+      const target = await prisma.message.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId, externalMessageId: targetId },
+      });
+      await app.inject({
+        method: 'POST',
+        url: `/api/conversations/${conversation.id}/read`,
+        headers: authHeaders(ownerA),
+        payload: {},
+      });
+      const before = await prisma.conversation.findUniqueOrThrow({
+        where: { id: conversation.id },
+      });
+
+      const emit = vi.spyOn(app.get(RealtimeService), 'emitToTenant');
+      try {
+        const response = await postWebhook(
+          reactionPayload(instanceName, randomUUID(), '❤️', {
+            pushName: 'Contato Teste',
+            targetId,
+            targetFromMe: true,
+          }),
+        );
+
+        expect(response.statusCode).toBe(200);
+        expect(response.json()).toMatchObject({
+          accepted: true,
+          conversationId: conversation.id,
+          messageId: target.id,
+        });
+
+        expect(await prisma.message.count({ where: { tenantId: ownerA.tenantId } })).toBe(1);
+        const reaction = await prisma.messageReaction.findFirstOrThrow({
+          where: { tenantId: ownerA.tenantId },
+        });
+        expect(reaction).toMatchObject({
+          conversationId: conversation.id,
+          targetExternalId: targetId,
+          targetFromMe: true,
+          reactorId: '5511999999999@s.whatsapp.net',
+          reactorName: 'Contato Teste',
+          fromMe: false,
+          emoji: '❤️',
+        });
+
+        const after = await prisma.conversation.findUniqueOrThrow({
+          where: { id: conversation.id },
+        });
+        expect(after.lastMessageAt?.toISOString()).toBe(before.lastMessageAt?.toISOString());
+        expect(after.isArchived).toBe(before.isArchived);
+
+        const detail = await app.inject({
+          method: 'GET',
+          url: `/api/conversations/${conversation.id}`,
+          headers: authHeaders(ownerA),
+        });
+        expect(detail.json()).toMatchObject({
+          unreadCount: 0,
+          lastMessage: { content: 'Mensagem original', direction: 'INBOUND' },
+        });
+
+        const listed = await listMessages(conversation.id, ownerA);
+        expect(listed).toHaveLength(1);
+        expect(listed[0]).toMatchObject({
+          id: target.id,
+          reactions: [
+            { emoji: '❤️', fromMe: false, reactorName: 'Contato Teste' },
+          ],
+        });
+
+        expect(emit).toHaveBeenCalledWith(
+          ownerA.tenantId,
+          'message.reaction',
+          expect.objectContaining({
+            conversationId: conversation.id,
+            messageId: target.id,
+            reactions: [expect.objectContaining({ emoji: '❤️' })],
+          }),
+        );
+        expect(emit).not.toHaveBeenCalledWith(
+          ownerA.tenantId,
+          'message.created',
+          expect.anything(),
+        );
+      } finally {
+        emit.mockRestore();
+      }
+    });
+
+    it('attributes a group reaction to its participant', async () => {
       const instanceName = `reaction-group-${randomUUID()}`;
       await createInstance(ownerA, instanceName);
       const groupJid = '120363222222222222@g.us';
@@ -2355,6 +2995,9 @@ describe('WhatsApp attendance (integration)', () => {
       const participantAlt = '5511888888888@s.whatsapp.net';
       const targetId = randomUUID();
 
+      await postWebhook(
+        groupPayload(instanceName, targetId, 'Mensagem do grupo', groupJid, participantAlt, 'Maria'),
+      );
       const response = await postWebhook(
         reactionPayload(instanceName, randomUUID(), '😂', {
           remoteJid: groupJid,
@@ -2367,61 +3010,194 @@ describe('WhatsApp attendance (integration)', () => {
       );
 
       expect(response.statusCode).toBe(200);
-      expect(response.json().accepted).toBe(true);
+      const conversation = await prisma.conversation.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId, isGroup: true },
+      });
+      expect(
+        await prisma.message.count({ where: { tenantId: ownerA.tenantId } }),
+      ).toBe(1);
 
-      const message = await prisma.message.findFirstOrThrow({
-        where: { tenantId: ownerA.tenantId, direction: 'INBOUND' },
+      const reaction = await prisma.messageReaction.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId },
       });
-      expect(message.type).toBe('REACTION');
-      expect(message.content).toBe('😂');
-      expect(message.senderName).toBe('Maria');
-      expect(message.senderId).toBe(participant);
-      expect(message.metadata).toMatchObject({
-        reaction: { targetMessageId: targetId, targetFromMe: true },
+      expect(reaction).toMatchObject({
+        conversationId: conversation.id,
+        targetExternalId: targetId,
+        targetFromMe: true,
+        reactorId: participant,
+        reactorName: 'Maria',
+        fromMe: false,
+        emoji: '😂',
       });
+
+      const listed = await listMessages(conversation.id, ownerA);
+      expect(listed[0].reactions).toEqual([
+        expect.objectContaining({ emoji: '😂', reactorName: 'Maria' }),
+      ]);
     });
 
-    it('attributes an individual reaction to the contact', async () => {
-      const instanceName = `reaction-direct-${randomUUID()}`;
+    it('attributes a reaction sent by the connected phone to the operator', async () => {
+      const instanceName = `reaction-self-${randomUUID()}`;
       await createInstance(ownerA, instanceName);
       const targetId = randomUUID();
 
+      await postWebhook(evolutionPayload(instanceName, targetId, 'Recebida'));
       await postWebhook(
-        reactionPayload(instanceName, randomUUID(), '❤️', {
-          remoteJid: '5511999999999@s.whatsapp.net',
-          pushName: 'Contato Teste',
+        reactionPayload(instanceName, randomUUID(), '👍', {
           targetId,
-          targetFromMe: true,
+          fromMe: true,
+          pushName: 'Atendente',
         }),
       );
 
-      const message = await prisma.message.findFirstOrThrow({
-        where: { tenantId: ownerA.tenantId, direction: 'INBOUND' },
+      const reaction = await prisma.messageReaction.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId },
       });
-      expect(message.type).toBe('REACTION');
-      expect(message.content).toBe('❤️');
-      expect(message.senderName).toBe('Contato Teste');
-      expect(message.senderId).toBe('5511999999999@s.whatsapp.net');
-      expect(message.metadata).toMatchObject({ reaction: { targetMessageId: targetId } });
+      expect(reaction).toMatchObject({
+        reactorId: 'self',
+        reactorName: null,
+        fromMe: true,
+        emoji: '👍',
+      });
+
+      const conversation = await prisma.conversation.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId },
+      });
+      const listed = await listMessages(conversation.id, ownerA);
+      expect(listed[0].reactions).toEqual([
+        expect.objectContaining({ emoji: '👍', fromMe: true }),
+      ]);
     });
 
-    it('does not leave an unknown message when the reaction is removed', async () => {
+    it('replaces the emoji when the same author changes the reaction', async () => {
+      const instanceName = `reaction-change-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      const targetId = randomUUID();
+
+      await postWebhook(evolutionPayload(instanceName, targetId, 'Mensagem'));
+      await postWebhook(reactionPayload(instanceName, randomUUID(), '❤️', { targetId }));
+      await postWebhook(reactionPayload(instanceName, randomUUID(), '🔥', { targetId }));
+
+      const reactions = await prisma.messageReaction.findMany({
+        where: { tenantId: ownerA.tenantId },
+      });
+      expect(reactions).toHaveLength(1);
+      expect(reactions[0].emoji).toBe('🔥');
+    });
+
+    it('removes the reaction when the provider sends an empty emoji', async () => {
       const instanceName = `reaction-remove-${randomUUID()}`;
       await createInstance(ownerA, instanceName);
+      const targetId = randomUUID();
 
+      await postWebhook(evolutionPayload(instanceName, targetId, 'Mensagem'));
+      await postWebhook(reactionPayload(instanceName, randomUUID(), '❤️', { targetId }));
       const response = await postWebhook(
-        reactionPayload(instanceName, randomUUID(), '', {
-          remoteJid: '5511999999999@s.whatsapp.net',
-        }),
+        reactionPayload(instanceName, randomUUID(), '', { targetId }),
       );
 
       expect(response.statusCode).toBe(200);
       expect(response.json().ignored).toBe('reaction_removed');
+      expect(
+        await prisma.messageReaction.count({ where: { tenantId: ownerA.tenantId } }),
+      ).toBe(0);
+      expect(await prisma.message.count({ where: { tenantId: ownerA.tenantId } })).toBe(1);
+    });
 
-      const messages = await prisma.message.findMany({
+    it('keeps a reaction whose target has not been synchronized yet', async () => {
+      const instanceName = `reaction-pending-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      const targetId = randomUUID();
+
+      await postWebhook(evolutionPayload(instanceName, randomUUID(), 'Outra mensagem'));
+      const conversation = await prisma.conversation.findFirstOrThrow({
         where: { tenantId: ownerA.tenantId },
       });
-      expect(messages).toHaveLength(0);
+
+      const response = await postWebhook(
+        reactionPayload(instanceName, randomUUID(), '😮', { targetId }),
+      );
+      expect(response.statusCode).toBe(200);
+      expect(response.json().accepted).toBe(true);
+      expect(await prisma.message.count({ where: { tenantId: ownerA.tenantId } })).toBe(1);
+
+      await postWebhook(evolutionPayload(instanceName, targetId, 'Chegou depois'));
+      const listed = await listMessages(conversation.id, ownerA);
+      const target = listed.find((message) => message.externalMessageId === targetId);
+      expect(target?.reactions).toEqual([
+        expect.objectContaining({ emoji: '😮' }),
+      ]);
+    });
+
+    it('does not create a conversation for a reaction without a known conversation', async () => {
+      const instanceName = `reaction-orphan-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+
+      const response = await postWebhook(
+        reactionPayload(instanceName, randomUUID(), '👍', { targetId: randomUUID() }),
+      );
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json().ignored).toBe('reaction_unknown_conversation');
+      expect(await prisma.conversation.count({ where: { tenantId: ownerA.tenantId } })).toBe(0);
+      expect(await prisma.message.count({ where: { tenantId: ownerA.tenantId } })).toBe(0);
+      expect(
+        await prisma.messageReaction.count({ where: { tenantId: ownerA.tenantId } }),
+      ).toBe(0);
+    });
+
+    it('is idempotent when the same reaction webhook is delivered twice', async () => {
+      const instanceName = `reaction-retry-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      const targetId = randomUUID();
+
+      await postWebhook(evolutionPayload(instanceName, targetId, 'Mensagem'));
+      const payload = reactionPayload(instanceName, randomUUID(), '👍', { targetId });
+      await postWebhook(payload);
+      const duplicate = await postWebhook(payload);
+
+      expect(duplicate.json().ignored).toBe('duplicate_event');
+      expect(
+        await prisma.messageReaction.count({ where: { tenantId: ownerA.tenantId } }),
+      ).toBe(1);
+      expect(await prisma.message.count({ where: { tenantId: ownerA.tenantId } })).toBe(1);
+    });
+
+    it('never attaches a reaction to a message from another tenant', async () => {
+      const instanceA = `reaction-tenant-a-${randomUUID()}`;
+      const instanceB = `reaction-tenant-b-${randomUUID()}`;
+      await createInstance(ownerA, instanceA);
+      await createInstance(ownerB, instanceB);
+      const targetId = randomUUID();
+
+      await postWebhook(evolutionPayload(instanceA, targetId, 'Mensagem do tenant A'));
+      await postWebhook(evolutionPayload(instanceB, randomUUID(), 'Mensagem do tenant B'));
+
+      const response = await postWebhook(
+        reactionPayload(instanceB, randomUUID(), '🔥', { targetId }),
+      );
+
+      expect(response.statusCode).toBe(200);
+      expect(
+        await prisma.messageReaction.count({ where: { tenantId: ownerB.tenantId } }),
+      ).toBe(1);
+      expect(
+        await prisma.messageReaction.count({ where: { tenantId: ownerA.tenantId } }),
+      ).toBe(0);
+
+      await postWebhook(evolutionPayload(instanceB, targetId, 'Mensagem do tenant B'));
+      const conversationA = await prisma.conversation.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId },
+      });
+      const conversationB = await prisma.conversation.findFirstOrThrow({
+        where: { tenantId: ownerB.tenantId },
+      });
+      const messagesA = await listMessages(conversationA.id, ownerA);
+      const messagesB = await listMessages(conversationB.id, ownerB);
+      expect(messagesA.flatMap((message) => message.reactions)).toHaveLength(0);
+      expect(
+        messagesB.find((message) => message.externalMessageId === targetId)?.reactions,
+      ).toEqual([expect.objectContaining({ emoji: '🔥' })]);
     });
   });
 
@@ -2435,18 +3211,28 @@ describe('WhatsApp attendance (integration)', () => {
     });
     const emit = vi.spyOn(app.get(RealtimeService), 'emitToTenant');
     try {
-      for (const state of ['composing', 'paused', 'composing', 'recording', 'unavailable']) {
+      for (const [providerState, expectedState] of [
+        ['composing', 'composing'],
+        ['paused', 'online'],
+        ['composing', 'composing'],
+        ['recording', 'recording'],
+        ['unavailable', 'offline'],
+      ] as const) {
         const response = await postWebhook({
           event: 'presence.update',
           instance: instanceName,
-          data: { id: jid, presences: { [jid]: { lastKnownPresence: state } } },
+          data: { id: jid, presences: { [jid]: { lastKnownPresence: providerState } } },
         });
         expect(response.statusCode).toBe(200);
-        expect(emit).toHaveBeenLastCalledWith(ownerA.tenantId, 'conversation.presence', {
-          conversationId: conversation.id,
-          participantId: jid,
-          state,
-        });
+        expect(emit).toHaveBeenLastCalledWith(
+          ownerA.tenantId,
+          'conversation.presence',
+          expect.objectContaining({
+            conversationId: conversation.id,
+            participantId: jid,
+            state: expectedState,
+          }),
+        );
       }
       expect(emit).toHaveBeenCalledTimes(5);
       await postWebhook({

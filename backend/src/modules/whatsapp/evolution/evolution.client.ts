@@ -28,6 +28,19 @@ export interface EvolutionConnectionState {
   state: string;
 }
 
+export interface EvolutionHistoryMessagesQuery {
+  from: Date;
+  to: Date;
+  page: number;
+  limit: number;
+}
+
+export interface EvolutionHistoryMessagesPage {
+  total: number;
+  pages: number;
+  records: Record<string, unknown>[];
+}
+
 export interface EvolutionSendResult {
   externalMessageId?: string;
   raw: unknown;
@@ -88,6 +101,7 @@ export class EvolutionClient {
   private readonly logger = new Logger(EvolutionClient.name);
   private readonly baseUrl?: string;
   private readonly apiKey?: string;
+  private readonly requestTimeoutMs: number;
 
   constructor(
     config: ConfigService<Env, true>,
@@ -95,6 +109,7 @@ export class EvolutionClient {
   ) {
     this.baseUrl = trimTrailingSlash(config.get('EVOLUTION_API_BASE_URL') ?? '');
     this.apiKey = config.get('EVOLUTION_API_KEY');
+    this.requestTimeoutMs = config.get('EVOLUTION_REQUEST_TIMEOUT_MS') ?? 20_000;
   }
 
   get configured(): boolean {
@@ -128,6 +143,35 @@ export class EvolutionClient {
 
   async deleteInstance(instanceName: string): Promise<unknown> {
     return this.request('DELETE', `/instance/delete/${encodeURIComponent(instanceName)}`);
+  }
+
+  async findMessages(
+    instanceName: string,
+    query: EvolutionHistoryMessagesQuery,
+  ): Promise<EvolutionHistoryMessagesPage> {
+    const raw = await this.request(
+      'POST',
+      `/chat/findMessages/${encodeURIComponent(instanceName)}`,
+      {
+        where: {
+          messageTimestamp: {
+            gte: query.from.toISOString(),
+            lte: query.to.toISOString(),
+          },
+        },
+        page: query.page,
+        offset: query.limit,
+      },
+    );
+
+    const data = isRecord(raw) && isRecord(raw.messages) ? raw.messages : null;
+    const records = data && Array.isArray(data.records) ? data.records.filter(isRecord) : [];
+
+    return {
+      total: data && typeof data.total === 'number' ? data.total : records.length,
+      pages: data && typeof data.pages === 'number' ? data.pages : 1,
+      records,
+    };
   }
 
   async instanceExists(instanceName: string): Promise<boolean> {
@@ -315,6 +359,26 @@ export class EvolutionClient {
     });
   }
 
+  /**
+   * Current participants of a group. Evolution v2 returns `{ participants }`;
+   * the records are intentionally kept loose because the provider includes
+   * Baileys-specific fields (`admin`, `phoneNumber`, `imgUrl`, ...).
+   */
+  async findGroupParticipants(instanceName: string, groupJid: string): Promise<unknown[]> {
+    const raw = await this.request(
+      'GET',
+      `/group/participants/${encodeURIComponent(instanceName)}?groupJid=${encodeURIComponent(groupJid)}`,
+    );
+
+    if (!isRecord(raw)) {
+      return [];
+    }
+    if (Array.isArray(raw.participants)) {
+      return raw.participants;
+    }
+    return Array.isArray(raw.data) ? raw.data : [];
+  }
+
   /** Address book of the connected number, used to import contacts into the CRM. */
   async findContacts(instanceName: string): Promise<EvolutionContact[]> {
     const raw = await this.request(
@@ -375,6 +439,7 @@ export class EvolutionClient {
           apikey: this.apiKey,
         },
         body: body !== undefined ? JSON.stringify(body) : undefined,
+        signal: AbortSignal.timeout(this.requestTimeoutMs),
       });
 
       if (!response.ok) {

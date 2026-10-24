@@ -46,8 +46,10 @@ class FakeEvolution {
   readonly webhooks: { instance: string; url: string; events: string[] }[] = [];
   readonly groupLookups: string[] = [];
   readonly avatarLookups: string[] = [];
-  createInstanceError?: { status: number };
+  createInstanceError?: { status: number; register?: boolean };
   createInstancePayload?: unknown;
+  connectPayload?: unknown;
+  historyRecords: Record<string, unknown>[] = [];
   updateMessageError?: { status: number };
   mediaBase64?: string;
   mediaError?: { status: number };
@@ -64,6 +66,9 @@ class FakeEvolution {
       return this.createInstancePayload;
     }
     if (this.createInstanceError) {
+      if (this.createInstanceError.register) {
+        this.instances.set(instanceName, 'close');
+      }
       throw new EvolutionRequestError('instance exists', this.createInstanceError.status);
     }
     this.created.push(instanceName);
@@ -78,6 +83,9 @@ class FakeEvolution {
   }
 
   async connect(instance: string) {
+    if (this.connectPayload !== undefined) {
+      return this.connectPayload;
+    }
     this.instances.set(instance, 'connecting');
     return { code: '2@existing', base64: 'ZXhpc3Rpbmc=' };
   }
@@ -91,6 +99,18 @@ class FakeEvolution {
     this.deleted.push(instance);
     this.instances.delete(instance);
     return {};
+  }
+
+  async findMessages(
+    _instance: string,
+    query: { page: number; limit: number },
+  ) {
+    const start = (query.page - 1) * query.limit;
+    return {
+      total: this.historyRecords.length,
+      pages: Math.max(1, Math.ceil(this.historyRecords.length / query.limit)),
+      records: this.historyRecords.slice(start, start + query.limit),
+    };
   }
 
   async instanceExists(instance: string) {
@@ -208,6 +228,8 @@ describe('WhatsApp attendance (integration)', () => {
     evolution.addressBook = [];
     evolution.createInstanceError = undefined;
     evolution.createInstancePayload = undefined;
+    evolution.connectPayload = undefined;
+    evolution.historyRecords = [];
     evolution.updateMessageError = undefined;
     evolution.mediaBase64 = undefined;
     evolution.mediaError = undefined;
@@ -661,6 +683,7 @@ describe('WhatsApp attendance (integration)', () => {
       expect(evolution.created).toContain(instanceName);
       const webhook = evolution.webhooks.find((item) => item.instance === instanceName);
       expect(webhook?.events).toEqual([
+        'MESSAGES_SET',
         'MESSAGES_UPSERT',
         'MESSAGES_UPDATE',
         'MESSAGES_EDITED',
@@ -672,10 +695,45 @@ describe('WhatsApp attendance (integration)', () => {
       expect(JSON.stringify(response.json())).not.toContain('super-secret-webhook');
     });
 
-    it('recreates an existing Evolution instance without duplicating the create', async () => {
+    it('reuses an existing Evolution instance without recreating it', async () => {
       const instanceName = `existing-${randomUUID()}`;
       const instanceId = await createInstance(ownerA, instanceName);
       evolution.instances.set(instanceName, 'close');
+
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/whatsapp/instances/${instanceId}/connect`,
+        headers: authHeaders(ownerA),
+      });
+
+      expect(response.statusCode).toBe(201);
+      expect(response.json().code).toBe('2@existing');
+      expect(evolution.deleted).not.toContain(instanceName);
+      expect(evolution.created).not.toContain(instanceName);
+    });
+
+    it('returns CONNECTED without a new ticket when the instance is already open', async () => {
+      const instanceName = `open-${randomUUID()}`;
+      const instanceId = await createInstance(ownerA, instanceName, 'CONNECTED');
+      evolution.instances.set(instanceName, 'open');
+
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/whatsapp/instances/${instanceId}/connect`,
+        headers: authHeaders(ownerA),
+      });
+
+      expect(response.statusCode).toBe(201);
+      expect(response.json()).toMatchObject({ status: 'CONNECTED', code: null });
+      expect(evolution.deleted).not.toContain(instanceName);
+      expect(evolution.created).not.toContain(instanceName);
+    });
+
+    it('recreates an existing instance only when it returns no usable ticket', async () => {
+      const instanceName = `stale-${randomUUID()}`;
+      const instanceId = await createInstance(ownerA, instanceName);
+      evolution.instances.set(instanceName, 'close');
+      evolution.connectPayload = { error: true, message: 'instance does not exist' };
 
       const response = await app.inject({
         method: 'POST',
@@ -692,7 +750,7 @@ describe('WhatsApp attendance (integration)', () => {
     it('reuses a concurrent instance when create loses the race', async () => {
       const instanceName = `race-${randomUUID()}`;
       const instanceId = await createInstance(ownerA, instanceName);
-      evolution.createInstanceError = { status: 409 };
+      evolution.createInstanceError = { status: 409, register: true };
 
       const response = await app.inject({
         method: 'POST',
@@ -946,6 +1004,142 @@ describe('WhatsApp attendance (integration)', () => {
 
       // The messaging bot no longer answers automatically.
       expect(evolution.sent).toHaveLength(0);
+    });
+
+    it('imports recent messages.set history, filters old messages and deduplicates', async () => {
+      const instanceName = `history-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      const now = Math.floor(Date.now() / 1000);
+      const old = now - 60 * 24 * 60 * 60;
+      const recentId = randomUUID();
+      const oldId = randomUUID();
+      const groupId = randomUUID();
+      const payload = {
+        event: 'messages.set',
+        instance: instanceName,
+        isLatest: true,
+        progress: 100,
+        data: [
+          {
+            key: { remoteJid: '5511977777777@s.whatsapp.net', fromMe: false, id: recentId },
+            pushName: 'Histórico',
+            message: { conversation: 'mensagem recente do histórico' },
+            messageTimestamp: now,
+          },
+          {
+            key: { remoteJid: '5511977777777@s.whatsapp.net', fromMe: false, id: oldId },
+            pushName: 'Histórico',
+            message: { conversation: 'mensagem antiga' },
+            messageTimestamp: old,
+          },
+          {
+            key: {
+              remoteJid: '120363000000000001@g.us',
+              fromMe: false,
+              id: groupId,
+              participant: '5511888888888@s.whatsapp.net',
+            },
+            pushName: 'Maria',
+            message: { conversation: 'mensagem de grupo do histórico' },
+            messageTimestamp: now,
+          },
+        ],
+      };
+
+      const response = await postWebhook(payload);
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json().accepted).toBe(true);
+
+      const messages = await prisma.message.findMany({ where: { tenantId: ownerA.tenantId } });
+      expect(messages).toHaveLength(2);
+      expect(messages.map((message) => message.content)).toEqual(
+        expect.arrayContaining(['mensagem recente do histórico', 'mensagem de grupo do histórico']),
+      );
+      expect(messages.some((message) => message.content === 'mensagem antiga')).toBe(false);
+
+      await postWebhook(payload);
+      expect(await prisma.message.count({ where: { tenantId: ownerA.tenantId } })).toBe(2);
+    });
+
+    it('does not move an active conversation back in time when importing older history', async () => {
+      const instanceName = `history-order-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      await postWebhook(evolutionPayload(instanceName, randomUUID(), 'mensagem atual'));
+      const before = await prisma.conversation.findFirst({
+        where: { tenantId: ownerA.tenantId },
+        select: { id: true, lastMessageAt: true },
+      });
+
+      const old = Math.floor(Date.now() / 1000) - 60 * 60;
+      await postWebhook({
+        event: 'messages.set',
+        instance: instanceName,
+        data: [
+          {
+            key: { remoteJid: '5511999999999@s.whatsapp.net', fromMe: false, id: randomUUID() },
+            pushName: 'Contato Teste',
+            message: { conversation: 'mensagem de uma hora atrás' },
+            messageTimestamp: old,
+          },
+        ],
+      });
+
+      const after = await prisma.conversation.findUnique({
+        where: { id: before?.id },
+        select: { lastMessageAt: true },
+      });
+      expect(after?.lastMessageAt?.toISOString()).toBe(before?.lastMessageAt?.toISOString());
+    });
+
+    it('backfills missing messages from Evolution and keeps tenant isolation', async () => {
+      const instanceName = `backfill-${randomUUID()}`;
+      const instanceId = await createInstance(ownerA, instanceName);
+      const now = Math.floor(Date.now() / 1000);
+      evolution.historyRecords = [
+        {
+          key: { remoteJid: '5511966666666@s.whatsapp.net', fromMe: false, id: randomUUID() },
+          pushName: 'Backfill',
+          message: { conversation: 'recuperada individual' },
+          messageTimestamp: now,
+        },
+        {
+          key: {
+            remoteJid: '120363000000000002@g.us',
+            fromMe: false,
+            id: randomUUID(),
+            participant: '5511888888888@s.whatsapp.net',
+          },
+          pushName: 'Maria',
+          message: { conversation: 'recuperada de grupo' },
+          messageTimestamp: now,
+        },
+      ];
+
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/whatsapp/instances/${instanceId}/backfill`,
+        headers: authHeaders(ownerA),
+        payload: { days: 7, maxMessages: 100 },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({ scanned: 2, imported: 2, skipped: 0, failed: 0 });
+
+      const messages = await prisma.message.findMany({ where: { tenantId: ownerA.tenantId } });
+      expect(messages).toHaveLength(2);
+      const groupConversation = await prisma.conversation.findFirst({
+        where: { tenantId: ownerA.tenantId, externalContactId: '120363000000000002@g.us' },
+      });
+      expect(groupConversation?.isGroup).toBe(true);
+
+      const foreign = await app.inject({
+        method: 'POST',
+        url: `/api/whatsapp/instances/${instanceId}/backfill`,
+        headers: authHeaders(ownerB),
+        payload: { days: 7 },
+      });
+      expect(foreign.statusCode).toBe(404);
     });
 
     it('ignores inbound messages from a blocked contact', async () => {

@@ -210,6 +210,20 @@ export class WhatsAppInstancesService implements OnModuleInit {
     return toView(instance);
   }
 
+  async findResolved(id: string): Promise<ResolvedInstance> {
+    const { tenantId } = this.tenantContext.requireContext();
+    const instance = await this.prisma.whatsAppInstance.findFirst({
+      where: { id, tenantId },
+      select: { id: true, tenantId: true, instanceName: true, status: true },
+    });
+
+    if (!instance) {
+      throw new WhatsAppInstanceNotFoundError();
+    }
+
+    return instance;
+  }
+
   async create(dto: CreateWhatsAppInstanceDto): Promise<WhatsAppInstanceView> {
     const { tenantId } = this.tenantContext.requireContext();
 
@@ -296,10 +310,25 @@ export class WhatsAppInstancesService implements OnModuleInit {
   async connect(id: string): Promise<WhatsAppConnectionTicket> {
     const instance = await this.requireInstanceById(id);
 
-    const raw = await this.ensureInstanceAndConnect(instance.instanceName);
-    const ticket = extractConnectionTicket(raw);
+    const attempt = await this.ensureInstanceAndConnect(instance.instanceName);
+    if (attempt.state === 'open') {
+      await this.prisma.whatsAppInstance.update({
+        where: { id },
+        data: { status: WhatsAppInstanceStatus.CONNECTED },
+      });
+      await this.tryConfigureWebhook(instance);
 
-    if (!ticket.qrCodeBase64 && !ticket.pairingCode && !ticket.code) {
+      return {
+        status: WhatsAppInstanceStatus.CONNECTED,
+        qrCodeBase64: null,
+        pairingCode: null,
+        code: null,
+      };
+    }
+
+    const ticket = extractConnectionTicket(attempt.raw);
+
+    if (!hasConnectionTicket(ticket)) {
       throw new EvolutionRequestError('Evolution API did not return a connection ticket');
     }
 
@@ -425,11 +454,11 @@ export class WhatsAppInstancesService implements OnModuleInit {
     };
   }
 
-  private async ensureInstanceAndConnect(instanceName: string): Promise<unknown> {
+  private async ensureInstanceAndConnect(instanceName: string): Promise<ConnectionAttempt> {
     if (!(await this.evolution.instanceExists(instanceName))) {
       try {
         // The create response already carries the QR code for a fresh instance.
-        return await this.evolution.createInstance(instanceName);
+        return { raw: await this.evolution.createInstance(instanceName), state: 'close' };
       } catch (error) {
         if (!isEvolutionAlreadyExists(error)) {
           throw error;
@@ -437,14 +466,34 @@ export class WhatsAppInstancesService implements OnModuleInit {
 
         // A concurrent request created it between the existence check and the
         // create call. Reuse the fresh instance instead of deleting it.
-        return this.evolution.connect(instanceName);
       }
     }
 
-    // Evolution 2.4.0-rc2 does not handle duplicate creates idempotently: it
-    // replaces the in-memory instance with a new id and poisons the session.
-    // Recreating from scratch is the only reliable way to obtain a fresh
-    // connection ticket for an instance that already exists.
+    const providerState = await this.evolution.getConnectionState(instanceName);
+    const state = providerState.state.toLowerCase();
+
+    if (state === 'open') {
+      return { raw: null, state };
+    }
+
+    try {
+      const raw = await this.evolution.connect(instanceName);
+      if (hasConnectionTicket(extractConnectionTicket(raw))) {
+        return { raw, state };
+      }
+    } catch (error) {
+      if (!isEvolutionMissing(error)) {
+        throw error;
+      }
+    }
+
+    // The instance exists but did not return a usable ticket (stale in-memory
+    // session, missing credentials or an error payload). Only in this case a
+    // clean recreation is justified.
+    return { raw: await this.recreateEvolutionInstance(instanceName), state: 'close' };
+  }
+
+  private async recreateEvolutionInstance(instanceName: string): Promise<unknown> {
     await this.removeFromEvolution(instanceName);
     await this.waitForEvolutionInstance(instanceName, false);
     return this.evolution.createInstance(instanceName);
@@ -525,10 +574,20 @@ export class WhatsAppInstancesService implements OnModuleInit {
     const baseUrl = `${trimTrailingSlash(publicUrl)}/${prefix}/webhooks/evolution`;
     const webhookUrl = `${baseUrl}?token=${encodeURIComponent(secret)}`;
 
-    await this.evolution.setWebhook(instance.instanceName, webhookUrl, WEBHOOK_EVENTS);
+    await this.evolution.setWebhook(
+      instance.instanceName,
+      webhookUrl,
+      this.webhookEvents(),
+    );
 
     // Never return the secret embedded in the URL.
     return { webhookConfigured: true, webhookUrl: baseUrl };
+  }
+
+  private webhookEvents(): string[] {
+    return this.config.get('WHATSAPP_HISTORY_IMPORT_ENABLED')
+      ? ['MESSAGES_SET', ...WEBHOOK_EVENTS]
+      : WEBHOOK_EVENTS;
   }
 
   private resolveWebhookSecret(credentialsEncrypted: string | null): string {
@@ -690,11 +749,27 @@ function isEvolutionNotFound(error: unknown): boolean {
   return error instanceof EvolutionRequestError && error.httpStatus === 404;
 }
 
+function isEvolutionMissing(error: unknown): boolean {
+  return (
+    error instanceof EvolutionRequestError &&
+    (error.httpStatus === 400 || error.httpStatus === 404)
+  );
+}
+
+function hasConnectionTicket(ticket: ConnectionTicketParts): boolean {
+  return Boolean(ticket.qrCodeBase64 || ticket.pairingCode || ticket.code);
+}
+
 function mapNameConflict(error: unknown): unknown {
   if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
     return new WhatsAppInstanceNameConflictError();
   }
   return error;
+}
+
+interface ConnectionAttempt {
+  raw: unknown;
+  state: string;
 }
 
 interface ConnectionTicketParts {

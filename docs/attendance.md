@@ -95,6 +95,7 @@ POST   /webhook/set/{instanceName}        body { webhook: { enabled, url, events
 GET    /group/findGroupInfos/{instanceName}?groupJid={jid}
 POST   /chat/fetchProfilePictureUrl/{instanceName}   body { number }
 POST   /chat/findContacts/{instanceName}             agenda do número (importação de contatos)
+POST   /chat/findMessages/{instanceName}             histórico paginado por período
 ```
 
 `number` aceita tanto telefone (dígitos) quanto JID completo de grupo (`...@g.us`). O envio
@@ -115,23 +116,26 @@ humano para grupos usa o JID completo; para contatos, apenas os dígitos.
 - Conversas de grupo criadas antes desta funcionalidade não têm nome/foto no banco. Elas são
   atualizadas automaticamente no boot (`backfill` limitado, best-effort) e podem ser forçadas
   pela ação **Atualizar dados do grupo** (`POST /api/conversations/:id/refresh-group`).
-- Instâncias existentes precisam de **Reconfigurar webhook** para receber `GROUPS_UPSERT`.
+- Instâncias existentes precisam de **Reconfigurar webhook** (ou de um restart do backend, que reconcilia os webhooks) para receber eventos adicionados posteriormente, como `GROUPS_UPSERT` e `MESSAGES_SET`.
 
 ### Conectar um número (UI)
 
 Em **Configurações → WhatsApp** (`/configuracoes?tab=whatsapp`):
 
 1. **Nova instância** (nome, `instanceName`, telefone, credenciais opcionais).
-2. **Conectar** → o backend consulta `GET /instance/fetchInstances`.
+2. **Conectar** → o backend consulta `GET /instance/fetchInstances` e o estado atual.
    - Se a instância **não existe**, cria com `POST /instance/create`.
-   - Se **já existe**, remove a instância antiga com `DELETE /instance/delete` e aguarda a
-     confirmação de remoção antes de recriá-la. Isso evita o bug da Evolution `2.4.0-rc2`, que
-     não é idempotente no `create` duplicado e deixa a sessão inconsistente.
+   - Se **já existe e está `open`**, reutiliza: grava `CONNECTED` e não gera QR nem recria.
+   - Se **já existe e está `close`/`connecting`**, reutiliza via `GET /instance/connect` e devolve
+     o QR/ticket atual. Não há remoção nem recriação.
+   - Só recria (`DELETE /instance/delete` + `POST /instance/create`) quando a tentativa de reuso
+     não devolve ticket utilizável (sessão em memória quebrada ou resposta de erro).
    - O CRM só grava `CONNECTING` quando recebe um **ticket válido** (QR base64, pairing code ou
      código). Respostas `{ error: true }` da Evolution são tratadas como falha.
 3. A tela exibe o QR, permite **gerar novo QR** e faz *poll* de status até **Conectado**.
 4. O **webhook é configurado automaticamente** (eventos `MESSAGES_UPSERT`, `MESSAGES_UPDATE`,
-   `MESSAGES_EDITED`, `GROUPS_UPSERT`, `PRESENCE_UPDATE` e `CONNECTION_UPDATE`) com o token do
+   `MESSAGES_EDITED`, `GROUPS_UPSERT`, `PRESENCE_UPDATE` e `CONNECTION_UPDATE`; `MESSAGES_SET`
+   somente quando a importação automática de histórico está habilitada) com o token do
    segredo (da instância ou `EVOLUTION_WEBHOOK_SECRET`); há também a ação **Reconfigurar webhook**.
    No boot do backend o webhook é **reconciliado** para todas as instâncias conectadas/ativas, de
    modo que mudar `PUBLIC_API_URL` se autocorrige no próximo restart sem depender de reconfiguração
@@ -140,6 +144,31 @@ Em **Configurações → WhatsApp** (`/configuracoes?tab=whatsapp`):
    `GET /instance/connectionState` confirmar `close`/`disconnected`.
 6. **Excluir** remove a instância na Evolution com `DELETE /instance/delete` antes de apagar a
    linha local; falhas de rede mantêm a linha local para permitir nova tentativa.
+
+### Histórico e recuperação de mensagens
+
+- Por padrão, a importação automática de `MESSAGES_SET` fica **desligada**
+  (`WHATSAPP_HISTORY_IMPORT_ENABLED=false`). O CRM recebe mensagens novas por `MESSAGES_UPSERT` e
+  recupera lacunas pelo backfill. Isso evita a "chuva" de histórico a cada reconexão.
+- Se habilitada (`WHATSAPP_HISTORY_IMPORT_ENABLED=true`), o `MESSAGES_SET` é assinado e processado
+  com o mesmo pipeline de `MESSAGES_UPSERT`, importando apenas mensagens dentro de
+  `WHATSAPP_HISTORY_IMPORT_DAYS` (padrão 30 dias). Mensagens mais antigas são ignoradas.
+- A ingestão é deduplicada por `(tenantId, externalMessageId)` e pelo contexto da instância.
+  Webhook e backfill podem rodar simultaneamente sem duplicar mensagens.
+- Mensagens recentes recuperadas do histórico emitem eventos realtime; mensagens antigas são
+  persistidas silenciosamente e emitem apenas `conversation.updated`. A importação histórica não
+  move `Conversation.lastMessageAt` para trás.
+- Mídia e transcrição automática são processadas apenas para mensagens recentes do histórico, para
+  não enfileirar milhares de downloads/transcrições antigas.
+- Mensagens individuais e de grupos usam o mesmo fluxo; grupos mantêm `isGroup`, participante e
+  nome do remetente.
+- **Backfill manual:** `POST /api/whatsapp/instances/:id/backfill` (OWNER/ADMIN), body opcional
+  `{ "days": 30, "maxMessages": 1000 }`. A rotina consulta `POST /chat/findMessages` paginado,
+  importa o que falta e retorna `{ scanned, imported, skipped, failed, pages }`.
+- Logs: `whatsapp.history.batch`, `whatsapp.history.import`, `whatsapp.history.backfill`,
+  `whatsapp.message.persisted` e `whatsapp.history.message.failed` (sem conteúdo sensível).
+- Instâncias existentes recebem `MESSAGES_SET` na reconciliação de webhook do boot ou pela ação
+  **Reconfigurar webhook**.
 
 ### Importação automática de contatos
 

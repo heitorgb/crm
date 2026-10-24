@@ -43,6 +43,16 @@ export interface WebhookIngestResult {
   messageId?: string;
 }
 
+export interface HistoryIngestResult {
+  received: number;
+  imported: number;
+  skipped: number;
+  failed: number;
+  conversations: number;
+}
+
+const HISTORY_REALTIME_WINDOW_MS = 15 * 60 * 1000;
+
 @Injectable()
 export class WebhookService {
   private readonly logger = new Logger(WebhookService.name);
@@ -138,6 +148,18 @@ export class WebhookService {
       return { accepted: true };
     }
 
+    // History sync batches are large and idempotent at the message level.
+    // Handling them before `recordEvent` avoids storing the whole batch payload
+    // in webhook_events while still importing every missing message.
+    if (eventType === 'messages.set' || eventType === 'MESSAGES_SET') {
+      if (!this.config.get('WHATSAPP_HISTORY_IMPORT_ENABLED')) {
+        return { accepted: true, ignored: 'history_import_disabled' };
+      }
+
+      await this.handleMessagesSet(instance, payload);
+      return { accepted: true };
+    }
+
     const externalEventId = computeEventId(payload, eventType, instanceName);
 
     const duplicate = await this.recordEvent({
@@ -179,26 +201,164 @@ export class WebhookService {
     }
 
     const data = isRecord(payload.data) ? payload.data : null;
-    const key = data && isRecord(data.key) ? data.key : null;
+    if (!data) {
+      return { accepted: true, ignored: 'invalid_payload' };
+    }
+
+    return this.ingestMessage(instance, data, { source: 'messages.upsert' });
+  }
+
+  private async handleMessagesSet(
+    instance: ResolvedInstance,
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    const records = toArray(payload.data).filter(isRecord);
+    const isLatest = payload.isLatest === true;
+    const progress = typeof payload.progress === 'number' ? payload.progress : null;
+    const result = await this.ingestHistoryMessages(instance, records, {
+      cutoff: this.historyCutoff(),
+      emitRecentRealtime: true,
+      source: 'messages.set',
+    });
+
+    this.logger.log(
+      `whatsapp.history.batch ${JSON.stringify({
+        instance: instance.instanceName,
+        received: result.received,
+        imported: result.imported,
+        skipped: result.skipped,
+        failed: result.failed,
+        conversations: result.conversations,
+        isLatest,
+        progress,
+      })}`,
+    );
+  }
+
+  /**
+   * Imports history messages with the same idempotent pipeline used by live
+   * events. Messages already stored by (tenantId, externalMessageId) are
+   * skipped, so a webhook batch and a manual backfill can overlap safely.
+   */
+  async ingestHistoryMessages(
+    instance: ResolvedInstance,
+    records: unknown[],
+    options: { cutoff: number; emitRecentRealtime?: boolean; source: string },
+  ): Promise<HistoryIngestResult> {
+    const ordered = records
+      .filter(isRecord)
+      .sort(
+        (left, right) =>
+          (readMessageTimestamp(left)?.getTime() ?? 0) -
+          (readMessageTimestamp(right)?.getTime() ?? 0),
+      );
+
+    const conversations = new Set<string>();
+    let imported = 0;
+    let skipped = 0;
+    let failed = 0;
+
+    for (const record of ordered) {
+      if (!isEligibleHistoryRecord(record, options.cutoff)) {
+        skipped += 1;
+        continue;
+      }
+
+      const occurredAt = readMessageTimestamp(record);
+      const recent =
+        occurredAt !== null &&
+        occurredAt.getTime() >= Date.now() - HISTORY_REALTIME_WINDOW_MS;
+
+      try {
+        const result = await this.ingestMessage(instance, record, {
+          history: true,
+          emitRealtime: Boolean(options.emitRecentRealtime && recent),
+          source: options.source,
+        });
+
+        if (result.conversationId) {
+          conversations.add(result.conversationId);
+        }
+
+        if (result.ignored) {
+          skipped += 1;
+        } else {
+          imported += 1;
+        }
+      } catch (error) {
+        failed += 1;
+        this.logger.warn(
+          `whatsapp.history.message.failed ${JSON.stringify({
+            instance: instance.instanceName,
+            source: options.source,
+            messageId:
+              isRecord(record.key) && typeof record.key.id === 'string' ? record.key.id : null,
+            error: error instanceof Error ? error.message : 'unknown',
+          })}`,
+        );
+      }
+    }
+
+    for (const conversationId of conversations) {
+      this.realtime.emitToTenant(instance.tenantId, 'conversation.updated', {
+        conversationId,
+      });
+    }
+
+    this.logger.log(
+      `whatsapp.history.import ${JSON.stringify({
+        instance: instance.instanceName,
+        source: options.source,
+        received: ordered.length,
+        imported,
+        skipped,
+        failed,
+        conversations: conversations.size,
+      })}`,
+    );
+
+    return {
+      received: ordered.length,
+      imported,
+      skipped,
+      failed,
+      conversations: conversations.size,
+    };
+  }
+
+  private historyCutoff(): number {
+    const days = this.config.get('WHATSAPP_HISTORY_IMPORT_DAYS') ?? 30;
+    return Date.now() - days * 24 * 60 * 60 * 1000;
+  }
+
+  private async ingestMessage(
+    instance: ResolvedInstance,
+    data: Record<string, unknown>,
+    options: { history?: boolean; emitRealtime?: boolean; source: string },
+  ): Promise<WebhookIngestResult> {
+    const key = isRecord(data.key) ? data.key : null;
 
     // Unwrap container envelopes (deviceSent/ephemeral/view-once/...) up front so
     // both edit detection and type/content extraction see the real inner message.
     // An edit sent from the user's own phone reaches the linked device wrapped in
     // a container; inspecting only `data.message` would miss it and persist a
     // bogus `[unknown]` (this was the production symptom).
-    const rawMessage = data?.message;
-    const incomingType = readString(data?.messageType);
+    const rawMessage = data.message;
+    const incomingType = readString(data.messageType);
     const { message, viewOnce } = unwrapViewOnce(rawMessage);
     const isViewOnce = viewOnce || isViewOnceMessageType(incomingType);
 
     // Evolution/Baileys report an edit as `messages.upsert` (protocolMessage or an
     // `editedMessage` wrapper, possibly inside a container) when its own edit
     // detection misses the envelope. Route it to the in-place update instead of
-    // creating a bogus `[unknown]`.
-    const upsertEdit = data ? parseMessageEdit(data, message) : null;
-    if (upsertEdit) {
-      await this.applyMessageEdit(instance, upsertEdit);
-      return { accepted: true, ignored: 'message_edited' };
+    // creating a bogus `[unknown]`. History may legitimately contain old edit
+    // protocol messages; they are ignored instead of rewriting current content.
+    if (!options.history) {
+      const upsertEdit = parseMessageEdit(data, message);
+      if (upsertEdit) {
+        await this.applyMessageEdit(instance, upsertEdit);
+        return { accepted: true, ignored: 'message_edited' };
+      }
     }
 
     const fromMe = key?.fromMe === true;
@@ -225,7 +385,7 @@ export class WebhookService {
     const participant = readString(key?.participant);
     const participantAlt = readString(key?.participantAlt);
     const remoteJidAlt = readString(key?.remoteJidAlt);
-    const pushName = readString(data?.pushName);
+    const pushName = readString(data.pushName);
 
     // WhatsApp migrated some accounts to LID addressing: the dialable PN may be
     // delivered silently but fail, while the LID is what actually reaches the
@@ -271,6 +431,11 @@ export class WebhookService {
     const externalMessageId = readString(key?.id);
     const quoted = await this.resolveInboundQuoted(instance.tenantId, message);
     const contacts = extractContacts(message);
+    const occurredAt = readMessageTimestamp(data);
+    const recent =
+      occurredAt !== null &&
+      occurredAt.getTime() >= Date.now() - HISTORY_REALTIME_WINDOW_MS;
+    const processRecentMedia = !options.history || recent;
 
     const senderId = fromMe
       ? null
@@ -290,7 +455,8 @@ export class WebhookService {
       externalMessageId,
       senderId,
       senderName,
-      occurredAt: fromMe ? readMessageTimestamp(data) : null,
+      occurredAt,
+      history: options.history === true,
       metadata: {
         remoteJid,
         pushName,
@@ -308,7 +474,8 @@ export class WebhookService {
         ...(contacts ? { contacts } : {}),
         ...(linkPreview ? { linkPreview } : {}),
         ...(audioDurationSeconds !== null ? { audioDurationSeconds } : {}),
-        instanceName,
+        instanceName: instance.instanceName,
+        ...(options.history ? { historyImport: { source: options.source } } : {}),
       },
     });
 
@@ -329,7 +496,7 @@ export class WebhookService {
     }
 
     // View-once media must never be downloaded or exposed: the UI only renders the privacy notice.
-    if (isMediaType(type) && !isViewOnce) {
+    if (isMediaType(type) && !isViewOnce && processRecentMedia) {
       await this.queue.enqueue(JOB_NAMES.MEDIA_PROCESS, {
         tenantId: instance.tenantId,
         messageId: persisted.id,
@@ -340,7 +507,12 @@ export class WebhookService {
     // the chat can show "aguardando". Without it, no row is created and the
     // audio exposes a manual action. It is best-effort: a transcription
     // bookkeeping failure must never break the normal message receipt.
-    if (type === MessageType.AUDIO && direction === MessageDirection.INBOUND && !isViewOnce) {
+    if (
+      type === MessageType.AUDIO &&
+      direction === MessageDirection.INBOUND &&
+      !isViewOnce &&
+      processRecentMedia
+    ) {
       try {
         if (await this.transcriptionSettings.isAutoEnabled(instance.tenantId)) {
           await this.prisma.messageTranscription.upsert({
@@ -362,20 +534,33 @@ export class WebhookService {
       }
     }
 
-    this.realtime.emitToConversation(instance.tenantId, conversation.id, 'message.created', {
-      conversationId: conversation.id,
-      messageId: persisted.id,
-      direction,
-    });
-    this.realtime.emitToTenant(instance.tenantId, 'message.created', {
-      conversationId: conversation.id,
-      messageId: persisted.id,
-      direction,
-    });
-    this.realtime.emitToTenant(instance.tenantId, 'conversation.updated', {
-      conversationId: conversation.id,
-      status: conversation.status,
-    });
+    if (options.emitRealtime !== false) {
+      this.realtime.emitToConversation(instance.tenantId, conversation.id, 'message.created', {
+        conversationId: conversation.id,
+        messageId: persisted.id,
+        direction,
+      });
+      this.realtime.emitToTenant(instance.tenantId, 'message.created', {
+        conversationId: conversation.id,
+        messageId: persisted.id,
+        direction,
+      });
+      this.realtime.emitToTenant(instance.tenantId, 'conversation.updated', {
+        conversationId: conversation.id,
+        status: conversation.status,
+      });
+    }
+
+    this.logger.debug(
+      `whatsapp.message.persisted ${JSON.stringify({
+        instance: instance.instanceName,
+        source: options.source,
+        messageId: persisted.id,
+        externalMessageId,
+        conversationId: conversation.id,
+        history: options.history === true,
+      })}`,
+    );
 
     return {
       accepted: true,
@@ -795,8 +980,11 @@ export class WebhookService {
     senderId: string | null;
     senderName: string | null;
     occurredAt: Date | null;
+    history?: boolean;
     metadata: Record<string, unknown>;
   }): Promise<{ id: string; created: boolean } | null> {
+    const occurredAt = input.occurredAt ?? new Date();
+
     if (input.direction === MessageDirection.OUTBOUND && input.externalMessageId) {
       const existing = await this.prisma.message.findFirst({
         where: { tenantId: input.tenantId, externalMessageId: input.externalMessageId },
@@ -833,20 +1021,34 @@ export class WebhookService {
           senderId: input.senderId,
           senderName: input.senderName,
           metadata: input.metadata as Prisma.InputJsonValue,
-          ...(input.occurredAt ? { occurredAt: input.occurredAt } : {}),
+          occurredAt,
         },
         select: { id: true },
       });
 
-      await this.prisma.conversation.update({
-        where: { id: input.conversationId },
-        // A new inbound message returns an archived conversation to the inbox;
-        // an outbound one (sent by the user from their phone) must not.
-        data: {
-          lastMessageAt: new Date(),
-          ...(input.direction === MessageDirection.INBOUND ? { isArchived: false } : {}),
-        },
-      });
+      // A new inbound message returns an archived conversation to the inbox;
+      // an outbound one (sent by the user from their phone) must not. Historical
+      // messages only move `lastMessageAt` forward, so importing old history
+      // does not bump active conversations to the top of the inbox.
+      const conversationData = {
+        lastMessageAt: occurredAt,
+        ...(input.direction === MessageDirection.INBOUND ? { isArchived: false } : {}),
+      };
+
+      if (input.history) {
+        await this.prisma.conversation.updateMany({
+          where: {
+            id: input.conversationId,
+            OR: [{ lastMessageAt: null }, { lastMessageAt: { lt: occurredAt } }],
+          },
+          data: conversationData,
+        });
+      } else {
+        await this.prisma.conversation.update({
+          where: { id: input.conversationId },
+          data: conversationData,
+        });
+      }
 
       return { id: message.id, created: true };
     } catch (error) {
@@ -897,6 +1099,22 @@ export class WebhookService {
 
     return { messageId, externalId, authorName, authorJid, fromMe, content, type };
   }
+}
+
+function isEligibleHistoryRecord(record: Record<string, unknown>, cutoff: number): boolean {
+  const key = isRecord(record.key) ? record.key : null;
+  const messageId = key ? readString(key.id) : null;
+  const remoteJid = key ? readString(key.remoteJid) : null;
+  if (!messageId || !remoteJid || !isRecord(record.message)) {
+    return false;
+  }
+
+  if (remoteJid === 'status@broadcast' || remoteJid.endsWith('@newsletter')) {
+    return false;
+  }
+
+  const occurredAt = readMessageTimestamp(record);
+  return occurredAt !== null && occurredAt.getTime() >= cutoff;
 }
 
 function computeEventId(

@@ -214,6 +214,28 @@ describe('WebhookService messages.update', () => {
   });
 });
 
+describe('WebhookService messages.set', () => {
+  it('ignores history batches while automatic history import is disabled', async () => {
+    const { service, prisma, instances } = createHarness();
+
+    const result = await service.ingestEvolution({
+      event: 'messages.set',
+      instance: 'inst-1',
+      data: [
+        {
+          key: { remoteJid: '5511999999999@s.whatsapp.net', fromMe: false, id: 'ext-1' },
+          message: { conversation: 'histórico' },
+          messageTimestamp: 1_700_000_000,
+        },
+      ],
+    });
+
+    expect(result).toEqual({ accepted: true, ignored: 'history_import_disabled' });
+    expect(instances.resolveByInstanceName).toHaveBeenCalledWith('inst-1');
+    expect(prisma.webhookEvent.create).not.toHaveBeenCalled();
+  });
+});
+
 describe('WebhookService connection.update', () => {
   it('persists the provider state and broadcasts the change', async () => {
     const { service, instances, realtime } = createHarness();

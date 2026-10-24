@@ -34,6 +34,7 @@ import { BulkMediaModule } from './modules/bulk-media/bulk-media.module.js';
 import { ScheduledMessagesModule } from './modules/scheduled-messages/scheduled-messages.module.js';
 import { LinkPreviewsModule } from './modules/link-previews/link-previews.module.js';
 import { WebhooksModule } from './modules/webhooks/webhooks.module.js';
+import { WhatsAppHistoryModule } from './modules/whatsapp-history/whatsapp-history.module.js';
 import { BillingModule } from './modules/billing/billing.module.js';
 import { IntegrationsWebhooksModule } from './modules/integrations/webhooks/integrations-webhooks.module.js';
 import { LeadsModule } from './modules/leads/leads.module.js';
@@ -83,6 +84,7 @@ import { TranscriptionModule } from './modules/transcription/transcription.modul
     ScheduledMessagesModule,
     LinkPreviewsModule,
     WebhooksModule,
+    WhatsAppHistoryModule,
     BillingModule,
     IntegrationsWebhooksModule,
     LeadsModule,

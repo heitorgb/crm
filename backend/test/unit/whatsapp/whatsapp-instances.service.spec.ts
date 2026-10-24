@@ -138,6 +138,34 @@ describe('WhatsAppInstancesService webhook reconciliation', () => {
     );
   });
 
+  it('subscribes to MESSAGES_SET when history import is explicitly enabled', async () => {
+    const { service, prisma, evolution } = createHarness({
+      PUBLIC_API_URL: 'https://crm.example',
+      EVOLUTION_WEBHOOK_SECRET: 'secret',
+      API_PREFIX: 'api',
+      WHATSAPP_HISTORY_IMPORT_ENABLED: 'true',
+    });
+    prisma.whatsAppInstance.findMany.mockResolvedValue([
+      { id: 'i1', tenantId: 't1', instanceName: 'inst-1', credentialsEncrypted: null },
+    ]);
+
+    await reconcile(service);
+
+    expect(evolution.setWebhook).toHaveBeenCalledWith(
+      'inst-1',
+      'https://crm.example/api/webhooks/evolution?token=secret',
+      [
+        'MESSAGES_SET',
+        'MESSAGES_UPSERT',
+        'MESSAGES_UPDATE',
+        'MESSAGES_EDITED',
+        'GROUPS_UPSERT',
+        'PRESENCE_UPDATE',
+        'CONNECTION_UPDATE',
+      ],
+    );
+  });
+
   it('skips reconciliation when Evolution is not configured', async () => {
     const { service, prisma, evolution } = createHarness(
       { PUBLIC_API_URL: 'https://crm.example' },
@@ -337,16 +365,47 @@ describe('WhatsAppInstancesService connect/disconnect', () => {
     expect(result.status).toBe('CONNECTING');
   });
 
-  it('recreates an existing instance instead of calling create twice', async () => {
+  it('reuses an existing instance and returns its current connection ticket', async () => {
     const { service, prisma, evolution } = createHarness({});
     prisma.whatsAppInstance.findFirst.mockResolvedValue(instanceRow);
-    evolution.instanceExists.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    evolution.instanceExists.mockResolvedValue(true);
 
     const result = await service.connect('i1');
 
-    expect(evolution.createInstance).toHaveBeenCalledTimes(1);
-    expect(evolution.deleteInstance).toHaveBeenCalledWith('inst-1');
+    expect(evolution.createInstance).not.toHaveBeenCalled();
+    expect(evolution.deleteInstance).not.toHaveBeenCalled();
+    expect(evolution.connect).toHaveBeenCalledWith('inst-1');
+    expect(result).toMatchObject({ status: 'CONNECTING', code: '2@existing' });
+  });
+
+  it('does not recreate an instance that is already open', async () => {
+    const { service, prisma, evolution } = createHarness({});
+    prisma.whatsAppInstance.findFirst.mockResolvedValue(instanceRow);
+    evolution.instanceExists.mockResolvedValue(true);
+    evolution.getConnectionState.mockResolvedValue({ instance: 'inst-1', state: 'open' });
+
+    const result = await service.connect('i1');
+
     expect(evolution.connect).not.toHaveBeenCalled();
+    expect(evolution.createInstance).not.toHaveBeenCalled();
+    expect(evolution.deleteInstance).not.toHaveBeenCalled();
+    expect(prisma.whatsAppInstance.update).toHaveBeenCalledWith({
+      where: { id: 'i1' },
+      data: { status: 'CONNECTED' },
+    });
+    expect(result.status).toBe('CONNECTED');
+  });
+
+  it('recreates an existing instance only when it returns no usable ticket', async () => {
+    const { service, prisma, evolution } = createHarness({});
+    prisma.whatsAppInstance.findFirst.mockResolvedValue(instanceRow);
+    evolution.instanceExists.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    evolution.connect.mockResolvedValue({ error: true, message: 'instance does not exist' });
+
+    const result = await service.connect('i1');
+
+    expect(evolution.deleteInstance).toHaveBeenCalledWith('inst-1');
+    expect(evolution.createInstance).toHaveBeenCalledTimes(1);
     expect(result.status).toBe('CONNECTING');
   });
 

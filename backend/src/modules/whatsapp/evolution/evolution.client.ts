@@ -28,6 +28,19 @@ export interface EvolutionConnectionState {
   state: string;
 }
 
+export interface EvolutionHistoryMessagesQuery {
+  from: Date;
+  to: Date;
+  page: number;
+  limit: number;
+}
+
+export interface EvolutionHistoryMessagesPage {
+  total: number;
+  pages: number;
+  records: Record<string, unknown>[];
+}
+
 export interface EvolutionSendResult {
   externalMessageId?: string;
   raw: unknown;
@@ -128,6 +141,35 @@ export class EvolutionClient {
 
   async deleteInstance(instanceName: string): Promise<unknown> {
     return this.request('DELETE', `/instance/delete/${encodeURIComponent(instanceName)}`);
+  }
+
+  async findMessages(
+    instanceName: string,
+    query: EvolutionHistoryMessagesQuery,
+  ): Promise<EvolutionHistoryMessagesPage> {
+    const raw = await this.request(
+      'POST',
+      `/chat/findMessages/${encodeURIComponent(instanceName)}`,
+      {
+        where: {
+          messageTimestamp: {
+            gte: query.from.toISOString(),
+            lte: query.to.toISOString(),
+          },
+        },
+        page: query.page,
+        offset: query.limit,
+      },
+    );
+
+    const data = isRecord(raw) && isRecord(raw.messages) ? raw.messages : null;
+    const records = data && Array.isArray(data.records) ? data.records.filter(isRecord) : [];
+
+    return {
+      total: data && typeof data.total === 'number' ? data.total : records.length,
+      pages: data && typeof data.pages === 'number' ? data.pages : 1,
+      records,
+    };
   }
 
   async instanceExists(instanceName: string): Promise<boolean> {

@@ -223,6 +223,7 @@ model Tenant {
   messages                   Message[]
   messageAttachments         MessageAttachment[]
   messageTranscriptions      MessageTranscription[]
+  messageReactions           MessageReaction[]
   webhookEvents              WebhookEvent[]
   billingCharges             BillingCharge[]
   billingRecurrences         BillingRecurrence[]
@@ -711,6 +712,7 @@ model Conversation {
   customer           Customer?               @relation(fields: [customerId], references: [id], onDelete: SetNull)
   contact            Contact?                @relation(fields: [contactId], references: [id], onDelete: SetNull)
   messages           Message[]
+  reactions          MessageReaction[]
   commercialContexts LeadCommercialContext[]
   recommendations    LeadRecommendation[]
   followUps          LeadFollowUp[]
@@ -762,6 +764,27 @@ model Message {
   @@index([tenantId, conversationId, occurredAt])
   @@index([tenantId, createdAt])
   @@map("messages")
+}
+
+model MessageReaction {
+  id               String   @id @default(uuid()) @db.Uuid
+  tenantId         String   @map("tenant_id") @db.Uuid
+  conversationId   String   @map("conversation_id") @db.Uuid
+  targetExternalId String   @map("target_external_id")
+  targetFromMe     Boolean  @default(false) @map("target_from_me")
+  reactorId        String   @map("reactor_id")
+  reactorName      String?  @map("reactor_name")
+  fromMe           Boolean  @default(false) @map("from_me")
+  emoji            String
+  occurredAt       DateTime @default(now()) @map("occurred_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, conversationId, targetExternalId, reactorId], name: "message_reactions_target_reactor_key")
+  @@index([tenantId, conversationId], map: "message_reactions_tenant_conversation_idx")
+  @@map("message_reactions")
 }
 
 model MessageTranscription {

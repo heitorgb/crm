@@ -376,9 +376,13 @@ export class WebhookService {
       return { accepted: true, ignored: 'unsupported_message' };
     }
 
+    // A reaction is an event about another message, never a message of its own.
+    // It must be routed before contact/conversation creation and before the
+    // normal message pipeline, so it cannot become a bubble, unread item or
+    // conversation preview.
     const reaction = readReaction(message);
-    if (reaction && !reaction.emoji) {
-      return { accepted: true, ignored: 'reaction_removed' };
+    if (reaction) {
+      return this.ingestReaction(instance, data, key, remoteJid, reaction, options);
     }
 
     const isGroup = isGroupJid(remoteJid);
@@ -424,8 +428,8 @@ export class WebhookService {
       await this.ensureGroupMetadata(conversation, instance, remoteJid);
     }
 
-    const content = reaction ? reaction.emoji : extractText(message);
-    const type = reaction ? MessageType.REACTION : detectType(message);
+    const content = extractText(message);
+    const type = detectType(message);
     const audioDurationSeconds = type === MessageType.AUDIO ? readAudioDuration(message) : null;
     const linkPreview = extractWhatsAppLinkPreview(message);
     const externalMessageId = readString(key?.id);
@@ -437,14 +441,8 @@ export class WebhookService {
       occurredAt.getTime() >= Date.now() - HISTORY_REALTIME_WINDOW_MS;
     const processRecentMedia = !options.history || recent;
 
-    const senderId = fromMe
-      ? null
-      : reaction
-        ? (participant ?? participantAlt ?? (isGroup ? null : remoteJid))
-        : isGroup
-          ? participant
-          : null;
-    const senderName = fromMe ? null : isGroup || reaction ? pushName : null;
+    const senderId = fromMe ? null : isGroup ? participant : null;
+    const senderName = fromMe ? null : isGroup ? pushName : null;
 
     const persisted = await this.persistWebhookMessage({
       tenantId: instance.tenantId,
@@ -462,14 +460,6 @@ export class WebhookService {
         pushName,
         ...(participant ? { participantJid: participant } : {}),
         ...(isViewOnce ? { viewOnce: true } : {}),
-        ...(reaction
-          ? {
-              reaction: {
-                targetMessageId: reaction.targetMessageId,
-                targetFromMe: reaction.targetFromMe,
-              },
-            }
-          : {}),
         ...(quoted ? { quoted } : {}),
         ...(contacts ? { contacts } : {}),
         ...(linkPreview ? { linkPreview } : {}),
@@ -566,6 +556,73 @@ export class WebhookService {
       accepted: true,
       conversationId: conversation.id,
       messageId: persisted.id,
+    };
+  }
+
+  private async ingestReaction(
+    instance: ResolvedInstance,
+    data: Record<string, unknown>,
+    key: Record<string, unknown> | null,
+    remoteJid: string,
+    reaction: ParsedReaction,
+    options: { history?: boolean; emitRealtime?: boolean; source: string },
+  ): Promise<WebhookIngestResult> {
+    const targetExternalId = reaction.targetMessageId;
+    if (!targetExternalId) {
+      return { accepted: true, ignored: 'invalid_reaction' };
+    }
+
+    // A reaction never creates a conversation on its own. If the conversation
+    // is not in the CRM there is nothing to attach the reaction to yet.
+    const conversation = await this.prisma.conversation.findFirst({
+      where: {
+        tenantId: instance.tenantId,
+        whatsappInstanceId: instance.id,
+        externalContactId: remoteJid,
+      },
+      select: { id: true },
+    });
+    if (!conversation) {
+      return { accepted: true, ignored: 'reaction_unknown_conversation' };
+    }
+
+    const fromMe = key?.fromMe === true;
+    const isGroup = isGroupJid(remoteJid);
+    const participant = readString(key?.participant) ?? readString(key?.participantAlt);
+    const eventId = readString(key?.id);
+    const reactorId = fromMe
+      ? 'self'
+      : (participant ?? (isGroup ? `unknown:${eventId ?? targetExternalId}` : remoteJid));
+
+    const applied = await this.messages.applyReaction({
+      tenantId: instance.tenantId,
+      conversationId: conversation.id,
+      targetExternalId,
+      targetFromMe: reaction.targetFromMe,
+      reactorId,
+      reactorName: fromMe ? null : (readString(data.pushName) ?? null),
+      fromMe,
+      emoji: reaction.emoji ?? '',
+      occurredAt: readMessageTimestamp(data) ?? new Date(),
+    });
+
+    if (!applied.applied) {
+      return { accepted: true, ignored: 'reaction_target_conflict' };
+    }
+
+    if (applied.changed && options.emitRealtime !== false && applied.messageId) {
+      this.realtime.emitToTenant(instance.tenantId, 'message.reaction', {
+        conversationId: conversation.id,
+        messageId: applied.messageId,
+        reactions: applied.reactions,
+      });
+    }
+
+    return {
+      accepted: true,
+      conversationId: conversation.id,
+      ...(applied.messageId ? { messageId: applied.messageId } : {}),
+      ...(applied.removed ? { ignored: 'reaction_removed' } : {}),
     };
   }
 

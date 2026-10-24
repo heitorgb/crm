@@ -36,7 +36,13 @@ Lead no WhatsApp
   (`UNIQUE (tenantId, externalMessageId)` = idempotência), `status`, `senderId?` (JID do
   participante em grupos **ou** `userId` do atendente em `OUTBOUND`), `senderName?` (pushName em
   grupos **ou** nome do atendente em `OUTBOUND`), `metadata` (guarda `remoteJid`, `viewOnce`,
-  `showAgentName`, `contacts`, `quoted` e `reaction`), `occurredAt`.
+  `showAgentName`, `contacts` e `quoted`), `occurredAt`.
+- `MessageReaction`: reação a uma mensagem (`tenantId`, `conversationId`, `targetExternalId`,
+  `targetFromMe`, `reactorId`, `reactorName?`, `fromMe`, `emoji`, `occurredAt`), com
+  `UNIQUE (tenantId, conversationId, targetExternalId, reactorId)` = idempotência por autor/alvo.
+  Reações **não** são `Message`: não entram no histórico, no contador de não lidas nem no preview da
+  conversa. O alvo é referenciado pelo id externo do WhatsApp, então uma reação que chega antes da
+  mensagem original fica pendente e aparece quando a mensagem for sincronizada.
 - `WhatsAppAvatar`: cache de foto de perfil por instância/JID (`tenantId`, `whatsappInstanceId`,
   `jid`, `url?`, `fetchedAt`), `UNIQUE (whatsappInstanceId, jid)`.
 - `MessageAttachment`: **metadados** de mídia (`storageKey`, `fileName`, `mimeType`, `size`,
@@ -261,8 +267,8 @@ CRM (sem dependências novas). A tela é **full-bleed**: `MainContent` deixa de 
   participante (mesma direção, mesma identidade de remetente, mesmo dia e intervalo curto) são
   agrupadas com espaçamento reduzido, exibindo nome e foto apenas no primeiro balão do grupo. A
   identidade em grupos usa `senderId` e, como fallback, `senderName`; mensagens sem identificação
-  não são agrupadas entre si, evitando confundir remetentes diferentes. Reações nunca entram em um
-  bloco, para que continuem identificáveis; a rolagem é automática somente quando o
+  não são agrupadas entre si, evitando confundir remetentes diferentes. Reações são exibidas como
+  selos sobre o balão da mensagem original (e não como balões próprios); a rolagem é automática somente quando o
   usuário está no fim do histórico, e um botão flutuante ("Ir para as últimas mensagens") aparece ao
   navegar por mensagens antigas. Ao abrir ou trocar de conversa (individual ou grupo), o histórico
   carregado é posicionado no fim mesmo depois da renderização de mídias e pré-visualizações; ao
@@ -313,12 +319,16 @@ CRM (sem dependências novas). A tela é **full-bleed**: `MainContent` deixa de 
   **Conversar** (resolve/cria o contato por telefone e inicia um atendimento 1:1 na mesma instância)
   e **Salvar contato** (`POST /api/contacts/resolve`, find-or-create idempotente por telefone). O
   webhook faz o parse do vCard (`FN`/`TEL`) e guarda `metadata.contacts = [{ name, phone }]`.
-- **Reações**: eventos `messages.upsert` com `data.message.reactionMessage` são reconhecidos como
-  `MessageType.REACTION`. O autor é o remetente do evento (`key.participant`, com o telefone em
-  `key.participantAlt` quando o JID é `@lid`), exibido com o `pushName` (também em conversas
-  individuais); o alvo fica em `metadata.reaction` (`{ targetMessageId, targetFromMe }`). Remoções
-  de reação (`text` vazio) são ignoradas para não gerar bolhas `[unknown]`. O chat mostra a reação
-  como um selo compacto com o nome do participante e o emoji.
+- **Reações**: eventos `messages.upsert` com `data.message.reactionMessage` são desviados do fluxo
+  de mensagens e gravados em `MessageReaction`, associados ao `targetExternalId` da mensagem
+  original. O autor é o remetente do evento (`key.participant`, com o telefone em
+  `key.participantAlt` quando o JID é `@lid`) e o `pushName` vira `reactorName`; reações feitas no
+  próprio dispositivo conectado (`key.fromMe = true`) usam `reactorId = self` e aparecem como
+  **Você**. O mesmo autor/alvo faz upsert do emoji, e um `text` vazio remove a reação. Reações não
+  criam `Message`, não movem `lastMessageAt`, não alteram não lidas/arquivamento e são publicadas no
+  evento realtime `message.reaction`, que atualiza apenas o cache de mensagens da conversa. O chat
+  mostra um selo compacto com o emoji (e a quantidade, quando mais de uma pessoa usa o mesmo emoji)
+  no balão original.
 - **Respostas citadas (menções)**: mensagens que citam outra exibem, no topo do balão, um bloco com
   barra lateral colorida (cor por remetente, ou cor da marca quando a citada é nossa), o autor citado
   (**Você** quando foi enviada por nós) e um resumo com ícone do tipo de mídia (ex.: microfone para
@@ -725,10 +735,13 @@ preserva mensagens recebidas após a leitura e exclui arquivadas do total do ten
 `test/integration/conversation-delete.integration-spec.ts` cobre a exclusão lógica (some da caixa de
 entrada e das arquivadas, detalhe 404, some do total de não lidas, é escopada por tenant, exige
 autenticação, não é revertida por nova mensagem, publica `conversation.deleted` e preserva
-fixar/arquivar/desarquivar/ler/encerrar/reabrir). No frontend, `npm test` (Vitest) cobre o
-agrupamento visual em `src/features/attendance/attendance-utils.test.ts` (mesmo participante,
-participantes diferentes, sem identificação, direções, janela temporal, mudança de dia, reações e
-mídia).
+fixar/arquivar/desarquivar/ler/encerrar/reabrir). A suíte de WhatsApp também cobre reações:
+mensagem comum sem regressão, reação individual e em grupo, reação do próprio dispositivo, troca,
+remoção, alvo ainda não sincronizado, reentrega idempotente, isolamento entre tenants e ausência de
+nova mensagem/não lida. No frontend, `npm test` (Vitest) cobre o agrupamento visual em
+`src/features/attendance/attendance-utils.test.ts` (mesmo participante, participantes diferentes,
+sem identificação, direções, janela temporal, mudança de dia, reações e mídia) e a renderização das
+reações sobre o balão em `message-bubble.test.tsx`.
 
 ## Fora de escopo
 

@@ -86,6 +86,15 @@ export interface MessageTranscription {
   transcribedAt: string | null;
 }
 
+export interface MessageReaction {
+  id: string;
+  reactorId: string;
+  reactorName: string | null;
+  fromMe: boolean;
+  emoji: string;
+  occurredAt: string;
+}
+
 export interface ConversationMessage {
   id: string;
   conversationId: string;
@@ -109,6 +118,7 @@ export interface ConversationMessage {
     hasThumbnail: boolean;
   }[];
   transcription: MessageTranscription | null;
+  reactions?: MessageReaction[];
 }
 
 export interface LinkPreview {

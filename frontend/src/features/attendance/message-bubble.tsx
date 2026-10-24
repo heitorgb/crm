@@ -19,6 +19,7 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import type {
   ConversationMessage,
+  MessageReaction,
   MessageStatus,
   MessageType,
   QuotedMessage,
@@ -30,6 +31,7 @@ import {
   messageSnippet,
   quotedAuthorLabel,
   readMessageContacts,
+  readMessageReactions,
   readQuotedMessage,
 } from './attendance-utils';
 import { ExpandableText } from './expandable-text';
@@ -74,6 +76,7 @@ export function MessageBubble({
   const isMedia = isMediaMessage(message);
   const isViewOnce = isViewOnceMessage(message);
   const quoted = readQuotedMessage(message);
+  const reactions = readMessageReactions(message);
   const contacts = message.type === 'CONTACT' ? readMessageContacts(message.metadata) : [];
   const editable = canEditMessage(message);
 
@@ -135,6 +138,7 @@ export function MessageBubble({
                 </a>
               </p>
             </div>
+            <MessageReactions reactions={reactions} isGroup={isGroup} />
             <div className="mt-1 flex items-center justify-end gap-0.5 text-[10px] leading-none">
               <span
                 className={cn(
@@ -178,6 +182,7 @@ export function MessageBubble({
             <QuoteBlock quoted={quoted} isOutbound={isOutbound} onNavigate={onNavigateToQuote} />
           ) : null}
           <MessageMedia conversationId={conversationId} message={message} />
+          <MessageReactions reactions={reactions} isGroup={isGroup} />
           <span className="px-1 text-[10px] text-muted-foreground">
             {formatBubbleTime(message.occurredAt)}
           </span>
@@ -192,39 +197,7 @@ export function MessageBubble({
   }
 
   if (message.type === 'REACTION') {
-    return (
-      <div
-        data-message-id={message.id}
-        className={cn(
-          'group flex items-center gap-1',
-          stackSpacing,
-          isOutbound ? 'justify-end' : 'justify-start',
-          highlightClass,
-        )}
-      >
-        <div
-          className={cn(
-            'flex max-w-[85%] items-center gap-1.5 rounded-full border border-border bg-card px-2.5 py-1 text-xs shadow-sm',
-            isOutbound ? 'ml-auto' : 'mr-auto',
-          )}
-        >
-          {!isOutbound && message.senderName ? (
-            <span className="font-semibold text-primary">{message.senderName}</span>
-          ) : null}
-          <span className="text-base leading-none" aria-label="Reação">
-            {message.content ?? '👍'}
-          </span>
-          <span className="text-[10px] text-muted-foreground">
-            {formatBubbleTime(message.occurredAt)}
-          </span>
-        </div>
-        <MessageActions
-          canEdit={editable}
-          onReply={onReply ? () => onReply(message) : undefined}
-          onEdit={onEdit ? () => onEdit(message) : undefined}
-        />
-      </div>
-    );
+    return null;
   }
 
   return (
@@ -314,6 +287,7 @@ export function MessageBubble({
               <MessageLinkPreview message={message} isOutbound={isOutbound} />
             </div>
           ) : null}
+          <MessageReactions reactions={reactions} isGroup={isGroup} />
           <div
             className={cn(
               'flex items-center justify-end gap-0.5 text-[10px] leading-none',
@@ -343,6 +317,59 @@ export function MessageBubble({
         onReply={onReply ? () => onReply(message) : undefined}
         onEdit={onEdit ? () => onEdit(message) : undefined}
       />
+    </div>
+  );
+}
+
+function MessageReactions({
+  reactions,
+  isGroup,
+}: {
+  reactions: MessageReaction[];
+  isGroup: boolean;
+}) {
+  if (reactions.length === 0) {
+    return null;
+  }
+
+  const grouped = new Map<string, MessageReaction[]>();
+  for (const reaction of reactions) {
+    const list = grouped.get(reaction.emoji) ?? [];
+    list.push(reaction);
+    grouped.set(reaction.emoji, list);
+  }
+
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-1">
+      {[...grouped.entries()].map(([emoji, items]) => {
+        const own = items.some((reaction) => reaction.fromMe);
+        const names = items.map((reaction) =>
+          reaction.fromMe
+            ? 'Você'
+            : (reaction.reactorName ?? (isGroup ? 'Participante' : 'Contato')),
+        );
+        const label = `Reação de ${names.join(', ')}: ${emoji}`;
+        return (
+          <span
+            key={emoji}
+            title={label}
+            aria-label={label}
+            className={cn(
+              'inline-flex items-center gap-0.5 rounded-full border px-1.5 py-0.5 leading-none',
+              own ? 'border-primary/40 bg-primary/10' : 'border-border bg-card',
+            )}
+          >
+            <span aria-hidden className="text-sm leading-none">
+              {emoji}
+            </span>
+            {items.length > 1 ? (
+              <span className="text-[10px] font-medium tabular-nums text-muted-foreground">
+                {items.length}
+              </span>
+            ) : null}
+          </span>
+        );
+      })}
     </div>
   );
 }

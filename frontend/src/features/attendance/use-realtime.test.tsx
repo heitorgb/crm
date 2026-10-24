@@ -165,11 +165,74 @@ describe('useAttendanceRealtime invalidation scope', () => {
   it('removes every listener on unmount', () => {
     const { unmount } = renderRealtime();
 
-    expect(socket.listenerCount()).toBe(5);
+    expect(socket.listenerCount()).toBe(6);
     unmount();
 
     expect(socket.listenerCount()).toBe(0);
-    expect(socket.off).toHaveBeenCalledTimes(5);
+    expect(socket.off).toHaveBeenCalledTimes(6);
+  });
+
+  it('patches a reaction on the target message without invalidating queries', () => {
+    const message = {
+      id: 'message-a',
+      conversationId: ACTIVE_ID,
+      externalMessageId: 'ext-a',
+      reactions: [],
+    } as never;
+
+    queryClient.setQueryData(attendanceKeys.messages(ACTIVE_ID), {
+      data: [message],
+      meta: { page: 1, perPage: 100, total: 1, totalPages: 1 },
+    });
+    queryClient.setQueryData(attendanceKeys.historyMessages(ACTIVE_ID), {
+      pages: [{ data: [message], meta: { page: 2, perPage: 100, total: 2, totalPages: 2 } }],
+      pageParams: [2],
+    });
+    renderRealtime();
+
+    act(() => {
+      socket.emit('message.reaction', {
+        conversationId: ACTIVE_ID,
+        messageId: 'message-a',
+        reactions: [
+          {
+            id: 'reaction-a',
+            reactorId: '5511999999999@s.whatsapp.net',
+            reactorName: 'Ana',
+            fromMe: false,
+            emoji: '❤️',
+            occurredAt: '2026-10-20T12:00:00.000Z',
+          },
+        ],
+      });
+    });
+
+    expect(
+      queryClient.getQueryData<{ data: Array<{ reactions: unknown[] }> }>(
+        attendanceKeys.messages(ACTIVE_ID),
+      )?.data[0].reactions,
+    ).toEqual([expect.objectContaining({ emoji: '❤️' })]);
+    expect(
+      queryClient.getQueryData<{ pages: Array<{ data: Array<{ reactions: unknown[] }> }> }>(
+        attendanceKeys.historyMessages(ACTIVE_ID),
+      )?.pages[0].data[0].reactions,
+    ).toEqual([expect.objectContaining({ emoji: '❤️' })]);
+    expect(invalidateQueries).not.toHaveBeenCalled();
+
+    act(() => {
+      socket.emit('message.reaction', {
+        conversationId: ACTIVE_ID,
+        messageId: 'message-a',
+        reactions: [],
+      });
+    });
+
+    expect(
+      queryClient.getQueryData<{ data: Array<{ reactions: unknown[] }> }>(
+        attendanceKeys.messages(ACTIVE_ID),
+      )?.data[0].reactions,
+    ).toEqual([]);
+    expect(invalidateQueries).not.toHaveBeenCalled();
   });
 
   it('resynchronizes the inbox on connect without invalidating attachments', () => {

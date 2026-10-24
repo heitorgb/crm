@@ -1713,6 +1713,38 @@ describe('WhatsApp attendance (integration)', () => {
         };
       }
 
+      function groupAudioPayload(input: {
+        instanceName: string;
+        messageId: string;
+        participant: string;
+        pushName: string;
+        seconds: number;
+      }) {
+        const { instanceName, messageId, participant, pushName, seconds } = input;
+        return {
+          event: 'messages.upsert',
+          instance: instanceName,
+          data: {
+            key: {
+              remoteJid: GROUP_JID,
+              fromMe: false,
+              id: messageId,
+              participant,
+            },
+            pushName,
+            messageType: 'audioMessage',
+            message: {
+              audioMessage: {
+                mimetype: 'audio/ogg; codecs=opus',
+                ptt: true,
+                seconds,
+              },
+              messageContextInfo: { threadId: [] },
+            },
+          },
+        };
+      }
+
       it('does not quote an audio whose contextInfo only carries technical metadata', async () => {
         const instanceName = `audio-context-${randomUUID()}`;
         await createInstance(ownerA, instanceName);
@@ -1886,6 +1918,345 @@ describe('WhatsApp attendance (integration)', () => {
         });
       });
 
+      it('quotes a group audio from another participant after Evolution flattens the text reply', async () => {
+        const instanceName = `group-flattened-reply-${randomUUID()}`;
+        await createInstance(ownerA, instanceName);
+        const originalAudioId = randomUUID();
+        const replyId = randomUUID();
+        const participantA = '75209205874877@lid';
+        const participantB = '229428613357801@lid';
+
+        await postWebhook(
+          groupAudioPayload({
+            instanceName,
+            messageId: originalAudioId,
+            participant: participantA,
+            pushName: 'Kkroto',
+            seconds: 28,
+          }),
+        );
+
+        // Evolution 2.4 flattening: the reply arrives as `conversation` and the
+        // quote context lives at the root of the event, not in a message part.
+        await postWebhook({
+          event: 'messages.upsert',
+          instance: instanceName,
+          data: {
+            key: {
+              remoteJid: GROUP_JID,
+              fromMe: false,
+              id: replyId,
+              participant: participantB,
+            },
+            pushName: 'Caio',
+            messageType: 'conversation',
+            message: {
+              conversation: 'Matar resolve logo',
+              messageContextInfo: { threadId: [] },
+            },
+            contextInfo: {
+              stanzaId: originalAudioId,
+              participant: participantA,
+              remoteJid: GROUP_JID,
+              quotedMessage: { audioMessage: { ptt: true, seconds: 28 } },
+            },
+          },
+        });
+
+        const original = await prisma.message.findFirstOrThrow({
+          where: { tenantId: ownerA.tenantId, externalMessageId: originalAudioId },
+        });
+        const reply = await prisma.message.findFirstOrThrow({
+          where: { tenantId: ownerA.tenantId, externalMessageId: replyId },
+        });
+        const metadata = reply.metadata as {
+          quoted?: {
+            messageId?: string | null;
+            externalId?: string | null;
+            remoteJid?: string | null;
+            authorName?: string | null;
+            authorJid?: string | null;
+            content?: string | null;
+            type?: string;
+            audioDurationSeconds?: number | null;
+            fromMe?: boolean;
+          };
+        };
+
+        expect(reply.content).toBe('Matar resolve logo');
+        expect(reply.type).toBe('TEXT');
+        expect(metadata.quoted).toMatchObject({
+          messageId: original.id,
+          externalId: originalAudioId,
+          remoteJid: GROUP_JID,
+          authorName: 'Kkroto',
+          authorJid: participantA,
+          type: 'AUDIO',
+          audioDurationSeconds: 28,
+          fromMe: false,
+        });
+      });
+
+      it('quotes the same group audio for every participant that replies', async () => {
+        const instanceName = `group-multiple-replies-${randomUUID()}`;
+        await createInstance(ownerA, instanceName);
+        const originalAudioId = randomUUID();
+        const participantA = '75209205874877@lid';
+        const repliers = [
+          { id: randomUUID(), participant: '229428613357801@lid', name: 'Caio' },
+          { id: randomUUID(), participant: '226649819902207@lid', name: 'Alan' },
+        ];
+
+        await postWebhook(
+          groupAudioPayload({
+            instanceName,
+            messageId: originalAudioId,
+            participant: participantA,
+            pushName: 'Kkroto',
+            seconds: 28,
+          }),
+        );
+
+        for (const replier of repliers) {
+          await postWebhook({
+            event: 'messages.upsert',
+            instance: instanceName,
+            data: {
+              key: {
+                remoteJid: GROUP_JID,
+                fromMe: false,
+                id: replier.id,
+                participant: replier.participant,
+              },
+              pushName: replier.name,
+              message: {
+                extendedTextMessage: {
+                  text: `Respondendo ${replier.name}`,
+                  contextInfo: {
+                    stanzaId: originalAudioId,
+                    participant: participantA,
+                    remoteJid: GROUP_JID,
+                    quotedMessage: { audioMessage: { ptt: true, seconds: 28 } },
+                  },
+                },
+              },
+            },
+          });
+        }
+
+        const replies = await prisma.message.findMany({
+          where: {
+            tenantId: ownerA.tenantId,
+            externalMessageId: { in: repliers.map((replier) => replier.id) },
+          },
+        });
+
+        expect(replies).toHaveLength(2);
+        for (const reply of replies) {
+          expect(reply.metadata).toMatchObject({
+            quoted: {
+              externalId: originalAudioId,
+              authorName: 'Kkroto',
+              authorJid: participantA,
+              type: 'AUDIO',
+              audioDurationSeconds: 28,
+            },
+          });
+        }
+      });
+
+      it('resolves a LID author from the group participants when the original is not stored', async () => {
+        const instanceName = `group-lid-author-${randomUUID()}`;
+        await createInstance(ownerA, instanceName);
+        const participantLid = '63604221026389@lid';
+        const participantPhone = '5511977777777';
+        const replyId = randomUUID();
+
+        await postWebhook(groupPayload(instanceName, randomUUID(), 'Contexto do grupo', GROUP_JID));
+
+        const conversation = await prisma.conversation.findFirstOrThrow({
+          where: {
+            tenantId: ownerA.tenantId,
+            whatsappInstanceId: (
+              await prisma.whatsAppInstance.findFirstOrThrow({
+                where: { tenantId: ownerA.tenantId, instanceName },
+              })
+            ).id,
+            externalContactId: GROUP_JID,
+          },
+        });
+        await prisma.conversationParticipant.create({
+          data: {
+            tenantId: ownerA.tenantId,
+            conversationId: conversation.id,
+            jid: `${participantPhone}@s.whatsapp.net`,
+            lid: participantLid,
+            phone: participantPhone,
+            name: 'Kkroto',
+          },
+        });
+
+        await postWebhook({
+          event: 'messages.upsert',
+          instance: instanceName,
+          data: {
+            key: {
+              remoteJid: GROUP_JID,
+              fromMe: false,
+              id: replyId,
+              participant: '229428613357801@lid',
+            },
+            pushName: 'Caio',
+            message: { conversation: 'Então tem que deixar o tráfico?' },
+            contextInfo: {
+              stanzaId: randomUUID(),
+              participant: participantLid,
+              remoteJid: GROUP_JID,
+              quotedMessage: { audioMessage: { ptt: true, seconds: 12 } },
+            },
+          },
+        });
+
+        const reply = await prisma.message.findFirstOrThrow({
+          where: { tenantId: ownerA.tenantId, externalMessageId: replyId },
+        });
+        expect(reply.metadata).toMatchObject({
+          quoted: {
+            messageId: null,
+            authorJid: participantLid,
+            authorName: 'Kkroto',
+            type: 'AUDIO',
+            audioDurationSeconds: 12,
+          },
+        });
+      });
+
+      it('completes a quote when the original audio arrives after the reply', async () => {
+        const instanceName = `group-late-original-${randomUUID()}`;
+        await createInstance(ownerA, instanceName);
+        const originalAudioId = randomUUID();
+        const replyId = randomUUID();
+        const participantA = '75209205874877@lid';
+
+        await postWebhook({
+          event: 'messages.upsert',
+          instance: instanceName,
+          data: {
+            key: {
+              remoteJid: GROUP_JID,
+              fromMe: false,
+              id: replyId,
+              participant: '229428613357801@lid',
+            },
+            pushName: 'Caio',
+            message: { conversation: 'Matar resolve logo' },
+            contextInfo: {
+              stanzaId: originalAudioId,
+              participant: participantA,
+              quotedMessage: { audioMessage: { ptt: true, seconds: 28 } },
+            },
+          },
+        });
+
+        const before = await prisma.message.findFirstOrThrow({
+          where: { tenantId: ownerA.tenantId, externalMessageId: replyId },
+        });
+        expect(before.metadata).toMatchObject({
+          quoted: { messageId: null, externalId: originalAudioId, type: 'AUDIO' },
+        });
+
+        await postWebhook(
+          groupAudioPayload({
+            instanceName,
+            messageId: originalAudioId,
+            participant: participantA,
+            pushName: 'Kkroto',
+            seconds: 28,
+          }),
+        );
+
+        const original = await prisma.message.findFirstOrThrow({
+          where: { tenantId: ownerA.tenantId, externalMessageId: originalAudioId },
+        });
+        const after = await prisma.message.findFirstOrThrow({
+          where: { tenantId: ownerA.tenantId, externalMessageId: replyId },
+        });
+        expect(after.metadata).toMatchObject({
+          quoted: {
+            messageId: original.id,
+            externalId: originalAudioId,
+            authorName: 'Kkroto',
+            authorJid: participantA,
+            type: 'AUDIO',
+            audioDurationSeconds: 28,
+          },
+        });
+      });
+
+      it('keeps text quotes and never links across tenants', async () => {
+        const instanceA = `quote-tenant-a-${randomUUID()}`;
+        const instanceB = `quote-tenant-b-${randomUUID()}`;
+        await createInstance(ownerA, instanceA);
+        await createInstance(ownerB, instanceB);
+        const originalId = randomUUID();
+        const foreignReplyId = randomUUID();
+        const textReplyId = randomUUID();
+
+        await postWebhook(evolutionPayload(instanceA, originalId, 'Seria o que, umas 8 instâncias?'));
+
+        await postWebhook({
+          event: 'messages.upsert',
+          instance: instanceB,
+          data: {
+            key: { remoteJid: '5511999999999@s.whatsapp.net', fromMe: false, id: foreignReplyId },
+            pushName: 'Contato B',
+            message: { conversation: 'Referência externa' },
+            contextInfo: {
+              stanzaId: originalId,
+              participant: '5511888888888@s.whatsapp.net',
+              quotedMessage: { conversation: 'Seria o que, umas 8 instâncias?' },
+            },
+          },
+        });
+
+        await postWebhook({
+          event: 'messages.upsert',
+          instance: instanceA,
+          data: {
+            key: { remoteJid: '5511999999999@s.whatsapp.net', fromMe: false, id: textReplyId },
+            pushName: 'Contato Teste',
+            message: { conversation: 'Exatamente' },
+            contextInfo: {
+              stanzaId: originalId,
+              participant: '5511999999999@s.whatsapp.net',
+              quotedMessage: { conversation: 'Seria o que, umas 8 instâncias?' },
+            },
+          },
+        });
+
+        const foreignReply = await prisma.message.findFirstOrThrow({
+          where: { tenantId: ownerB.tenantId, externalMessageId: foreignReplyId },
+        });
+        expect(foreignReply.metadata).toMatchObject({
+          quoted: { messageId: null, externalId: originalId, type: 'TEXT' },
+        });
+
+        const original = await prisma.message.findFirstOrThrow({
+          where: { tenantId: ownerA.tenantId, externalMessageId: originalId },
+        });
+        const textReply = await prisma.message.findFirstOrThrow({
+          where: { tenantId: ownerA.tenantId, externalMessageId: textReplyId },
+        });
+        expect(textReply.metadata).toMatchObject({
+          quoted: {
+            messageId: original.id,
+            externalId: originalId,
+            type: 'TEXT',
+            content: 'Seria o que, umas 8 instâncias?',
+          },
+        });
+      });
+
       it('keeps an explicit reference whose quoted content is unavailable locally', async () => {
         const instanceName = `audio-missing-quote-${randomUUID()}`;
         await createInstance(ownerA, instanceName);
@@ -1917,6 +2288,68 @@ describe('WhatsApp attendance (integration)', () => {
           externalId: unavailableId,
           content: null,
           type: 'UNKNOWN',
+        });
+      });
+
+      it('normalizes a flattened text reply imported from history', async () => {
+        const instanceName = `group-history-reply-${randomUUID()}`;
+        await createInstance(ownerA, instanceName);
+        const originalAudioId = randomUUID();
+        const replyId = randomUUID();
+        const participantA = '75209205874877@lid';
+
+        await postWebhook(
+          groupAudioPayload({
+            instanceName,
+            messageId: originalAudioId,
+            participant: participantA,
+            pushName: 'Kkroto',
+            seconds: 28,
+          }),
+        );
+
+        const response = await postWebhook({
+          event: 'messages.set',
+          instance: instanceName,
+          isLatest: true,
+          progress: 100,
+          data: [
+            {
+              key: {
+                remoteJid: GROUP_JID,
+                fromMe: false,
+                id: replyId,
+                participant: '229428613357801@lid',
+              },
+              pushName: 'Caio',
+              messageTimestamp: Math.floor(Date.now() / 1000),
+              messageType: 'conversation',
+              message: {
+                conversation: 'Matar resolve logo',
+                messageContextInfo: { threadId: [] },
+              },
+              contextInfo: {
+                stanzaId: originalAudioId,
+                participant: participantA,
+                remoteJid: GROUP_JID,
+                quotedMessage: { audioMessage: { ptt: true, seconds: 28 } },
+              },
+            },
+          ],
+        });
+
+        expect(response.statusCode).toBe(200);
+        const reply = await prisma.message.findFirstOrThrow({
+          where: { tenantId: ownerA.tenantId, externalMessageId: replyId },
+        });
+        expect(reply.metadata).toMatchObject({
+          quoted: {
+            externalId: originalAudioId,
+            authorName: 'Kkroto',
+            authorJid: participantA,
+            type: 'AUDIO',
+            audioDurationSeconds: 28,
+          },
         });
       });
 

@@ -730,7 +730,8 @@ export class WebhookService implements OnModuleInit {
     const externalMessageId = readString(key?.id);
     const quoted = await this.resolveInboundQuoted(
       instance.tenantId,
-      instance.id,
+      conversation.id,
+      data,
       message,
     );
     const contacts = extractContacts(message);
@@ -784,6 +785,24 @@ export class WebhookService implements OnModuleInit {
         messageId: persisted.id,
       };
     }
+
+    // Replies may arrive before the original message (history out of order or a
+    // live reply to an older message). Once the quoted message is stored, the
+    // quote metadata of those replies is completed so the citation renders with
+    // the correct author, type and audio duration.
+    await this.backfillQuotedReplies({
+      tenantId: instance.tenantId,
+      conversationId: conversation.id,
+      messageId: persisted.id,
+      externalMessageId,
+      direction,
+      senderId,
+      senderName,
+      content,
+      type,
+      remoteJid,
+      audioDurationSeconds,
+    });
 
     // View-once media must never be downloaded or exposed: the UI only renders the privacy notice.
     if (isMediaType(type) && !isViewOnce && processRecentMedia) {
@@ -1731,13 +1750,106 @@ export class WebhookService implements OnModuleInit {
     }
   }
 
-  /** Extracts the quoted message context of a reply, enriching it from the local history. */
+  /**
+   * Completes the quote metadata of replies that were persisted before their
+   * quoted message. Matching is done strictly by the external id inside the
+   * same conversation; content/time/sender are never used, so a reply can never
+   * be linked to an unrelated message.
+   */
+  private async backfillQuotedReplies(input: {
+    tenantId: string;
+    conversationId: string;
+    messageId: string;
+    externalMessageId: string | null;
+    direction: MessageDirection;
+    senderId: string | null;
+    senderName: string | null;
+    content: string | null;
+    type: MessageType;
+    remoteJid: string;
+    audioDurationSeconds: number | null;
+  }): Promise<void> {
+    if (!input.externalMessageId) {
+      return;
+    }
+
+    const replies = await this.prisma.message.findMany({
+      where: {
+        tenantId: input.tenantId,
+        conversationId: input.conversationId,
+        id: { not: input.messageId },
+        metadata: {
+          path: ['quoted', 'externalId'],
+          equals: input.externalMessageId,
+        },
+      },
+      select: { id: true, metadata: true },
+      take: 100,
+    });
+
+    for (const reply of replies) {
+      const metadata = isRecord(reply.metadata) ? reply.metadata : {};
+      const quoted = isRecord(metadata.quoted) ? metadata.quoted : null;
+      if (!quoted) {
+        continue;
+      }
+
+      const existingType =
+        typeof quoted.type === 'string' ? (quoted.type as MessageType) : MessageType.UNKNOWN;
+      const type = input.type === MessageType.UNKNOWN ? existingType : input.type;
+      const nextQuoted: QuotedMessageInfo = {
+        messageId: input.messageId,
+        externalId: input.externalMessageId,
+        remoteJid: readString(quoted.remoteJid) ?? input.remoteJid,
+        authorName: input.senderName ?? readString(quoted.authorName),
+        authorJid: readString(quoted.authorJid) ?? input.senderId,
+        fromMe: input.direction === MessageDirection.OUTBOUND,
+        content: input.content ?? readString(quoted.content),
+        type,
+        audioDurationSeconds:
+          type === MessageType.AUDIO
+            ? (input.audioDurationSeconds ??
+              readAudioDurationFromMetadata(quoted))
+            : null,
+      };
+      const nextMetadata = { ...metadata, quoted: nextQuoted };
+      if (JSON.stringify(nextMetadata) === JSON.stringify(metadata)) {
+        continue;
+      }
+
+      await this.prisma.message.update({
+        where: { id: reply.id },
+        data: { metadata: nextMetadata as unknown as Prisma.InputJsonValue },
+      });
+      this.realtime.emitToConversation(
+        input.tenantId,
+        input.conversationId,
+        'message.updated',
+        {
+          conversationId: input.conversationId,
+          messageId: reply.id,
+        },
+      );
+      this.realtime.emitToTenant(input.tenantId, 'conversation.updated', {
+        conversationId: input.conversationId,
+      });
+    }
+  }
+
+  /**
+   * Extracts the quoted message context of a reply, enriching it from the local
+   * history. Evolution 2.4 flattens an inbound text reply into `conversation`
+   * and drops the `extendedTextMessage` wrapper; the quote context then arrives
+   * at the root of the event (`data.contextInfo`) instead of inside the message
+   * body. Both shapes are accepted here.
+   */
   private async resolveInboundQuoted(
     tenantId: string,
-    whatsappInstanceId: string,
+    conversationId: string,
+    data: Record<string, unknown> | null,
     message: unknown,
   ): Promise<QuotedMessageInfo | null> {
-    const contextInfo = findContextInfo(message);
+    const contextInfo = findReplyContextInfo(data, message);
     if (!contextInfo) {
       return null;
     }
@@ -1751,33 +1863,104 @@ export class WebhookService implements OnModuleInit {
       return null;
     }
 
-    const authorJid = readString(contextInfo.participant);
+    const remoteJid =
+      readString(contextInfo.remoteJid) ?? readString(contextInfo.remoteJidAlt);
+    const authorJid =
+      readString(contextInfo.participant) ?? readString(contextInfo.participantAlt);
     const quotedRaw = contextInfo.quotedMessage;
     let content = extractText(quotedRaw);
     let type = detectType(quotedRaw);
+    let audioDurationSeconds = type === MessageType.AUDIO ? readAudioDuration(quotedRaw) : null;
     let authorName: string | null = null;
     let fromMe = false;
     let messageId: string | null = null;
 
-    if (externalId) {
-      const local = await this.prisma.message.findFirst({
-        where: {
-          tenantId,
-          externalMessageId: externalId,
-          conversation: { whatsappInstanceId },
-        },
-        select: { id: true, direction: true, senderName: true, content: true, type: true },
-      });
-      if (local) {
-        messageId = local.id;
-        fromMe = local.direction === MessageDirection.OUTBOUND;
-        authorName = local.senderName;
-        content = local.content ?? content;
-        type = local.type;
+    // The quoted message must belong to the same conversation, which already
+    // scopes the lookup by tenant and instance. The external id alone is used
+    // for the match: text, time or sender name are never considered, since two
+    // distinct messages can share them.
+    const local = await this.prisma.message.findFirst({
+      where: { tenantId, conversationId, externalMessageId: externalId },
+      select: {
+        id: true,
+        direction: true,
+        senderId: true,
+        senderName: true,
+        content: true,
+        type: true,
+        metadata: true,
+      },
+    });
+
+    if (local) {
+      messageId = local.id;
+      fromMe = local.direction === MessageDirection.OUTBOUND;
+      authorName = local.senderName;
+      content = local.content ?? content;
+      type = local.type;
+      if (type === MessageType.AUDIO) {
+        audioDurationSeconds =
+          readAudioDurationFromMetadata(local.metadata) ?? audioDurationSeconds;
       }
     }
 
-    return { messageId, externalId, authorName, authorJid, fromMe, content, type };
+    if (!authorName && authorJid) {
+      authorName = await this.resolveQuotedAuthorName(tenantId, conversationId, authorJid);
+    }
+
+    return {
+      messageId,
+      externalId,
+      remoteJid,
+      authorName,
+      authorJid,
+      fromMe,
+      content,
+      type,
+      audioDurationSeconds,
+    };
+  }
+
+  /**
+   * Resolves the quoted author display name when the original message is not
+   * stored locally. Group participants are addressed by LID in newer WhatsApp
+   * accounts, so jid, lid, and phone are all tried before falling back to the
+   * CRM contact.
+   */
+  private async resolveQuotedAuthorName(
+    tenantId: string,
+    conversationId: string,
+    authorJid: string,
+  ): Promise<string | null> {
+    const canonical = canonicalJid(authorJid);
+    const phone = phoneFromJid(authorJid);
+    const aliases = [...new Set([authorJid, canonical])];
+
+    const participant = await this.prisma.conversationParticipant.findFirst({
+      where: {
+        tenantId,
+        conversationId,
+        OR: [
+          { jid: { in: aliases } },
+          { lid: { in: aliases } },
+          ...(phone ? [{ phone }] : []),
+        ],
+      },
+      select: { name: true },
+    });
+    const participantName = participant?.name?.trim();
+    if (participantName) {
+      return participantName;
+    }
+
+    if (!phone) {
+      return null;
+    }
+    const contact = await this.prisma.contact.findFirst({
+      where: { tenantId, phone },
+      select: { name: true },
+    });
+    return contact?.name?.trim() || null;
   }
 }
 
@@ -2106,14 +2289,42 @@ const CONTEXT_MESSAGE_PARTS = [
   'contactMessage',
 ] as const;
 
-function findContextInfo(message: unknown): Record<string, unknown> | null {
-  if (!isRecord(message)) {
-    return null;
+/**
+ * Finds the context that carries an explicit reply (`stanzaId`). Evolution
+ * versions differ in where they keep it: inside the message part for media and
+ * older builds, or at the event root after flattening a text reply into
+ * `conversation`. Candidates without a `stanzaId` are technical metadata
+ * (mentions, ephemeral settings, threads) and never identify a reply.
+ */
+function findReplyContextInfo(
+  data: Record<string, unknown> | null,
+  message: unknown,
+): Record<string, unknown> | null {
+  const candidates: unknown[] = [];
+
+  if (isRecord(message)) {
+    for (const part of CONTEXT_MESSAGE_PARTS) {
+      const node = message[part];
+      if (isRecord(node)) {
+        candidates.push(node.contextInfo);
+      }
+    }
+    candidates.push(message.contextInfo);
+    candidates.push(message.messageContextInfo);
   }
-  for (const part of CONTEXT_MESSAGE_PARTS) {
-    const node = message[part];
-    if (isRecord(node) && isRecord(node.contextInfo)) {
-      return node.contextInfo;
+
+  if (data) {
+    candidates.push(data.contextInfo);
+    const dataMessage = isRecord(data.message) ? data.message : null;
+    if (dataMessage) {
+      candidates.push(dataMessage.contextInfo);
+      candidates.push(dataMessage.messageContextInfo);
+    }
+  }
+
+  for (const candidate of candidates) {
+    if (isRecord(candidate) && readString(candidate.stanzaId)) {
+      return candidate;
     }
   }
   return null;
@@ -2330,6 +2541,20 @@ function readAudioDuration(message: unknown): number | null {
   }
   const audio = isRecord(message.audioMessage) ? message.audioMessage : null;
   const raw = audio?.seconds;
+  const seconds =
+    typeof raw === 'number'
+      ? raw
+      : typeof raw === 'string' && raw.length > 0
+        ? Number(raw)
+        : Number.NaN;
+  return Number.isFinite(seconds) && seconds > 0 ? seconds : null;
+}
+
+function readAudioDurationFromMetadata(metadata: unknown): number | null {
+  if (!isRecord(metadata)) {
+    return null;
+  }
+  const raw = metadata.audioDurationSeconds;
   const seconds =
     typeof raw === 'number'
       ? raw

@@ -375,19 +375,35 @@ CRM (sem dependências novas). A tela é **full-bleed**: `MainContent` deixa de 
 - **Respostas citadas (menções)**: mensagens que citam outra exibem, no topo do balão, um bloco com
   barra lateral colorida (cor por remetente, ou cor da marca quando a citada é nossa), o autor citado
   (**Você** quando foi enviada por nós) e um resumo com ícone do tipo de mídia (ex.: microfone para
-  áudio), no estilo do WhatsApp Web. Ao passar o mouse sobre uma mensagem aparece o botão
-  **Responder**; ao responder, o compositor mostra a prévia da citação (com botão de cancelar) e
-  a mensagem é enviada com a referência à original (`quoted` na Evolution, no formato
-  `{ key: { id, remoteJid, fromMe, participant }, message }`; em grupos o `participant` com o JID de
-  quem escreveu a citada é obrigatório). O backend persiste o
-  contexto em `Message.metadata.quoted` (`externalId`, `authorName`, `authorJid`, `fromMe`, `content`,
-  `type` e `messageId` local quando resolvido): no inbound, a resposta só é reconhecida quando o
-  `contextInfo` traz `stanzaId` (a referência explícita à mensagem original); o conteúdo vem de
-  `contextInfo.quotedMessage` e é enriquecido com o histórico local para descobrir autor e direção.
-  `contextInfo` com apenas menções, expiração, atribuições de status ou outros metadados técnicos não
-  cria citação, e registros antigos com citação vazia são ignorados na renderização. No outbound, a
-  citação vem da mensagem referenciada (sempre escopada por tenant/conversa). No reenvio de falha a
-  citação é reconstruída do metadata.
+  áudio), no estilo do WhatsApp Web. Citações de áudio mostram também a duração (`0:28`), obtida do
+  `quotedMessage.audioMessage.seconds` ou do `metadata.audioDurationSeconds` da mensagem original. Ao
+  passar o mouse sobre uma mensagem aparece o botão **Responder**; ao responder, o compositor mostra
+  a prévia da citação (com botão de cancelar) e a mensagem é enviada com a referência à original
+  (`quoted` na Evolution, no formato `{ key: { id, remoteJid, fromMe, participant }, message }`; em
+  grupos o `participant` com o JID de quem escreveu a citada é obrigatório). O backend persiste o
+  contexto em `Message.metadata.quoted` (`externalId`, `remoteJid`, `authorName`, `authorJid`,
+  `fromMe`, `content`, `type`, `audioDurationSeconds` e `messageId` local quando resolvido): no
+  inbound, a resposta só é reconhecida quando o `contextInfo` traz `stanzaId` (a referência explícita
+  à mensagem original); o conteúdo vem de `contextInfo.quotedMessage` e é enriquecido com o histórico
+  local para descobrir autor e direção. O `contextInfo` é procurado tanto dentro da parte da mensagem
+  (`extendedTextMessage`, `audioMessage`, etc.) quanto na raiz do evento (`data.contextInfo`), porque
+  a Evolution 2.4 achata respostas de texto em `conversation` e move o contexto para a raiz. O autor
+  é resolvido também por `@lid`/telefone nos participantes do grupo quando a mensagem original ainda
+  não está local, e a citação é completada automaticamente se a original chegar depois (histórico
+  fora de ordem). `contextInfo` com apenas menções, expiração, atribuições de status ou outros
+  metadados técnicos não cria citação, e registros antigos com citação vazia são ignorados na
+  renderização. No outbound, a citação vem da mensagem referenciada (sempre escopada por
+  tenant/conversa). No reenvio de falha a citação é reconstruída do metadata. Na renderização, a
+  citação é completada com a mensagem original já carregada na timeline (casada por `messageId` ou
+  `externalId`, nunca por conteúdo), garantindo nome, tipo e duração mesmo quando a original chega
+  depois; clicar no bloco navega para a original quando ela está carregada.
+- **Limitação da Evolution em respostas de texto**: a build `2.4.0-rc2` achata
+  `extendedTextMessage` em `conversation` e, nessa versão, o `contextInfo` da raiz é preenchido com
+  `messageContextInfo` (sem `stanzaId`), descartando a referência da citação antes do webhook. O CRM
+  lê o `contextInfo` da raiz quando ele existe (builds corrigidas) e nunca inventa a citação quando
+  o `stanzaId` não chega; nesse caso a resposta é exibida como texto simples. Respostas de mídia
+  (áudio, imagem, vídeo, documento) mantêm o `contextInfo` dentro da parte da mensagem e funcionam
+  normalmente.
 - **Mensagens enviadas pelo celular / WhatsApp Web**: o webhook trata `messages.upsert` com
   `key.fromMe = true` como mensagem `OUTBOUND` enviada pela própria conta conectada, exibindo-a na
   conversa ao lado das mensagens enviadas pelo CRM. A instância, o contato e a conversa são

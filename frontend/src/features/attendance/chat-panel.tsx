@@ -34,6 +34,7 @@ import {
   findQuotedMessage,
   formatDayLabel,
   QUOTE_HIGHLIGHT_MS,
+  readQuotedMessage,
 } from './attendance-utils';
 import { ConversationPresenceIndicator } from './conversation-presence';
 import { MessageBubble } from './message-bubble';
@@ -423,6 +424,10 @@ export function ChatPanel({
               const next = messages[index + 1];
               const showDay =
                 !previous || dayKey(previous.occurredAt) !== dayKey(message.occurredAt);
+              const storedQuote = readQuotedMessage(message);
+              const quoteTarget = storedQuote
+                ? findQuotedMessage(messages, conversation.id, storedQuote)
+                : null;
               return (
                 <Fragment key={message.id}>
                   {showDay ? (
@@ -440,6 +445,7 @@ export function ChatPanel({
                     groupedWithPrevious={areGrouped(previous, message, isGroup)}
                     groupedWithNext={areGrouped(message, next, isGroup)}
                     highlighted={highlightedId === message.id || editing?.id === message.id}
+                    quoteTarget={quoteTarget}
                     onReply={handleStartReply}
                     onEdit={handleStartEdit}
                     onNavigateToQuote={handleNavigateToQuote}

@@ -25,9 +25,11 @@ import type {
   QuotedMessage,
 } from '@/types/attendance';
 import {
+  formatAudioDuration,
   formatBubbleTime,
   canEditMessage,
   isMessageEdited,
+  mergeQuotedTarget,
   messageSnippet,
   quotedAuthorLabel,
   readMessageContacts,
@@ -51,6 +53,7 @@ interface MessageBubbleProps {
   groupedWithPrevious?: boolean;
   groupedWithNext?: boolean;
   highlighted?: boolean;
+  quoteTarget?: ConversationMessage | null;
   onReply?: (message: ConversationMessage) => void;
   onEdit?: (message: ConversationMessage) => void;
   onNavigateToQuote?: (quoted: QuotedMessage) => void;
@@ -64,6 +67,7 @@ export function MessageBubble({
   groupedWithPrevious = false,
   groupedWithNext = false,
   highlighted = false,
+  quoteTarget = null,
   onReply,
   onEdit,
   onNavigateToQuote,
@@ -75,7 +79,8 @@ export function MessageBubble({
   const isSticker = message.type === 'STICKER';
   const isMedia = isMediaMessage(message);
   const isViewOnce = isViewOnceMessage(message);
-  const quoted = readQuotedMessage(message);
+  const storedQuote = readQuotedMessage(message);
+  const quoted = storedQuote ? mergeQuotedTarget(storedQuote, quoteTarget) : null;
   const reactions = readMessageReactions(message);
   const contacts = message.type === 'CONTACT' ? readMessageContacts(message.metadata) : [];
   const editable = canEditMessage(message);
@@ -437,7 +442,10 @@ function QuoteBlock({ quoted, isOutbound, onNavigate }: QuoteBlockProps) {
       <span className="flex min-w-0 items-center gap-1">
         {hasMediaIcon ? <QuotedTypeIcon type={quoted.type} /> : null}
         <span className="line-clamp-3 min-w-0 whitespace-pre-wrap text-[11px] leading-snug text-muted-foreground [overflow-wrap:anywhere]">
-          {messageSnippet(quoted.content, quoted.type)}
+          {quoted.type === 'AUDIO'
+            ? (formatAudioDuration(quoted.audioDurationSeconds) ??
+              messageSnippet(quoted.content, quoted.type))
+            : messageSnippet(quoted.content, quoted.type)}
         </span>
       </span>
     </>

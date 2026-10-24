@@ -138,6 +138,7 @@ export interface QuotedMessage {
   fromMe: boolean;
   content: string | null;
   type: MessageType;
+  audioDurationSeconds: number | null;
 }
 
 export interface ContactEntry {

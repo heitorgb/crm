@@ -1559,11 +1559,16 @@ function readQuotedFromMetadata(metadata: unknown): QuotedMessageInfo | null {
   return {
     messageId: typeof quoted.messageId === 'string' ? quoted.messageId : null,
     externalId: typeof quoted.externalId === 'string' ? quoted.externalId : null,
+    remoteJid: typeof quoted.remoteJid === 'string' ? quoted.remoteJid : null,
     authorName: typeof quoted.authorName === 'string' ? quoted.authorName : null,
     authorJid: typeof quoted.authorJid === 'string' ? quoted.authorJid : null,
     fromMe: quoted.fromMe === true,
     content: typeof quoted.content === 'string' ? quoted.content : null,
     type: typeof quoted.type === 'string' ? (quoted.type as MessageType) : MessageType.UNKNOWN,
+    audioDurationSeconds:
+      typeof quoted.audioDurationSeconds === 'number' && quoted.audioDurationSeconds > 0
+        ? quoted.audioDurationSeconds
+        : null,
   };
 }
 

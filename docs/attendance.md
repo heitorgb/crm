@@ -260,10 +260,12 @@ CRM (sem dependências novas). A tela é **full-bleed**: `MainContent` deixa de 
 - **Layout mobile**: abaixo de `lg`, o cabeçalho do atendimento mostra o avatar do usuário à
   esquerda e, à direita, os botões de câmera e menu. O título "Conversas"/contador e os filtros de
   instância/status saem da tela inicial; a busca fica logo abaixo do cabeçalho e as abas **Caixa de
-  entrada**/**Arquivadas** permanecem logo abaixo da busca, sem exigir a abertura do menu. Tema,
-  filtros de instância/status, limpeza de filtros e limpeza de busca ficam dentro do menu
-  hambúrguer (com a navegação), continuam valendo após fechar o menu e são compartilhados pela
-  store `attendance-view-store`. No desktop o layout e os filtros permanecem como antes.
+  entrada**/**Arquivadas** permanecem logo abaixo da busca, sem exigir a abertura do menu. Filtros
+  de instância/status, limpeza de filtros e limpeza de busca ficam dentro do menu hambúrguer (com a
+  navegação), continuam valendo após fechar o menu e são compartilhados pela store
+  `attendance-view-store`. A configuração de tema não é exibida no menu lateral mobile; o seletor
+  permanece no cabeçalho e em **Configurações → Aparência**, preservando a preferência salva. No
+  desktop o layout e os filtros permanecem como antes.
 - **Foto pela câmera**: o botão de câmera abre um `<input type="file" accept="image/*"
   capture="environment">` (com fallback para a galeria). A imagem é comprimida no navegador (até
   1600 px, JPEG) e o backend revalida/otimiza com `sharp`. Depois da prévia com legenda, o operador

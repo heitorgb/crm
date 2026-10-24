@@ -1,5 +1,5 @@
 -- CreateTable
-CREATE TABLE "message_reactions" (
+CREATE TABLE IF NOT EXISTS "message_reactions" (
     "id" UUID NOT NULL,
     "tenant_id" UUID NOT NULL,
     "conversation_id" UUID NOT NULL,
@@ -16,21 +16,43 @@ CREATE TABLE "message_reactions" (
 );
 
 -- CreateIndex
-CREATE UNIQUE INDEX "message_reactions_target_reactor_key" ON "message_reactions"("tenant_id", "conversation_id", "target_external_id", "reactor_id");
+CREATE UNIQUE INDEX IF NOT EXISTS "message_reactions_target_reactor_key" ON "message_reactions"("tenant_id", "conversation_id", "target_external_id", "reactor_id");
 
 -- CreateIndex
-CREATE INDEX "message_reactions_tenant_conversation_idx" ON "message_reactions"("tenant_id", "conversation_id");
+CREATE INDEX IF NOT EXISTS "message_reactions_tenant_conversation_idx" ON "message_reactions"("tenant_id", "conversation_id");
 
 -- AddForeignKey
-ALTER TABLE "message_reactions" ADD CONSTRAINT "message_reactions_tenant_id_fkey" FOREIGN KEY ("tenant_id") REFERENCES "tenants"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM "pg_constraint"
+        WHERE "conname" = 'message_reactions_tenant_id_fkey'
+          AND "conrelid" = to_regclass('message_reactions')
+    ) THEN
+        ALTER TABLE "message_reactions" ADD CONSTRAINT "message_reactions_tenant_id_fkey" FOREIGN KEY ("tenant_id") REFERENCES "tenants"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+    END IF;
+END $$;
 
 -- AddForeignKey
-ALTER TABLE "message_reactions" ADD CONSTRAINT "message_reactions_conversation_id_fkey" FOREIGN KEY ("conversation_id") REFERENCES "conversations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM "pg_constraint"
+        WHERE "conname" = 'message_reactions_conversation_id_fkey'
+          AND "conrelid" = to_regclass('message_reactions')
+    ) THEN
+        ALTER TABLE "message_reactions" ADD CONSTRAINT "message_reactions_conversation_id_fkey" FOREIGN KEY ("conversation_id") REFERENCES "conversations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+    END IF;
+END $$;
 
 -- Migrate reactions previously stored as standalone Message rows.
 -- Keep only the latest reaction per (tenant, conversation, target, reactor), since
 -- multiple REACTION rows may map to the same unique key and ON CONFLICT cannot
 -- update the same row twice within a single statement.
+-- The migration must be retryable: rows written by a previous failed attempt are
+-- updated in place instead of aborting with a unique constraint violation.
 WITH "reaction_rows" AS (
     SELECT
         m."id",
@@ -93,7 +115,15 @@ SELECT
     m."occurred_at",
     CURRENT_TIMESTAMP
 FROM "reaction_rows" m
-WHERE m."position" = 1;
+WHERE m."position" = 1
+ON CONFLICT ("tenant_id", "conversation_id", "target_external_id", "reactor_id") DO UPDATE
+SET
+    "target_from_me" = EXCLUDED."target_from_me",
+    "reactor_name" = EXCLUDED."reactor_name",
+    "from_me" = EXCLUDED."from_me",
+    "emoji" = EXCLUDED."emoji",
+    "occurred_at" = EXCLUDED."occurred_at",
+    "updated_at" = CURRENT_TIMESTAMP;
 
 -- Recompute the conversation preview without the reaction rows that are removed below.
 UPDATE "conversations" c

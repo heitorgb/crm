@@ -58,7 +58,7 @@ export function ScheduledMessagesPage() {
   const canManage = role === 'OWNER' || role === 'ADMIN';
 
   const [search, setSearch] = useState('');
-  const [status, setStatus] = useState<ScheduledMessageStatus | 'ALL'>('ALL');
+  const [status, setStatus] = useState<ScheduledMessageStatus | 'ALL'>('SCHEDULED');
   const [type, setType] = useState<ScheduledMessageType | 'ALL'>('ALL');
   const [page, setPage] = useState(1);
   const [formOpen, setFormOpen] = useState(false);

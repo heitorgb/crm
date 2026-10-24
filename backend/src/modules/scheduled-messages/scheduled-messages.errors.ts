@@ -41,8 +41,20 @@ export class ScheduledMessageEmptyContentError extends AppException {
 }
 
 export class ScheduledMessageInvalidWeekdaysError extends AppException {
-  constructor(message = 'Selecione ao menos um dia da semana.') {
+  constructor(message = 'Selecione pelo menos um dia da semana para continuar.') {
     super('SCHEDULED_MESSAGE_INVALID_WEEKDAYS', message, 400);
+  }
+}
+
+export class ScheduledMessageInvalidTimeError extends AppException {
+  constructor(message = 'Informe um horário válido no formato HH:mm.') {
+    super('SCHEDULED_MESSAGE_INVALID_TIME', message, 400);
+  }
+}
+
+export class ScheduledMessageInvalidDayOfMonthError extends AppException {
+  constructor(message = 'Informe um dia do mês entre 1 e 31.') {
+    super('SCHEDULED_MESSAGE_INVALID_DAY_OF_MONTH', message, 400);
   }
 }
 

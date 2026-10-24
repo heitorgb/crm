@@ -28,10 +28,22 @@ function buildFormData(input: ScheduledMessageInput): FormData {
     formData.append('valor', input.valor);
   }
   formData.append('recurrence', input.recurrence);
-  if (input.weekdays) {
-    formData.append('weekdays', JSON.stringify(input.weekdays));
+  if (input.recurrence === 'ONCE') {
+    if (input.scheduledAt) {
+      formData.append('scheduledAt', input.scheduledAt);
+    }
+  } else {
+    if (input.recurringTime) {
+      formData.append('recurringTime', input.recurringTime);
+    }
+    if (input.recurrence === 'MONTHLY') {
+      if (input.dayOfMonth !== undefined && input.dayOfMonth !== null) {
+        formData.append('dayOfMonth', String(input.dayOfMonth));
+      }
+    } else if (input.weekdays) {
+      formData.append('weekdays', JSON.stringify(input.weekdays));
+    }
   }
-  formData.append('scheduledAt', input.scheduledAt);
   formData.append('recipientConversationIds', JSON.stringify(input.conversationIds));
   if (input.file) {
     formData.append('file', input.file);

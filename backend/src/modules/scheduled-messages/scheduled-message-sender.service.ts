@@ -20,7 +20,7 @@ import {
   SCHEDULED_MESSAGE_STALE_PROCESSING_MS,
 } from './scheduled-messages.constants.js';
 import { renderScheduledMessage } from './scheduled-message-render.js';
-import { addRecurrence, type ScheduledRecurrence } from './scheduled-message-time.js';
+import { addRecurrence, localDayOfMonth, type ScheduledRecurrence } from './scheduled-message-time.js';
 
 const SYSTEM_USER_ID = '00000000-0000-4000-8000-000000000001';
 const SYSTEM_MEMBERSHIP_ID = '00000000-0000-4000-8000-000000000002';
@@ -266,7 +266,10 @@ export class ScheduledMessageSenderService {
       id: string;
       recurrence: 'ONCE' | 'DAILY' | 'WEEKLY' | 'MONTHLY';
       weekdays: number[];
+      dayOfMonth: number | null;
+      recurringTime: string | null;
       timeZone: string;
+      scheduledAt: Date;
       status: ScheduledMessageStatus;
       nextRunAt: Date | null;
     },
@@ -331,6 +334,11 @@ export class ScheduledMessageSenderService {
       schedule.recurrence as ScheduledRecurrence,
       schedule.timeZone,
       schedule.weekdays,
+      schedule.dayOfMonth ??
+        (schedule.recurrence === 'MONTHLY'
+          ? localDayOfMonth(schedule.scheduledAt, schedule.timeZone)
+          : null),
+      schedule.recurringTime,
     );
 
     await this.prisma.$transaction(async (tx) => {

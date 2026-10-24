@@ -24,6 +24,8 @@ function schedule(overrides: Record<string, unknown> = {}) {
     attachmentSize: null,
     recurrence: 'DAILY',
     weekdays: [1, 3, 5],
+    dayOfMonth: null,
+    recurringTime: '09:00',
     timeZone: 'America/Sao_Paulo',
     scheduledAt: SCHEDULED_FOR,
     nextRunAt: SCHEDULED_FOR,
@@ -203,6 +205,50 @@ describe('ScheduledMessageSenderService', () => {
       ],
       skipDuplicates: true,
     });
+  });
+
+  it('respects every selected weekday for a weekly recurrence', async () => {
+    const { service, tx } = createHarness({
+      recurrence: 'WEEKLY',
+      weekdays: [1, 4],
+      recurringTime: '09:00',
+    });
+
+    await service.processOccurrence(payload);
+
+    expect(tx.scheduledMessage.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          nextRunAt: new Date('2026-10-22T12:00:00.000Z'),
+        }),
+      }),
+    );
+  });
+
+  it('keeps the configured monthly day after a shorter month', async () => {
+    const scheduledFor = new Date('2026-02-28T21:30:00.000Z');
+    const { service, tx } = createHarness({
+      recurrence: 'MONTHLY',
+      weekdays: [],
+      dayOfMonth: 31,
+      recurringTime: '18:30',
+      scheduledAt: new Date('2026-01-31T21:30:00.000Z'),
+      nextRunAt: scheduledFor,
+    });
+
+    await service.processOccurrence({
+      tenantId: 'tenant-a',
+      scheduleId: 'schedule-1',
+      scheduledFor: scheduledFor.toISOString(),
+    });
+
+    expect(tx.scheduledMessage.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          nextRunAt: new Date('2026-03-31T21:30:00.000Z'),
+        }),
+      }),
+    );
   });
 
   it('keeps the one-time completion conditional on a non-canceled status', async () => {

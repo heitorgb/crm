@@ -23,6 +23,8 @@ export interface ScheduledMessage {
   valor: string | null;
   recurrence: ScheduledMessageRecurrence;
   weekdays: number[];
+  dayOfMonth: number | null;
+  recurringTime: string | null;
   timeZone: string;
   scheduledAt: string;
   nextRunAt: string | null;
@@ -74,7 +76,9 @@ export interface ScheduledMessageInput {
   valor?: string | null;
   recurrence: ScheduledMessageRecurrence;
   weekdays?: number[];
-  scheduledAt: string;
+  dayOfMonth?: number | null;
+  recurringTime?: string | null;
+  scheduledAt?: string;
   conversationIds: string[];
   file?: File | null;
   removeAttachment?: boolean;

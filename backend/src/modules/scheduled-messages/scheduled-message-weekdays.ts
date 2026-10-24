@@ -5,6 +5,12 @@ export const ALL_WEEKDAYS = [1, 2, 3, 4, 5, 6, 7] as const;
 
 export type ScheduledWeekday = (typeof ALL_WEEKDAYS)[number];
 
+const WEEKDAY_RECURRENCES: readonly ScheduledRecurrence[] = ['DAILY', 'WEEKLY'];
+
+export function usesWeekdays(recurrence: ScheduledRecurrence): boolean {
+  return WEEKDAY_RECURRENCES.includes(recurrence);
+}
+
 export function parseWeekdays(value: unknown): ScheduledWeekday[] {
   if (!Array.isArray(value)) {
     throw new ScheduledMessageInvalidWeekdaysError('Formato de dias da semana inválido.');
@@ -33,28 +39,17 @@ export function resolveWeekdays(
   recurrence: ScheduledRecurrence,
   value: unknown,
 ): ScheduledWeekday[] {
-  if (recurrence !== 'DAILY') {
+  if (!usesWeekdays(recurrence)) {
     return [];
-  }
-  if (value === undefined) {
-    return [...ALL_WEEKDAYS];
   }
   return parseWeekdays(value);
 }
 
-export function resolveUpdatedWeekdays(
-  recurrence: ScheduledRecurrence,
-  value: unknown,
-  current: { recurrence: ScheduledRecurrence; weekdays: number[] },
-): ScheduledWeekday[] {
-  if (recurrence !== 'DAILY') {
-    return [];
+export function sameWeekdays(left: readonly number[], right: readonly number[]): boolean {
+  if (left.length !== right.length) {
+    return false;
   }
-  if (value !== undefined) {
-    return parseWeekdays(value);
-  }
-  if (current.recurrence === 'DAILY') {
-    return [...current.weekdays].sort((left, right) => left - right) as ScheduledWeekday[];
-  }
-  return [...ALL_WEEKDAYS];
+  const sortedLeft = [...left].sort((a, b) => a - b);
+  const sortedRight = [...right].sort((a, b) => a - b);
+  return sortedLeft.every((day, index) => day === sortedRight[index]);
 }

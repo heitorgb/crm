@@ -21,8 +21,11 @@ import {
   ScheduledMessageAttachmentTooLargeError,
   ScheduledMessageEmptyContentError,
   ScheduledMessageInvalidDateError,
+  ScheduledMessageInvalidDayOfMonthError,
   ScheduledMessageInvalidRecipientsError,
+  ScheduledMessageInvalidTimeError,
   ScheduledMessageInvalidTypeError,
+  ScheduledMessageInvalidWeekdaysError,
   ScheduledMessageNotEditableError,
   ScheduledMessageNotFoundError,
   ScheduledMessageTooManyRecipientsError,
@@ -30,10 +33,22 @@ import {
 import {
   addDaysLocal,
   isFutureLocalDateTime,
+  localDayOfMonth,
+  localIsoWeekday,
+  localTimeOf,
+  nextRecurringOccurrence,
+  parseDayOfMonth,
+  parseTimeOfDay,
   toLocalDateTimeString,
   zonedTimeToUtc,
 } from './scheduled-message-time.js';
-import { resolveUpdatedWeekdays, resolveWeekdays } from './scheduled-message-weekdays.js';
+import {
+  ALL_WEEKDAYS,
+  parseWeekdays,
+  resolveWeekdays,
+  sameWeekdays,
+  usesWeekdays,
+} from './scheduled-message-weekdays.js';
 
 export interface ScheduledMessageAttachmentFile {
   buffer: Buffer;
@@ -50,7 +65,9 @@ export interface CreateScheduledMessageInput {
   valor: string | null;
   recurrence: string;
   weekdays?: unknown;
-  scheduledAt: string;
+  dayOfMonth?: unknown;
+  recurringTime?: string;
+  scheduledAt?: string;
   conversationIds: string[];
   file: ScheduledMessageAttachmentFile | null;
 }
@@ -62,6 +79,8 @@ export interface UpdateScheduledMessageInput {
   valor?: string | null;
   recurrence?: string;
   weekdays?: unknown;
+  dayOfMonth?: unknown;
+  recurringTime?: string;
   scheduledAt?: string;
   conversationIds?: string[];
   file: ScheduledMessageAttachmentFile | null;
@@ -85,6 +104,8 @@ export interface ScheduledMessageView {
   valor: string | null;
   recurrence: ScheduledMessageRecurrence;
   weekdays: number[];
+  dayOfMonth: number | null;
+  recurringTime: string | null;
   timeZone: string;
   scheduledAt: Date;
   nextRunAt: Date | null;
@@ -140,6 +161,13 @@ interface StoredAttachment {
   size: number | null;
 }
 
+interface ResolvedSchedule {
+  weekdays: number[];
+  dayOfMonth: number | null;
+  recurringTime: string | null;
+  scheduledAt: Date;
+}
+
 const EMPTY_ATTACHMENT: StoredAttachment = {
   storageKey: null,
   thumbnailKey: null,
@@ -156,6 +184,8 @@ const SCHEDULE_SELECT = {
   valor: true,
   recurrence: true,
   weekdays: true,
+  dayOfMonth: true,
+  recurringTime: true,
   timeZone: true,
   scheduledAt: true,
   nextRunAt: true,
@@ -233,7 +263,6 @@ export class ScheduledMessagesService {
   async create(input: CreateScheduledMessageInput): Promise<ScheduledMessageView> {
     const type = parseType(input.type);
     const recurrence = parseRecurrence(input.recurrence);
-    const weekdays = resolveWeekdays(recurrence, input.weekdays);
     const title = input.title.trim();
     const content = input.content.trim();
     if (title.length === 0 || content.length === 0) {
@@ -241,13 +270,13 @@ export class ScheduledMessagesService {
     }
 
     const timeZone = this.timeZone;
-    const scheduledAt = this.resolveScheduledAt(input.scheduledAt, timeZone);
+    const schedule = this.resolveCreateSchedule(recurrence, input, timeZone);
     const recipients = await this.resolveRecipients(input.tenantId, input.conversationIds);
     const scheduleId = randomUUID();
     const attachment = await this.storeAttachment(input.tenantId, scheduleId, input.file);
 
     try {
-      const schedule = await this.prisma.scheduledMessage.create({
+      const created = await this.prisma.scheduledMessage.create({
         data: {
           id: scheduleId,
           tenantId: input.tenantId,
@@ -257,10 +286,12 @@ export class ScheduledMessagesService {
           content,
           valor: normalizeOptional(input.valor),
           recurrence,
-          weekdays,
+          weekdays: schedule.weekdays,
+          dayOfMonth: schedule.dayOfMonth,
+          recurringTime: schedule.recurringTime,
           timeZone,
-          scheduledAt,
-          nextRunAt: scheduledAt,
+          scheduledAt: schedule.scheduledAt,
+          nextRunAt: schedule.scheduledAt,
           recipientCount: recipients.length,
           status: ScheduledMessageStatus.SCHEDULED,
           attachmentStorageKey: attachment.storageKey,
@@ -271,7 +302,7 @@ export class ScheduledMessagesService {
           recipients: {
             create: recipients.map((recipient) => ({
               tenantId: input.tenantId,
-              scheduledFor: scheduledAt,
+              scheduledFor: schedule.scheduledAt,
               ...recipient,
               status: ScheduledMessageRecipientStatus.PENDING,
             })),
@@ -279,7 +310,7 @@ export class ScheduledMessagesService {
         },
         select: SCHEDULE_SELECT,
       });
-      return toView(schedule);
+      return toView(created);
     } catch (error) {
       await this.deleteStoredAttachment(attachment);
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
@@ -310,10 +341,6 @@ export class ScheduledMessagesService {
 
     const type = input.type ? parseType(input.type) : current.type;
     const recurrence = input.recurrence ? parseRecurrence(input.recurrence) : current.recurrence;
-    const weekdays = resolveUpdatedWeekdays(recurrence, input.weekdays, {
-      recurrence: current.recurrence,
-      weekdays: current.weekdays,
-    });
     const title = input.title !== undefined ? input.title.trim() : current.title;
     const content = input.content !== undefined ? input.content.trim() : current.content;
     if (title.length === 0 || content.length === 0) {
@@ -322,10 +349,57 @@ export class ScheduledMessagesService {
 
     const timeZone = current.timeZone;
     const currentOccurrence = current.nextRunAt ?? current.scheduledAt;
-    const scheduledAt =
-      input.scheduledAt !== undefined
-        ? this.resolveScheduledAt(input.scheduledAt, timeZone)
-        : currentOccurrence;
+    const weekdays = this.resolveUpdateWeekdays(
+      recurrence,
+      input.weekdays,
+      current,
+      currentOccurrence,
+      timeZone,
+    );
+    const recurringTime =
+      recurrence === 'ONCE'
+        ? null
+        : this.resolveRecurringTime(input.recurringTime, input.scheduledAt, current, timeZone);
+    const dayOfMonth =
+      recurrence === 'MONTHLY'
+        ? this.resolveDayOfMonth(input.dayOfMonth, input.scheduledAt, current, timeZone)
+        : null;
+
+    let scheduledAt: Date;
+    let nextRunAt: Date;
+    if (recurrence === 'ONCE') {
+      scheduledAt =
+        input.scheduledAt !== undefined
+          ? this.resolveScheduledAt(input.scheduledAt, timeZone)
+          : current.scheduledAt;
+      nextRunAt = input.scheduledAt !== undefined ? scheduledAt : currentOccurrence;
+    } else {
+      const currentConfig = this.currentRecurringConfig(current, currentOccurrence, timeZone);
+      const timingChanged =
+        current.recurrence !== recurrence ||
+        currentConfig.recurringTime !== recurringTime ||
+        (recurrence === 'MONTHLY'
+          ? currentConfig.dayOfMonth !== dayOfMonth
+          : !sameWeekdays(currentConfig.weekdays, weekdays));
+      if (timingChanged) {
+        if (!recurringTime) {
+          throw new ScheduledMessageInvalidTimeError();
+        }
+        const next = nextRecurringOccurrence(
+          recurrence,
+          { weekdays, dayOfMonth, recurringTime },
+          timeZone,
+        );
+        if (!next) {
+          throw new ScheduledMessageInvalidDateError();
+        }
+        scheduledAt = next;
+        nextRunAt = next;
+      } else {
+        scheduledAt = current.scheduledAt;
+        nextRunAt = currentOccurrence;
+      }
+    }
 
     const recipients =
       input.conversationIds !== undefined
@@ -371,7 +445,7 @@ export class ScheduledMessagesService {
             data: recipients.map((recipient) => ({
               tenantId,
               scheduledMessageId: id,
-              scheduledFor: scheduledAt,
+              scheduledFor: nextRunAt,
               ...recipient,
               status: ScheduledMessageRecipientStatus.PENDING,
             })),
@@ -388,8 +462,10 @@ export class ScheduledMessagesService {
             valor: input.valor !== undefined ? normalizeOptional(input.valor) : current.valor,
             recurrence,
             weekdays,
-            scheduledAt: input.scheduledAt !== undefined ? scheduledAt : current.scheduledAt,
-            nextRunAt: scheduledAt,
+            dayOfMonth,
+            recurringTime,
+            scheduledAt,
+            nextRunAt,
             recipientCount: recipients.length,
             attachmentStorageKey: attachment.storageKey,
             attachmentThumbnailKey: attachment.thumbnailKey,
@@ -458,11 +534,53 @@ export class ScheduledMessagesService {
     const original = await this.requireSchedule(tenantId, id);
     const timeZone = original.timeZone;
     const originalOccurrence = original.nextRunAt ?? original.scheduledAt;
-    let localDefault = addDaysLocal(toLocalDateTimeString(originalOccurrence, timeZone), 1);
-    if (!isFutureLocalDateTime(localDefault, timeZone)) {
-      localDefault = toLocalDateTimeString(new Date(Date.now() + 24 * 60 * 60 * 1000), timeZone);
+    let scheduledAt: Date;
+    let weekdays: number[];
+    let dayOfMonth: number | null;
+    let recurringTime: string | null;
+
+    if (original.recurrence === 'ONCE') {
+      let localDefault = addDaysLocal(toLocalDateTimeString(originalOccurrence, timeZone), 1);
+      if (!isFutureLocalDateTime(localDefault, timeZone)) {
+        localDefault = toLocalDateTimeString(new Date(Date.now() + 24 * 60 * 60 * 1000), timeZone);
+      }
+      scheduledAt = this.resolveScheduledAt(scheduledAtInput ?? localDefault, timeZone);
+      weekdays = [];
+      dayOfMonth = null;
+      recurringTime = null;
+    } else {
+      recurringTime = this.resolveRecurringTime(
+        scheduledAtInput,
+        scheduledAtInput,
+        original,
+        timeZone,
+      );
+      weekdays = usesWeekdays(original.recurrence)
+        ? original.weekdays.length > 0
+          ? [...original.weekdays].sort((left, right) => left - right)
+          : original.recurrence === 'DAILY'
+            ? [...ALL_WEEKDAYS]
+            : [localIsoWeekday(originalOccurrence, timeZone)]
+        : [];
+      dayOfMonth =
+        original.recurrence === 'MONTHLY'
+          ? (original.dayOfMonth ?? localDayOfMonth(original.scheduledAt, timeZone))
+          : null;
+      if (scheduledAtInput) {
+        scheduledAt = this.resolveScheduledAt(scheduledAtInput, timeZone);
+      } else {
+        const next = nextRecurringOccurrence(
+          original.recurrence,
+          { weekdays, dayOfMonth, recurringTime },
+          timeZone,
+        );
+        if (!next) {
+          throw new ScheduledMessageInvalidDateError();
+        }
+        scheduledAt = next;
+      }
     }
-    const scheduledAt = this.resolveScheduledAt(scheduledAtInput ?? localDefault, timeZone);
+
     const definitions = await this.existingRecipients(original.id, originalOccurrence);
     if (definitions.length === 0) {
       throw new ScheduledMessageInvalidRecipientsError();
@@ -470,7 +588,7 @@ export class ScheduledMessagesService {
 
     const duplicateId = randomUUID();
     const attachment = await this.copyAttachment(tenantId, duplicateId, original);
-    const schedule = await this.prisma.scheduledMessage.create({
+    const created = await this.prisma.scheduledMessage.create({
       data: {
         id: duplicateId,
         tenantId,
@@ -480,7 +598,9 @@ export class ScheduledMessagesService {
         content: original.content,
         valor: original.valor,
         recurrence: original.recurrence,
-        weekdays: original.weekdays,
+        weekdays,
+        dayOfMonth,
+        recurringTime,
         timeZone,
         scheduledAt,
         nextRunAt: scheduledAt,
@@ -503,7 +623,7 @@ export class ScheduledMessagesService {
       select: SCHEDULE_SELECT,
     });
 
-    return toView(schedule);
+    return toView(created);
   }
 
   async retry(id: string, scheduledForInput?: string): Promise<ScheduledMessageView> {
@@ -674,6 +794,147 @@ export class ScheduledMessagesService {
       throw new ScheduledMessageInvalidDateError('Data e hora inválidas.');
     }
     return date;
+  }
+
+  private resolveCreateSchedule(
+    recurrence: ScheduledMessageRecurrence,
+    input: {
+      scheduledAt?: string;
+      recurringTime?: string;
+      dayOfMonth?: unknown;
+      weekdays?: unknown;
+    },
+    timeZone: string,
+  ): ResolvedSchedule {
+    if (recurrence === 'ONCE') {
+      return {
+        weekdays: [],
+        dayOfMonth: null,
+        recurringTime: null,
+        scheduledAt: this.resolveScheduledAt(input.scheduledAt ?? '', timeZone),
+      };
+    }
+
+    const weekdays = usesWeekdays(recurrence)
+      ? resolveWeekdays(recurrence, input.weekdays ?? [])
+      : [];
+    const recurringTime = this.resolveRecurringTime(
+      input.recurringTime,
+      input.scheduledAt,
+      null,
+      timeZone,
+    );
+    const dayOfMonth =
+      recurrence === 'MONTHLY'
+        ? this.resolveDayOfMonth(input.dayOfMonth, input.scheduledAt, null, timeZone)
+        : null;
+    const scheduledAt = nextRecurringOccurrence(
+      recurrence,
+      { weekdays, dayOfMonth, recurringTime },
+      timeZone,
+    );
+    if (!scheduledAt) {
+      throw new ScheduledMessageInvalidDateError();
+    }
+    return { weekdays, dayOfMonth, recurringTime, scheduledAt };
+  }
+
+  private resolveUpdateWeekdays(
+    recurrence: ScheduledMessageRecurrence,
+    value: unknown,
+    current: PrismaSchedule,
+    currentOccurrence: Date,
+    timeZone: string,
+  ): number[] {
+    if (!usesWeekdays(recurrence)) {
+      return [];
+    }
+    if (value !== undefined) {
+      return parseWeekdays(value);
+    }
+    if (usesWeekdays(current.recurrence)) {
+      if (current.weekdays.length > 0) {
+        return [...current.weekdays].sort((left, right) => left - right);
+      }
+      if (current.recurrence === 'DAILY') {
+        return [...ALL_WEEKDAYS];
+      }
+      return [localIsoWeekday(currentOccurrence, timeZone)];
+    }
+    throw new ScheduledMessageInvalidWeekdaysError();
+  }
+
+  private currentRecurringConfig(
+    current: PrismaSchedule,
+    currentOccurrence: Date,
+    timeZone: string,
+  ): { weekdays: number[]; dayOfMonth: number | null; recurringTime: string } {
+    const weekdays = usesWeekdays(current.recurrence)
+      ? current.weekdays.length > 0
+        ? [...current.weekdays].sort((left, right) => left - right)
+        : current.recurrence === 'DAILY'
+          ? [...ALL_WEEKDAYS]
+          : [localIsoWeekday(currentOccurrence, timeZone)]
+      : [];
+    const dayOfMonth =
+      current.recurrence === 'MONTHLY'
+        ? (current.dayOfMonth ?? localDayOfMonth(current.scheduledAt, timeZone))
+        : null;
+    const recurringTime =
+      parseTimeOfDay(current.recurringTime) ?? localTimeOf(current.scheduledAt, timeZone);
+    return { weekdays, dayOfMonth, recurringTime };
+  }
+
+  private resolveRecurringTime(
+    value: string | undefined,
+    scheduledAtFallback: string | undefined,
+    current: { recurringTime: string | null; scheduledAt: Date } | null,
+    timeZone: string,
+  ): string {
+    if (value !== undefined) {
+      const parsed = parseTimeOfDay(value);
+      if (!parsed) {
+        throw new ScheduledMessageInvalidTimeError();
+      }
+      return parsed;
+    }
+    if (scheduledAtFallback) {
+      const date = zonedTimeToUtc(scheduledAtFallback, timeZone);
+      if (!date) {
+        throw new ScheduledMessageInvalidDateError('Data e hora inválidas.');
+      }
+      return localTimeOf(date, timeZone);
+    }
+    if (current) {
+      return parseTimeOfDay(current.recurringTime) ?? localTimeOf(current.scheduledAt, timeZone);
+    }
+    throw new ScheduledMessageInvalidTimeError();
+  }
+
+  private resolveDayOfMonth(
+    value: unknown,
+    scheduledAtFallback: string | undefined,
+    current: { dayOfMonth: number | null; scheduledAt: Date } | null,
+    timeZone: string,
+  ): number {
+    if (value !== undefined) {
+      const parsed = parseDayOfMonth(value);
+      if (parsed === null) {
+        throw new ScheduledMessageInvalidDayOfMonthError();
+      }
+      return parsed;
+    }
+    if (scheduledAtFallback) {
+      const date = zonedTimeToUtc(scheduledAtFallback, timeZone);
+      if (!date) {
+        throw new ScheduledMessageInvalidDateError('Data e hora inválidas.');
+      }
+      return localDayOfMonth(date, timeZone);
+    }
+    if (current) {
+      return current.dayOfMonth ?? localDayOfMonth(current.scheduledAt, timeZone);
+    }
+    throw new ScheduledMessageInvalidDayOfMonthError();
   }
 
   private async resolveRecipients(
@@ -892,6 +1153,8 @@ export function toView(schedule: PrismaSchedule): ScheduledMessageView {
     valor: schedule.valor,
     recurrence: schedule.recurrence,
     weekdays: schedule.weekdays,
+    dayOfMonth: schedule.dayOfMonth,
+    recurringTime: schedule.recurringTime,
     timeZone: schedule.timeZone,
     scheduledAt: schedule.scheduledAt,
     nextRunAt: schedule.nextRunAt,

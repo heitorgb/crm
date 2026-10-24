@@ -1102,6 +1102,8 @@ model ScheduledMessage {
   attachmentSize         Int?                       @map("attachment_size")
   recurrence             ScheduledMessageRecurrence @default(ONCE)
   weekdays               Int[]                      @default([])
+  dayOfMonth             Int?                       @map("day_of_month")
+  recurringTime          String?                    @db.VarChar(5) @map("recurring_time")
   timeZone               String                     @default("America/Sao_Paulo") @map("time_zone")
   scheduledAt            DateTime                   @map("scheduled_at")
   nextRunAt              DateTime?                  @map("next_run_at")

@@ -1,4 +1,6 @@
 const LOCAL_DATE_TIME_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/;
+const TIME_OF_DAY_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/;
+const ALL_WEEKDAYS = [1, 2, 3, 4, 5, 6, 7];
 
 interface LocalParts {
   year: number;
@@ -9,6 +11,12 @@ interface LocalParts {
 }
 
 export type ScheduledRecurrence = 'ONCE' | 'DAILY' | 'WEEKLY' | 'MONTHLY';
+
+export interface RecurringSchedule {
+  weekdays: readonly number[];
+  dayOfMonth: number | null;
+  recurringTime: string;
+}
 
 export function parseLocalDateTime(value: string): LocalParts | null {
   const match = LOCAL_DATE_TIME_PATTERN.exec(value);
@@ -46,6 +54,24 @@ export function parseLocalDateTime(value: string): LocalParts | null {
   return parts;
 }
 
+/** Validates a recurring clock time in `HH:mm` format. */
+export function parseTimeOfDay(value: unknown): string | null {
+  if (typeof value !== 'string' || !TIME_OF_DAY_PATTERN.test(value)) {
+    return null;
+  }
+  return value;
+}
+
+/** Validates the configured day of month (1..31), accepting numeric strings. */
+export function parseDayOfMonth(value: unknown): number | null {
+  const numeric =
+    typeof value === 'string' && value.trim().length > 0 ? Number(value.trim()) : value;
+  if (typeof numeric !== 'number' || !Number.isInteger(numeric) || numeric < 1 || numeric > 31) {
+    return null;
+  }
+  return numeric;
+}
+
 /** Converts a local `YYYY-MM-DDTHH:mm` in the given IANA zone to a UTC instant. */
 export function zonedTimeToUtc(value: string, timeZone: string): Date | null {
   const parts = parseLocalDateTime(value);
@@ -69,48 +95,122 @@ export function isFutureLocalDateTime(value: string, timeZone: string, now = new
   return date !== null && date.getTime() > now.getTime();
 }
 
+export function localTimeOf(date: Date, timeZone: string): string {
+  const parts = localParts(date, timeZone);
+  return `${pad(parts.hour)}:${pad(parts.minute)}`;
+}
+
+export function localDayOfMonth(date: Date, timeZone: string): number {
+  return localParts(date, timeZone).day;
+}
+
+export function localIsoWeekday(date: Date, timeZone: string): number {
+  return isoWeekdayOfParts(localParts(date, timeZone));
+}
+
+/**
+ * Calculates the first future occurrence for a recurring schedule from `now`,
+ * respecting the selected weekdays or configured day of month and local time.
+ */
+export function nextRecurringOccurrence(
+  recurrence: ScheduledRecurrence,
+  config: RecurringSchedule,
+  timeZone: string,
+  now = new Date(),
+): Date | null {
+  const time = parseTimeOfDay(config.recurringTime);
+  if (!time) {
+    return null;
+  }
+
+  const nowParts = localParts(now, timeZone);
+
+  if (recurrence === 'DAILY' || recurrence === 'WEEKLY') {
+    const allowed =
+      config.weekdays.length > 0
+        ? new Set(config.weekdays)
+        : recurrence === 'DAILY'
+          ? new Set(ALL_WEEKDAYS)
+          : new Set<number>();
+    if (allowed.size === 0) {
+      return null;
+    }
+
+    for (let offset = 0; offset <= 7; offset += 1) {
+      const candidateDate = new Date(
+        Date.UTC(nowParts.year, nowParts.month - 1, nowParts.day + offset),
+      );
+      if (!allowed.has(isoWeekday(candidateDate))) {
+        continue;
+      }
+      const candidate = zonedTimeToUtc(
+        `${localDateString(candidateDate)}T${time}`,
+        timeZone,
+      );
+      if (candidate && candidate.getTime() > now.getTime()) {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
+  if (recurrence === 'MONTHLY') {
+    if (config.dayOfMonth === null) {
+      return null;
+    }
+    for (let monthOffset = 0; monthOffset <= 1; monthOffset += 1) {
+      const totalMonths = nowParts.month - 1 + monthOffset;
+      const year = nowParts.year + Math.floor(totalMonths / 12);
+      const month = ((totalMonths % 12) + 12) % 12;
+      const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+      const day = Math.min(config.dayOfMonth, lastDay);
+      const candidate = zonedTimeToUtc(
+        `${localDateString(new Date(Date.UTC(year, month, day)))}T${time}`,
+        timeZone,
+      );
+      if (candidate && candidate.getTime() > now.getTime()) {
+        return candidate;
+      }
+    }
+  }
+
+  return null;
+}
+
 export function addRecurrence(
   current: Date,
   recurrence: ScheduledRecurrence,
   timeZone: string,
   weekdays: readonly number[] = [],
+  dayOfMonth: number | null = null,
+  recurringTime: string | null = null,
 ): Date {
   if (recurrence === 'ONCE') {
     return current;
   }
 
   const parts = localParts(current, timeZone);
+  const time = parseTimeOfDay(recurringTime) ?? `${pad(parts.hour)}:${pad(parts.minute)}`;
   const local = new Date(Date.UTC(parts.year, parts.month - 1, parts.day));
-  if (recurrence === 'DAILY') {
-    const allowed = new Set(weekdays);
-    let offset = 1;
-    if (allowed.size > 0) {
-      while (offset <= 7) {
-        const candidate = new Date(Date.UTC(parts.year, parts.month - 1, parts.day + offset));
-        if (allowed.has(isoWeekday(candidate))) {
-          break;
-        }
-        offset += 1;
-      }
-      if (offset > 7) {
-        offset = 1;
-      }
-    }
-    local.setUTCDate(local.getUTCDate() + offset);
-  } else if (recurrence === 'WEEKLY') {
-    local.setUTCDate(local.getUTCDate() + 7);
+
+  if (recurrence === 'DAILY' || recurrence === 'WEEKLY') {
+    const allowed =
+      weekdays.length > 0
+        ? new Set(weekdays)
+        : recurrence === 'DAILY'
+          ? new Set(ALL_WEEKDAYS)
+          : new Set([isoWeekdayOfParts(parts)]);
+    local.setUTCDate(local.getUTCDate() + nextWeekdayOffset(parts, allowed));
   } else {
     const totalMonths = parts.month - 1 + 1;
     const year = parts.year + Math.floor(totalMonths / 12);
     const month = ((totalMonths % 12) + 12) % 12;
     const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
-    const day = Math.min(parts.day, lastDay);
-    local.setUTCFullYear(year, month, day);
+    const configuredDay = dayOfMonth ?? parts.day;
+    local.setUTCFullYear(year, month, Math.min(configuredDay, lastDay));
   }
 
-  const nextLocal = `${pad(local.getUTCFullYear())}-${pad(local.getUTCMonth() + 1)}-${pad(
-    local.getUTCDate(),
-  )}T${pad(parts.hour)}:${pad(parts.minute)}`;
+  const nextLocal = `${localDateString(local)}T${time}`;
   return zonedTimeToUtc(nextLocal, timeZone) ?? current;
 }
 
@@ -120,21 +220,37 @@ export function addDaysLocal(value: string, days: number): string {
     return value;
   }
   const date = new Date(Date.UTC(parts.year, parts.month - 1, parts.day + days));
-  return `${pad(date.getUTCFullYear())}-${pad(date.getUTCMonth() + 1)}-${pad(
-    date.getUTCDate(),
-  )}T${pad(parts.hour)}:${pad(parts.minute)}`;
+  return `${localDateString(date)}T${pad(parts.hour)}:${pad(parts.minute)}`;
 }
 
 export function toLocalDateTimeString(date: Date, timeZone: string): string {
   const parts = localParts(date, timeZone);
-  return `${pad(parts.year)}-${pad(parts.month)}-${pad(parts.day)}T${pad(parts.hour)}:${pad(
-    parts.minute,
-  )}`;
+  return `${localDateString(
+    new Date(Date.UTC(parts.year, parts.month - 1, parts.day)),
+  )}T${pad(parts.hour)}:${pad(parts.minute)}`;
+}
+
+function nextWeekdayOffset(parts: LocalParts, allowed: ReadonlySet<number>): number {
+  for (let offset = 1; offset <= 7; offset += 1) {
+    const candidate = new Date(Date.UTC(parts.year, parts.month - 1, parts.day + offset));
+    if (allowed.has(isoWeekday(candidate))) {
+      return offset;
+    }
+  }
+  return 1;
 }
 
 function isoWeekday(date: Date): number {
   const day = date.getUTCDay();
   return day === 0 ? 7 : day;
+}
+
+function isoWeekdayOfParts(parts: LocalParts): number {
+  return isoWeekday(new Date(Date.UTC(parts.year, parts.month - 1, parts.day)));
+}
+
+function localDateString(date: Date): string {
+  return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}`;
 }
 
 function localParts(date: Date, timeZone: string): LocalParts {

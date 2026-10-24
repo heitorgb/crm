@@ -64,7 +64,9 @@ export class ScheduledMessagesController {
       valor: parsed.fields.valor ?? null,
       recurrence: parsed.fields.recurrence ?? 'ONCE',
       weekdays: parseWeekdaysField(parsed.fields.weekdays),
-      scheduledAt: parsed.fields.scheduledAt ?? '',
+      dayOfMonth: parsed.fields.dayOfMonth,
+      recurringTime: parsed.fields.recurringTime,
+      scheduledAt: parsed.fields.scheduledAt,
       conversationIds: parseConversationIds(parsed.fields.recipientConversationIds),
       file: parsed.file,
     });
@@ -108,6 +110,8 @@ export class ScheduledMessagesController {
       valor: parsed.fields.valor,
       recurrence: parsed.fields.recurrence,
       weekdays: parseWeekdaysField(parsed.fields.weekdays),
+      dayOfMonth: parsed.fields.dayOfMonth,
+      recurringTime: parsed.fields.recurringTime,
       scheduledAt: parsed.fields.scheduledAt,
       conversationIds:
         parsed.fields.recipientConversationIds !== undefined

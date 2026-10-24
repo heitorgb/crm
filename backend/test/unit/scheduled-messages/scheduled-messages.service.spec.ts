@@ -7,7 +7,10 @@ import type { PrismaService } from '../../../src/infrastructure/prisma/prisma.se
 import type { JobQueue } from '../../../src/infrastructure/queue/job-queue.types.js';
 import type { StorageService } from '../../../src/infrastructure/storage/storage.types.js';
 import type { MediaProcessingService } from '../../../src/infrastructure/media/media-processing.service.js';
-import { ScheduledMessageInvalidWeekdaysError } from '../../../src/modules/scheduled-messages/scheduled-messages.errors.js';
+import {
+  ScheduledMessageInvalidDayOfMonthError,
+  ScheduledMessageInvalidWeekdaysError,
+} from '../../../src/modules/scheduled-messages/scheduled-messages.errors.js';
 import { ScheduledMessagesService } from '../../../src/modules/scheduled-messages/scheduled-messages.service.js';
 
 const CONTEXT: TenantContext = {
@@ -16,6 +19,8 @@ const CONTEXT: TenantContext = {
   membershipId: 'member-a',
   role: 'OWNER',
 };
+
+const NOW = new Date('2026-10-19T13:00:00.000Z');
 
 function storedSchedule(overrides: Record<string, unknown> = {}) {
   return {
@@ -26,9 +31,11 @@ function storedSchedule(overrides: Record<string, unknown> = {}) {
     valor: null,
     recurrence: 'DAILY',
     weekdays: [1, 3, 5],
+    dayOfMonth: null,
+    recurringTime: '09:00',
     timeZone: 'America/Sao_Paulo',
-    scheduledAt: new Date('2099-01-05T12:00:00.000Z'),
-    nextRunAt: new Date('2099-01-05T12:00:00.000Z'),
+    scheduledAt: new Date('2026-10-19T12:00:00.000Z'),
+    nextRunAt: new Date('2026-10-21T12:00:00.000Z'),
     lastRunAt: null,
     recipientCount: 1,
     status: ScheduledMessageStatus.SCHEDULED,
@@ -46,8 +53,15 @@ function storedSchedule(overrides: Record<string, unknown> = {}) {
 
 function createHarness() {
   const tx = {
-    scheduledMessage: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
-    scheduledMessageRecipient: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+    scheduledMessage: {
+      update: vi.fn().mockResolvedValue({}),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+    },
+    scheduledMessageRecipient: {
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+      createMany: vi.fn().mockResolvedValue({ count: 1 }),
+    },
   };
 
   const prisma = {
@@ -118,20 +132,56 @@ function createInput(overrides: Record<string, unknown> = {}) {
     valor: null,
     recurrence: 'DAILY',
     weekdays: [5, 1, 3],
-    scheduledAt: '2099-01-05T09:00',
+    recurringTime: '09:00',
     conversationIds: ['conversation-1'],
     file: null,
     ...overrides,
   };
 }
 
-describe('ScheduledMessagesService weekdays', () => {
+function mockCreatedSchedule(prisma: ReturnType<typeof createHarness>['prisma']) {
+  prisma.scheduledMessage.create.mockImplementation(
+    async ({ data }: { data: Record<string, unknown> }) =>
+      storedSchedule({
+        recurrence: data.recurrence,
+        weekdays: data.weekdays,
+        dayOfMonth: data.dayOfMonth ?? null,
+        recurringTime: data.recurringTime ?? null,
+        scheduledAt: data.scheduledAt,
+        nextRunAt: data.nextRunAt,
+      }),
+  );
+}
+
+beforeEach(() => {
+  vi.useFakeTimers();
+  vi.setSystemTime(NOW);
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+describe('ScheduledMessagesService recurring configuration', () => {
   it('rejects an empty weekday selection before persisting', async () => {
     const { service, prisma } = createHarness();
 
     await expect(service.create(createInput({ weekdays: [] }))).rejects.toBeInstanceOf(
       ScheduledMessageInvalidWeekdaysError,
     );
+
+    expect(prisma.scheduledMessage.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects a weekday-based recurrence without an explicit selection', async () => {
+    const { service, prisma } = createHarness();
+
+    await expect(service.create(createInput({ weekdays: undefined }))).rejects.toBeInstanceOf(
+      ScheduledMessageInvalidWeekdaysError,
+    );
+    await expect(
+      service.create(createInput({ recurrence: 'WEEKLY', weekdays: undefined })),
+    ).rejects.toBeInstanceOf(ScheduledMessageInvalidWeekdaysError);
 
     expect(prisma.scheduledMessage.create).not.toHaveBeenCalled();
   });
@@ -149,38 +199,231 @@ describe('ScheduledMessagesService weekdays', () => {
     expect(prisma.scheduledMessage.create).not.toHaveBeenCalled();
   });
 
-  it('persists the normalized selection for a daily schedule', async () => {
+  it('persists daily weekdays and calculates the first selected occurrence', async () => {
     const { service, prisma } = createHarness();
-    prisma.scheduledMessage.create.mockImplementation(
-      async ({ data }: { data: { weekdays: number[] } }) =>
-        storedSchedule({ weekdays: data.weekdays }),
-    );
+    mockCreatedSchedule(prisma);
 
     const result = await service.create(createInput());
 
     expect(prisma.scheduledMessage.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ recurrence: 'DAILY', weekdays: [1, 3, 5] }),
+        data: expect.objectContaining({
+          recurrence: 'DAILY',
+          weekdays: [1, 3, 5],
+          dayOfMonth: null,
+          recurringTime: '09:00',
+          scheduledAt: new Date('2026-10-21T12:00:00.000Z'),
+          nextRunAt: new Date('2026-10-21T12:00:00.000Z'),
+        }),
       }),
     );
     expect(result.weekdays).toEqual([1, 3, 5]);
+    expect(result.recurringTime).toBe('09:00');
   });
 
-  it('clears weekdays when the schedule does not use them', async () => {
+  it('persists weekly weekdays and respects every selected day', async () => {
     const { service, prisma } = createHarness();
-    prisma.scheduledMessage.create.mockImplementation(
-      async ({ data }: { data: { weekdays: number[] } }) =>
-        storedSchedule({ recurrence: 'WEEKLY', weekdays: data.weekdays }),
-    );
+    mockCreatedSchedule(prisma);
 
-    const result = await service.create(createInput({ recurrence: 'WEEKLY', weekdays: 'invalid' }));
+    const result = await service.create(
+      createInput({ recurrence: 'WEEKLY', weekdays: [4, 1], recurringTime: '09:00' }),
+    );
 
     expect(prisma.scheduledMessage.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ recurrence: 'WEEKLY', weekdays: [] }),
+        data: expect.objectContaining({
+          recurrence: 'WEEKLY',
+          weekdays: [1, 4],
+          recurringTime: '09:00',
+          scheduledAt: new Date('2026-10-22T12:00:00.000Z'),
+        }),
       }),
     );
+    expect(result.weekdays).toEqual([1, 4]);
+  });
+
+  it('persists the monthly day and ignores residual weekdays', async () => {
+    const { service, prisma } = createHarness();
+    mockCreatedSchedule(prisma);
+
+    const result = await service.create(
+      createInput({
+        recurrence: 'MONTHLY',
+        dayOfMonth: '31',
+        weekdays: 'invalid',
+        recurringTime: '09:00',
+      }),
+    );
+
+    expect(prisma.scheduledMessage.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          recurrence: 'MONTHLY',
+          weekdays: [],
+          dayOfMonth: 31,
+          recurringTime: '09:00',
+          scheduledAt: new Date('2026-10-31T12:00:00.000Z'),
+        }),
+      }),
+    );
+    expect(result.dayOfMonth).toBe(31);
     expect(result.weekdays).toEqual([]);
+  });
+
+  it('rejects an invalid or missing monthly day', async () => {
+    const { service, prisma } = createHarness();
+
+    for (const dayOfMonth of [undefined, '', 0, 32, 1.5]) {
+      await expect(
+        service.create(createInput({ recurrence: 'MONTHLY', dayOfMonth })),
+      ).rejects.toBeInstanceOf(ScheduledMessageInvalidDayOfMonthError);
+    }
+
+    expect(prisma.scheduledMessage.create).not.toHaveBeenCalled();
+  });
+
+  it('keeps ONCE using the provided future date and clears recurring fields', async () => {
+    const { service, prisma } = createHarness();
+    mockCreatedSchedule(prisma);
+
+    const result = await service.create(
+      createInput({
+        recurrence: 'ONCE',
+        scheduledAt: '2099-01-05T09:00',
+        weekdays: [1, 2],
+        dayOfMonth: 31,
+      }),
+    );
+
+    expect(prisma.scheduledMessage.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          recurrence: 'ONCE',
+          weekdays: [],
+          dayOfMonth: null,
+          recurringTime: null,
+          scheduledAt: new Date('2099-01-05T12:00:00.000Z'),
+          nextRunAt: new Date('2099-01-05T12:00:00.000Z'),
+        }),
+      }),
+    );
+    expect(result.recurringTime).toBeNull();
+  });
+});
+
+describe('ScheduledMessagesService updates', () => {
+  function mockCurrentAndUpdated(
+    prisma: ReturnType<typeof createHarness>['prisma'],
+    current: ReturnType<typeof storedSchedule>,
+    updated: ReturnType<typeof storedSchedule>,
+  ) {
+    prisma.scheduledMessage.findFirst
+      .mockResolvedValueOnce(current)
+      .mockResolvedValueOnce(updated);
+  }
+
+  it('preserves the persisted configuration when timing did not change', async () => {
+    const { service, prisma, tx } = createHarness();
+    const current = storedSchedule();
+    mockCurrentAndUpdated(prisma, current, current);
+
+    await service.update('schedule-1', {
+      title: 'Novo título',
+      weekdays: [1, 3, 5],
+      recurringTime: '09:00',
+      conversationIds: ['conversation-1'],
+      file: null,
+    });
+
+    expect(tx.scheduledMessage.update).toHaveBeenCalledWith({
+      where: { id: 'schedule-1' },
+      data: expect.objectContaining({
+        title: 'Novo título',
+        recurrence: 'DAILY',
+        weekdays: [1, 3, 5],
+        recurringTime: '09:00',
+        scheduledAt: current.scheduledAt,
+        nextRunAt: current.nextRunAt,
+      }),
+    });
+  });
+
+  it('recalculates the next occurrence when weekdays change', async () => {
+    const { service, prisma, tx } = createHarness();
+    const current = storedSchedule();
+    mockCurrentAndUpdated(prisma, current, storedSchedule());
+
+    await service.update('schedule-1', {
+      weekdays: [2],
+      recurringTime: '09:00',
+      conversationIds: ['conversation-1'],
+      file: null,
+    });
+
+    expect(tx.scheduledMessage.update).toHaveBeenCalledWith({
+      where: { id: 'schedule-1' },
+      data: expect.objectContaining({
+        weekdays: [2],
+        scheduledAt: new Date('2026-10-20T12:00:00.000Z'),
+        nextRunAt: new Date('2026-10-20T12:00:00.000Z'),
+      }),
+    });
+  });
+
+  it('switches to monthly without sending residual weekdays', async () => {
+    const { service, prisma, tx } = createHarness();
+    const current = storedSchedule();
+    mockCurrentAndUpdated(prisma, current, storedSchedule({ recurrence: 'MONTHLY' }));
+
+    await service.update('schedule-1', {
+      recurrence: 'MONTHLY',
+      dayOfMonth: 31,
+      recurringTime: '09:00',
+      weekdays: [1, 3, 5],
+      conversationIds: ['conversation-1'],
+      file: null,
+    });
+
+    expect(tx.scheduledMessage.update).toHaveBeenCalledWith({
+      where: { id: 'schedule-1' },
+      data: expect.objectContaining({
+        recurrence: 'MONTHLY',
+        weekdays: [],
+        dayOfMonth: 31,
+        recurringTime: '09:00',
+        scheduledAt: new Date('2026-10-31T12:00:00.000Z'),
+        nextRunAt: new Date('2026-10-31T12:00:00.000Z'),
+      }),
+    });
+  });
+
+  it('switches to ONCE and clears the recurring configuration', async () => {
+    const { service, prisma, tx } = createHarness();
+    const current = storedSchedule();
+    mockCurrentAndUpdated(
+      prisma,
+      current,
+      storedSchedule({ recurrence: 'ONCE', weekdays: [], recurringTime: null }),
+    );
+
+    await service.update('schedule-1', {
+      recurrence: 'ONCE',
+      scheduledAt: '2099-01-05T09:00',
+      conversationIds: ['conversation-1'],
+      file: null,
+    });
+
+    expect(tx.scheduledMessage.update).toHaveBeenCalledWith({
+      where: { id: 'schedule-1' },
+      data: expect.objectContaining({
+        recurrence: 'ONCE',
+        weekdays: [],
+        dayOfMonth: null,
+        recurringTime: null,
+        scheduledAt: new Date('2099-01-05T12:00:00.000Z'),
+        nextRunAt: new Date('2099-01-05T12:00:00.000Z'),
+      }),
+    });
   });
 });
 

@@ -35,6 +35,7 @@ import {
   formatDayLabel,
   QUOTE_HIGHLIGHT_MS,
 } from './attendance-utils';
+import { ConversationPresenceIndicator } from './conversation-presence';
 import { MessageBubble } from './message-bubble';
 import { MessageComposer, type ComposerInsertion } from './message-composer';
 import { MessageEditor } from './message-editor';
@@ -320,9 +321,16 @@ export function ChatPanel({
           <p className="truncate text-sm font-semibold text-foreground">
             {conversationLabel(conversation)}
           </p>
-          <p className="truncate text-xs text-muted-foreground">
-            {conversationSubtitle(conversation)}
-          </p>
+          <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+            <ConversationPresenceIndicator
+              conversationId={conversation.id}
+              isGroup={conversation.isGroup}
+            />
+            <span aria-hidden className="text-muted-foreground/50">
+              ·
+            </span>
+            <span className="truncate">{conversationSubtitle(conversation)}</span>
+          </div>
         </div>
         <StatusBadge
           tone={conversationStatusTone[conversation.status]}

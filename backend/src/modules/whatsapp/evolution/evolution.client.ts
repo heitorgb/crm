@@ -359,6 +359,26 @@ export class EvolutionClient {
     });
   }
 
+  /**
+   * Current participants of a group. Evolution v2 returns `{ participants }`;
+   * the records are intentionally kept loose because the provider includes
+   * Baileys-specific fields (`admin`, `phoneNumber`, `imgUrl`, ...).
+   */
+  async findGroupParticipants(instanceName: string, groupJid: string): Promise<unknown[]> {
+    const raw = await this.request(
+      'GET',
+      `/group/participants/${encodeURIComponent(instanceName)}?groupJid=${encodeURIComponent(groupJid)}`,
+    );
+
+    if (!isRecord(raw)) {
+      return [];
+    }
+    if (Array.isArray(raw.participants)) {
+      return raw.participants;
+    }
+    return Array.isArray(raw.data) ? raw.data : [];
+  }
+
   /** Address book of the connected number, used to import contacts into the CRM. */
   async findContacts(instanceName: string): Promise<EvolutionContact[]> {
     const raw = await this.request(

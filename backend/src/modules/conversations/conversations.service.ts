@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ConversationStatus, MessageDirection, MessageType, Prisma } from '@prisma/client';
 import { AppException } from '../../common/errors/app.exception.js';
@@ -12,6 +12,8 @@ import type { Env } from '../../config/env.validation.js';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service.js';
 import { RealtimeService } from '../../infrastructure/realtime/realtime.service.js';
 import { LinkPreviewsService } from '../link-previews/link-previews.service.js';
+import { EvolutionClient } from '../whatsapp/evolution/evolution.client.js';
+import { WhatsAppConversationSyncService } from '../whatsapp/whatsapp-conversation-sync.service.js';
 import { WhatsAppDirectoryService } from '../whatsapp/whatsapp-directory.service.js';
 import {
   ConversationProcessingService,
@@ -90,12 +92,16 @@ type PrismaConversation = Prisma.ConversationGetPayload<{ include: typeof CONVER
 
 @Injectable()
 export class ConversationsService {
+  private readonly logger = new Logger(ConversationsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly tenantContext: TenantContextService,
     private readonly processing: ConversationProcessingService,
     private readonly messages: MessagesService,
     private readonly directory: WhatsAppDirectoryService,
+    private readonly evolution: EvolutionClient,
+    private readonly conversationSync: WhatsAppConversationSyncService,
     private readonly realtime: RealtimeService,
     private readonly linkPreviews: LinkPreviewsService,
     private readonly config: ConfigService<Env, true>,
@@ -718,6 +724,7 @@ export class ConversationsService {
       select: {
         id: true,
         externalContactId: true,
+        whatsappInstanceId: true,
         instance: { select: { instanceName: true } },
       },
     });
@@ -742,6 +749,28 @@ export class ConversationsService {
 
     await this.prisma.conversation.update({ where: { id }, data });
     this.realtime.emitToTenant(tenantId, 'conversation.updated', { conversationId: id });
+
+    try {
+      const participants = await this.evolution.findGroupParticipants(
+        conversation.instance.instanceName,
+        groupJid,
+      );
+      await this.conversationSync.syncGroupParticipantsSnapshot(
+        {
+          id: conversation.whatsappInstanceId,
+          tenantId,
+          instanceName: conversation.instance.instanceName,
+        },
+        groupJid,
+        participants,
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Could not refresh participants of ${groupJid}: ${
+          error instanceof Error ? error.message : 'unknown'
+        }`,
+      );
+    }
 
     return this.findOne(id);
   }

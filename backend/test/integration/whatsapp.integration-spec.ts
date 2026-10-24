@@ -58,6 +58,7 @@ class FakeEvolution {
   mediaSize?: number;
   groupSubject: string | null = 'Grupo Teste';
   groupPictureUrl: string | null = 'https://cdn.example/group.jpg';
+  groupParticipants: unknown[] = [];
   avatarUrl: string | null = 'https://cdn.example/avatar.jpg';
   private counter = 0;
 
@@ -178,6 +179,10 @@ class FakeEvolution {
     };
   }
 
+  async findGroupParticipants(_instance: string, _groupJid: string) {
+    return this.groupParticipants;
+  }
+
   async fetchProfilePictureUrl(_instance: string, jid: string) {
     this.avatarLookups.push(jid);
     return this.avatarUrl;
@@ -238,6 +243,7 @@ describe('WhatsApp attendance (integration)', () => {
     evolution.mediaSize = undefined;
     evolution.groupSubject = 'Grupo Teste';
     evolution.groupPictureUrl = 'https://cdn.example/group.jpg';
+    evolution.groupParticipants = [];
     evolution.avatarUrl = 'https://cdn.example/avatar.jpg';
     ownerA = await seedTenant(app, prisma, { name: 'Wa Owner A', role: 'OWNER' });
     userA = await seedMember(app, prisma, ownerA.tenantId, { name: 'Wa User A', role: 'USER' });
@@ -690,7 +696,14 @@ describe('WhatsApp attendance (integration)', () => {
         'MESSAGES_UPSERT',
         'MESSAGES_UPDATE',
         'MESSAGES_EDITED',
+        'CONTACTS_UPSERT',
+        'CONTACTS_UPDATE',
+        'CHATS_SET',
+        'CHATS_UPSERT',
+        'CHATS_UPDATE',
         'GROUPS_UPSERT',
+        'GROUP_UPDATE',
+        'GROUP_PARTICIPANTS_UPDATE',
         'PRESENCE_UPDATE',
         'CONNECTION_UPDATE',
       ]);
@@ -984,6 +997,45 @@ describe('WhatsApp attendance (integration)', () => {
 
       const contacts = await prisma.contact.findMany({ where: { tenantId: ownerB.tenantId } });
       expect(contacts).toHaveLength(0);
+    });
+
+    it('updates existing contacts from incremental events without duplicating or overwriting manual names', async () => {
+      const instanceName = `contact-event-${randomUUID()}`;
+      const phone = '5511977777777';
+      await createInstance(ownerA, instanceName);
+      await prisma.contact.create({
+        data: { tenantId: ownerA.tenantId, phone, name: 'Nome Manual' },
+      });
+
+      const first = await postWebhook({
+        event: 'CONTACTS_UPSERT',
+        instance: instanceName,
+        data: {
+          remoteJid: `${phone}@s.whatsapp.net`,
+          pushName: 'Nome WhatsApp',
+          profilePicUrl: 'https://pps.whatsapp.net/avatar.jpg',
+        },
+      });
+      const second = await postWebhook({
+        event: 'CONTACTS_UPDATE',
+        instance: instanceName,
+        data: {
+          remoteJid: `${phone}@s.whatsapp.net`,
+          pushName: 'Outro Nome',
+          profilePicUrl: 'https://pps.whatsapp.net/avatar-2.jpg',
+        },
+      });
+
+      expect(first.statusCode).toBe(200);
+      expect(second.statusCode).toBe(200);
+      const contacts = await prisma.contact.findMany({
+        where: { tenantId: ownerA.tenantId, phone },
+      });
+      expect(contacts).toHaveLength(1);
+      expect(contacts[0]).toMatchObject({
+        name: 'Nome Manual',
+        avatarUrl: 'https://pps.whatsapp.net/avatar-2.jpg',
+      });
     });
   });
 
@@ -2635,6 +2687,88 @@ describe('WhatsApp attendance (integration)', () => {
       expect(conversation.avatarUrl).toBe('https://cdn.example/updated.jpg');
     });
 
+    it('syncs chat metadata and participants without changing inbox state or history', async () => {
+      const instanceName = `group-sync-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      await postWebhook(groupPayload(instanceName, randomUUID(), 'Olá', groupJid, participant));
+
+      const conversation = await prisma.conversation.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId },
+      });
+      const readMarker = new Date('2026-10-20T12:00:00.000Z');
+      await prisma.conversation.update({
+        where: { id: conversation.id },
+        data: { isArchived: true, isPinned: true, lastReadAt: readMarker },
+      });
+
+      await postWebhook({
+        event: 'CHATS_UPSERT',
+        instance: instanceName,
+        data: [{ remoteJid: groupJid, name: 'Grupo Sincronizado' }],
+      });
+      await postWebhook({
+        event: 'GROUPS_UPSERT',
+        instance: instanceName,
+        data: [
+          {
+            id: groupJid,
+            subject: 'Grupo Sincronizado',
+            participants: [
+              {
+                id: participant,
+                admin: 'admin',
+                phoneNumber: '5511888888888',
+                name: 'Maria',
+              },
+            ],
+          },
+        ],
+      });
+
+      const synced = await prisma.conversation.findUniqueOrThrow({
+        where: { id: conversation.id },
+      });
+      expect(synced.groupName).toBe('Grupo Sincronizado');
+      expect(synced.isArchived).toBe(true);
+      expect(synced.isPinned).toBe(true);
+      expect(synced.lastReadAt?.toISOString()).toBe(readMarker.toISOString());
+
+      const participantRow = await prisma.conversationParticipant.findUniqueOrThrow({
+        where: {
+          conversationId_jid: { conversationId: conversation.id, jid: participant },
+        },
+      });
+      expect(participantRow).toMatchObject({
+        tenantId: ownerA.tenantId,
+        phone: '5511888888888',
+        name: 'Maria',
+        isAdmin: true,
+        active: true,
+      });
+
+      const removed = await postWebhook({
+        event: 'GROUP_PARTICIPANTS_UPDATE',
+        instance: instanceName,
+        data: {
+          id: groupJid,
+          action: 'remove',
+          participants: [participant],
+          participantsData: [],
+        },
+      });
+      expect(removed.statusCode).toBe(200);
+      const afterRemoval = await prisma.conversationParticipant.findUniqueOrThrow({
+        where: {
+          conversationId_jid: { conversationId: conversation.id, jid: participant },
+        },
+      });
+      expect(afterRemoval.active).toBe(false);
+      expect(afterRemoval.leftAt).not.toBeNull();
+      expect(
+        await prisma.message.count({ where: { tenantId: ownerA.tenantId, conversationId: conversation.id } }),
+      ).toBe(1);
+    });
+
     it('refreshes an existing group conversation on demand', async () => {
       const instanceName = `group-refresh-${randomUUID()}`;
       await createInstance(ownerA, instanceName);
@@ -2645,6 +2779,14 @@ describe('WhatsApp attendance (integration)', () => {
       });
 
       evolution.groupSubject = 'Nome Atualizado';
+      evolution.groupParticipants = [
+        {
+          id: participant,
+          admin: 'superadmin',
+          phoneNumber: '5511888888888',
+          name: 'Maria',
+        },
+      ];
 
       const response = await app.inject({
         method: 'POST',
@@ -2659,6 +2801,13 @@ describe('WhatsApp attendance (integration)', () => {
       });
       expect(refreshed.groupName).toBe('Nome Atualizado');
       expect(refreshed.isGroup).toBe(true);
+      expect(
+        await prisma.conversationParticipant.findUnique({
+          where: {
+            conversationId_jid: { conversationId: conversation.id, jid: participant },
+          },
+        }),
+      ).toMatchObject({ name: 'Maria', isAdmin: true, active: true });
     });
 
     it('rejects refreshing a conversation that is not a group', async () => {
@@ -3062,18 +3211,28 @@ describe('WhatsApp attendance (integration)', () => {
     });
     const emit = vi.spyOn(app.get(RealtimeService), 'emitToTenant');
     try {
-      for (const state of ['composing', 'paused', 'composing', 'recording', 'unavailable']) {
+      for (const [providerState, expectedState] of [
+        ['composing', 'composing'],
+        ['paused', 'online'],
+        ['composing', 'composing'],
+        ['recording', 'recording'],
+        ['unavailable', 'offline'],
+      ] as const) {
         const response = await postWebhook({
           event: 'presence.update',
           instance: instanceName,
-          data: { id: jid, presences: { [jid]: { lastKnownPresence: state } } },
+          data: { id: jid, presences: { [jid]: { lastKnownPresence: providerState } } },
         });
         expect(response.statusCode).toBe(200);
-        expect(emit).toHaveBeenLastCalledWith(ownerA.tenantId, 'conversation.presence', {
-          conversationId: conversation.id,
-          participantId: jid,
-          state,
-        });
+        expect(emit).toHaveBeenLastCalledWith(
+          ownerA.tenantId,
+          'conversation.presence',
+          expect.objectContaining({
+            conversationId: conversation.id,
+            participantId: jid,
+            state: expectedState,
+          }),
+        );
       }
       expect(emit).toHaveBeenCalledTimes(5);
       await postWebhook({

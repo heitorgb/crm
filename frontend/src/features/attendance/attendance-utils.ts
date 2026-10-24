@@ -76,6 +76,20 @@ export function formatListTime(value: string): string {
   return format(date, 'dd/MM/yyyy');
 }
 
+export function formatLastSeen(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+  if (isToday(date)) {
+    return `às ${format(date, 'HH:mm')}`;
+  }
+  if (isYesterday(date)) {
+    return `ontem às ${format(date, 'HH:mm')}`;
+  }
+  return format(date, "dd/MM/yyyy 'às' HH:mm");
+}
+
 export function dayKey(value: string): string {
   return format(new Date(value), 'yyyy-MM-dd');
 }

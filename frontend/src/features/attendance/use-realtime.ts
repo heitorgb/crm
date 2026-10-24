@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { useQueryClient, type InfiniteData, type QueryKey } from '@tanstack/react-query';
 import { useRealtime } from '@/providers/use-realtime';
 import type { ConversationMessage, MessageReaction } from '@/types/attendance';
+import { contactKeys } from '@/features/contacts/queries';
 import type { PageResult } from '@/types/crm';
 import { attendanceKeys } from './queries';
 
@@ -78,6 +79,16 @@ function readConversationId(payload: unknown): string | null {
   }
   const value = (payload as ConversationEventPayload).conversationId;
   return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+function readConversationIds(payload: unknown): string[] {
+  if (typeof payload !== 'object' || payload === null) {
+    return [];
+  }
+  const value = (payload as { conversationIds?: unknown }).conversationIds;
+  return Array.isArray(value)
+    ? value.filter((id): id is string => typeof id === 'string' && id.length > 0)
+    : [];
 }
 
 function hasMessageId(payload: unknown): boolean {
@@ -173,6 +184,14 @@ export function useAttendanceRealtime(
       );
     };
 
+    const handleContactUpdated = (payload: unknown): void => {
+      invalidate(contactKeys.all);
+      invalidateConversationList();
+      if (readConversationIds(payload).includes(activeConversationIdRef.current ?? '')) {
+        invalidateActiveConversation();
+      }
+    };
+
     const handleConversationDeleted = (payload: unknown): void => {
       const conversationId = readConversationId(payload);
       if (!conversationId) {
@@ -199,6 +218,7 @@ export function useAttendanceRealtime(
     socket.on('message.reaction', handleMessageReaction);
     socket.on('conversation.updated', handleConversationUpdated);
     socket.on('conversation.deleted', handleConversationDeleted);
+    socket.on('contact.updated', handleContactUpdated);
 
     return () => {
       socket.off('connect', handleConnect);
@@ -207,6 +227,7 @@ export function useAttendanceRealtime(
       socket.off('message.reaction', handleMessageReaction);
       socket.off('conversation.updated', handleConversationUpdated);
       socket.off('conversation.deleted', handleConversationDeleted);
+      socket.off('contact.updated', handleContactUpdated);
     };
   }, [socket, queryClient]);
 

@@ -32,6 +32,7 @@ import { RealtimeService } from '../../infrastructure/realtime/realtime.service.
 import { ContactsService } from '../contacts/contacts.service.js';
 import { MessagesService, type QuotedMessageInfo } from '../conversations/messages.service.js';
 import { TranscriptionSettingsService } from '../transcription/transcription-settings.service.js';
+import { WhatsAppConversationSyncService } from '../whatsapp/whatsapp-conversation-sync.service.js';
 import { WhatsAppDirectoryService } from '../whatsapp/whatsapp-directory.service.js';
 import {
   WhatsAppInstancesService,
@@ -75,6 +76,7 @@ export class WebhookService implements OnModuleInit {
     private readonly instances: WhatsAppInstancesService,
     private readonly contacts: ContactsService,
     private readonly directory: WhatsAppDirectoryService,
+    private readonly conversationSync: WhatsAppConversationSyncService,
     private readonly messages: MessagesService,
     private readonly realtime: RealtimeService,
     private readonly transcriptionSettings: TranscriptionSettingsService,
@@ -297,7 +299,26 @@ export class WebhookService implements OnModuleInit {
     payload: Record<string, unknown>,
   ): Promise<WebhookIngestResult> {
     if (eventType === 'groups.upsert' || eventType === 'groups.update') {
-      await this.handleGroupUpsert(instance, payload);
+      await this.handleGroupUpsert(instance, payload, eventType === 'groups.upsert');
+      return { accepted: true };
+    }
+
+    if (eventType === 'group-participants.update') {
+      await this.handleGroupParticipantsUpdate(instance, payload);
+      return { accepted: true };
+    }
+
+    if (eventType === 'contacts.upsert' || eventType === 'contacts.update') {
+      await this.handleContactSync(instance, payload);
+      return { accepted: true };
+    }
+
+    if (
+      eventType === 'chats.upsert' ||
+      eventType === 'chats.update' ||
+      eventType === 'chats.set'
+    ) {
+      await this.handleChatSync(instance, payload);
       return { accepted: true };
     }
 
@@ -880,29 +901,66 @@ export class WebhookService implements OnModuleInit {
     const data = isRecord(payload.data) ? payload.data : null;
     const remoteJid = readString(data?.id);
     const presences = data && isRecord(data.presences) ? data.presences : null;
-    if (!remoteJid || !presences) return;
+    if (!remoteJid || !presences) {
+      return;
+    }
 
     const conversation = await this.prisma.conversation.findFirst({
       where: {
         tenantId: instance.tenantId,
         whatsappInstanceId: instance.id,
-        externalContactId: remoteJid,
+        OR: [{ externalContactId: remoteJid }, { externalLid: remoteJid }],
       },
-      select: { id: true },
+      select: {
+        id: true,
+        isGroup: true,
+        contact: { select: { name: true } },
+      },
     });
-    if (!conversation) return;
+    if (!conversation) {
+      return;
+    }
+
+    const receivedAt = new Date();
+    const occurredAt = readEventTimestamp(payload.date_time) ?? receivedAt;
 
     for (const [participantId, presence] of Object.entries(presences)) {
-      const state = isRecord(presence) ? readString(presence.lastKnownPresence) : null;
-      if (
-        !state ||
-        !['composing', 'recording', 'paused', 'available', 'unavailable'].includes(state)
-      )
+      if (!isRecord(presence)) {
         continue;
+      }
+
+      const rawState = readString(presence.lastKnownPresence);
+      const state = rawState ? mapPresenceState(rawState) : null;
+      if (!state) {
+        continue;
+      }
+
+      let participantName = conversation.isGroup ? null : (conversation.contact?.name ?? null);
+      let participantPhone = phoneFromJid(participantId);
+
+      if (conversation.isGroup) {
+        const participant = await this.prisma.conversationParticipant.findUnique({
+          where: {
+            conversationId_jid: { conversationId: conversation.id, jid: participantId },
+          },
+          select: { name: true, phone: true },
+        });
+        participantName = participant?.name ?? participantName;
+        participantPhone = participant?.phone ?? participantPhone;
+      }
+
+      const lastSeenAt =
+        state === 'offline' ? readLastSeenTimestamp(presence.lastSeen, receivedAt) : null;
+
       this.realtime.emitToTenant(instance.tenantId, 'conversation.presence', {
         conversationId: conversation.id,
         participantId,
+        participantName,
+        participantPhone,
         state,
+        lastSeenAt: lastSeenAt ? lastSeenAt.toISOString() : null,
+        occurredAt: occurredAt.toISOString(),
+        receivedAt: receivedAt.toISOString(),
       });
     }
   }
@@ -1267,41 +1325,59 @@ export class WebhookService implements OnModuleInit {
   private async handleGroupUpsert(
     instance: ResolvedInstance,
     payload: Record<string, unknown>,
+    replaceParticipants: boolean,
   ): Promise<void> {
     const groups = toArray(payload.data).filter(isRecord);
 
     for (const group of groups) {
-      const groupJid = readString(group.id) ?? readString(group.groupJid);
-      if (!groupJid) {
+      await this.conversationSync.syncGroup(instance, group, { replaceParticipants });
+    }
+  }
+
+  private async handleGroupParticipantsUpdate(
+    instance: ResolvedInstance,
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    await this.conversationSync.syncGroupParticipants(instance, payload.data);
+  }
+
+  private async handleContactSync(
+    instance: ResolvedInstance,
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    // Evolution may send a single object (contact discovered from a message) or
+    // an array (address-book upsert). Both shapes are normalized here.
+    const entries = toArray(payload.data).filter(isRecord);
+
+    for (const entry of entries) {
+      const jid =
+        readString(entry.remoteJid) ?? readString(entry.id) ?? readString(entry.jid);
+      if (!jid) {
         continue;
       }
 
-      const conversation = await this.prisma.conversation.findFirst({
-        where: {
-          tenantId: instance.tenantId,
-          whatsappInstanceId: instance.id,
-          externalContactId: groupJid,
-        },
-        select: { id: true },
+      await this.contacts.syncFromWhatsAppEvent({
+        tenantId: instance.tenantId,
+        jid,
+        name:
+          readString(entry.pushName) ??
+          readString(entry.name) ??
+          readString(entry.verifiedName),
+        avatarUrl:
+          readString(entry.profilePicUrl) ??
+          readString(entry.profilePictureUrl) ??
+          readString(entry.avatarUrl),
       });
-      if (!conversation) {
-        continue;
-      }
+    }
+  }
 
-      const subject = readString(group.subject) ?? readString(group.name);
-      const pictureUrl =
-        readString(group.pictureUrl) ??
-        readString(group.profilePictureUrl) ??
-        readString(group.avatar);
-
-      const data: Prisma.ConversationUpdateInput = { isGroup: true };
-      if (subject) data.groupName = subject;
-      if (pictureUrl) data.avatarUrl = pictureUrl;
-
-      await this.prisma.conversation.update({ where: { id: conversation.id }, data });
-      this.realtime.emitToTenant(instance.tenantId, 'conversation.updated', {
-        conversationId: conversation.id,
-      });
+  private async handleChatSync(
+    instance: ResolvedInstance,
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    const chats = toArray(payload.data).filter(isRecord);
+    for (const chat of chats) {
+      await this.conversationSync.syncChat(instance, chat);
     }
   }
 
@@ -1957,8 +2033,16 @@ const EVENT_TYPE_ALIASES: Record<string, string> = {
   MESSAGES_UPDATE: 'messages.update',
   MESSAGES_EDITED: 'messages.edited',
   MESSAGING_HISTORY_SET: 'messaging-history.set',
+  CONTACTS_SET: 'contacts.set',
+  CONTACTS_UPSERT: 'contacts.upsert',
+  CONTACTS_UPDATE: 'contacts.update',
+  CHATS_SET: 'chats.set',
+  CHATS_UPSERT: 'chats.upsert',
+  CHATS_UPDATE: 'chats.update',
   GROUPS_UPSERT: 'groups.upsert',
   GROUPS_UPDATE: 'groups.update',
+  GROUP_UPDATE: 'groups.update',
+  GROUP_PARTICIPANTS_UPDATE: 'group-participants.update',
   PRESENCE_UPDATE: 'presence.update',
   CONNECTION_UPDATE: 'connection.update',
 };
@@ -2020,6 +2104,75 @@ function readMessageTimestamp(data: Record<string, unknown> | null): Date | null
   }
 
   const millis = seconds > 1e12 ? seconds : seconds * 1000;
+  const date = new Date(millis);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+type PresenceState = 'online' | 'offline' | 'composing' | 'recording';
+
+/**
+ * Evolution/Baileys uses `available`/`unavailable` for online state and
+ * `composing`/`recording` for transient activity. `paused` (typing stopped) is
+ * normalized to the online state so the activity indicator is cleared without
+ * confusing it with an offline contact.
+ */
+function mapPresenceState(state: string): PresenceState | null {
+  switch (state) {
+    case 'available':
+    case 'paused':
+      return 'online';
+    case 'unavailable':
+      return 'offline';
+    case 'composing':
+      return 'composing';
+    case 'recording':
+      return 'recording';
+    default:
+      return null;
+  }
+}
+
+function readEventTimestamp(value: unknown): Date | null {
+  if (typeof value === 'string' && value.length > 0) {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+  return readTimestampValue(value);
+}
+
+function readLastSeenTimestamp(value: unknown, reference: Date): Date | null {
+  const date = readTimestampValue(value);
+  if (!date) {
+    return null;
+  }
+  // A timestamp in the future is not trustworthy. A small clock skew is accepted.
+  if (date.getTime() > reference.getTime() + 5 * 60 * 1000) {
+    return null;
+  }
+  return date;
+}
+
+function readTimestampValue(value: unknown): Date | null {
+  if (isRecord(value)) {
+    const low = typeof value.low === 'number' ? value.low : null;
+    const high = typeof value.high === 'number' ? value.high : null;
+    if (low !== null && high !== null) {
+      return toDate(high * 2 ** 32 + (low >>> 0));
+    }
+    return null;
+  }
+
+  const numeric =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string' && value.length > 0
+        ? Number(value)
+        : Number.NaN;
+  return Number.isFinite(numeric) && numeric > 0 ? toDate(numeric) : null;
+}
+
+function toDate(value: number): Date | null {
+  const millis = value > 1e12 ? value : value * 1000;
   const date = new Date(millis);
   return Number.isNaN(date.getTime()) ? null : date;
 }

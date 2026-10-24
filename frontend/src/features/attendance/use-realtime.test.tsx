@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useRealtime } from '@/providers/use-realtime';
+import { contactKeys } from '@/features/contacts/queries';
 import { attendanceKeys } from './queries';
 import { useAttendanceRealtime } from './use-realtime';
 
@@ -165,11 +166,11 @@ describe('useAttendanceRealtime invalidation scope', () => {
   it('removes every listener on unmount', () => {
     const { unmount } = renderRealtime();
 
-    expect(socket.listenerCount()).toBe(6);
+    expect(socket.listenerCount()).toBe(7);
     unmount();
 
     expect(socket.listenerCount()).toBe(0);
-    expect(socket.off).toHaveBeenCalledTimes(6);
+    expect(socket.off).toHaveBeenCalledTimes(7);
   });
 
   it('patches a reaction on the target message without invalidating queries', () => {
@@ -276,6 +277,51 @@ describe('useAttendanceRealtime invalidation scope', () => {
     expectInvalidated(attendanceKeys.conversationLists);
     expectInvalidated(attendanceKeys.conversation(ACTIVE_ID));
     expectInvalidated(attendanceKeys.messages(ACTIVE_ID));
+  });
+
+  it('refreshes contact data without invalidating messages', () => {
+    renderRealtime();
+
+    act(() => {
+      socket.emit('contact.updated', {
+        contactId: 'contact-1',
+        conversationIds: [ACTIVE_ID],
+      });
+    });
+
+    expect(invalidatedKeys()).toContainEqual(contactKeys.all);
+    expectInvalidated(attendanceKeys.conversationLists);
+    expectInvalidated(attendanceKeys.conversation(ACTIVE_ID));
+    expectNotInvalidated(attendanceKeys.messages(ACTIVE_ID));
+  });
+
+  it('does not refresh the active conversation when the updated contact belongs elsewhere', () => {
+    renderRealtime();
+
+    act(() => {
+      socket.emit('contact.updated', {
+        contactId: 'contact-2',
+        conversationIds: [OTHER_ID],
+      });
+    });
+
+    expect(invalidatedKeys()).toContainEqual(contactKeys.all);
+    expectInvalidated(attendanceKeys.conversationLists);
+    expectNotInvalidated(attendanceKeys.conversation(ACTIVE_ID));
+    expectNotInvalidated(attendanceKeys.messages(ACTIVE_ID));
+  });
+
+  it('does not invalidate any query for transient presence events', () => {
+    renderRealtime();
+
+    act(() => {
+      socket.emit('conversation.presence', {
+        conversationId: ACTIVE_ID,
+        state: 'composing',
+      });
+    });
+
+    expect(invalidateQueries).not.toHaveBeenCalled();
   });
 
   it('handles no active conversation without invalidating a conversation or messages', () => {

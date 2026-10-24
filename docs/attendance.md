@@ -99,8 +99,11 @@ GET    /instance/connectionState/{instanceName}
 POST   /message/sendText/{instanceName}   body { number, text, linkPreview? }
 POST   /webhook/set/{instanceName}        body { webhook: { enabled, url, events, base64 } }
 GET    /group/findGroupInfos/{instanceName}?groupJid={jid}
+GET    /group/fetchAllGroups/{instanceName}?getParticipants=false
+GET    /group/participants/{instanceName}?groupJid={jid}
 POST   /chat/fetchProfilePictureUrl/{instanceName}   body { number }
 POST   /chat/findContacts/{instanceName}             agenda do número (importação de contatos)
+POST   /chat/findChats/{instanceName}                conversas persistidas na Evolution
 POST   /chat/findMessages/{instanceName}             histórico paginado por período
 ```
 
@@ -114,11 +117,22 @@ humano para grupos usa o JID completo; para contatos, apenas os dígitos.
   `Contact`.
 - O remetente de cada mensagem é persistido em `senderId` (JID de `key.participant`) e
   `senderName` (pushName), permitindo exibir nome e foto por mensagem.
-- Nome e foto do grupo: na primeira mensagem (`GET /group/findGroupInfos`) e via evento
-  `GROUPS_UPSERT` (atualizações). A foto do grupo fica em `Conversation.avatarUrl`.
+- Nome e foto do grupo: na primeira mensagem (`GET /group/findGroupInfos`) e via eventos
+  `GROUPS_UPSERT`/`GROUP_UPDATE` (quando emitidos). A foto do grupo fica em `Conversation.avatarUrl`.
+- Participantes: `GROUPS_UPSERT` (snapshot completo) e `GROUP_PARTICIPANTS_UPDATE`
+  (`add`/`remove`/`promote`/`demote`) alimentam `ConversationParticipant` de forma idempotente
+  (`UNIQUE (conversationId, jid)`). Saídas são marcadas `active = false`/`leftAt`, sem apagar a
+  linha nem as mensagens; reentradas reativam a mesma linha. Nenhum contato é criado
+  automaticamente para participantes.
 - Fotos de participantes são resolvidas sob demanda e cacheadas em `WhatsAppAvatar`
   (`POST /chat/fetchProfilePictureUrl`). A Evolution pode retornar `null` por privacidade; nesse
   caso a UI usa as iniciais.
+- Limitação confirmada na Evolution `2.4.0-rc2`: o evento interno `groups.update` é emitido, mas o
+  schema de webhook só aceita `GROUP_UPDATE`, cuja comparação não casa com `GROUPS_UPDATE`.
+  Por isso mudanças de assunto podem não chegar por evento; o botão **Atualizar dados do grupo**
+  continua sendo o caminho determinístico para reconciliar nome/foto e, via
+  `GET /group/participants`, a lista de participantes (falha dessa consulta não bloqueia
+  nome/foto).
 - Conversas de grupo criadas antes desta funcionalidade não têm nome/foto no banco. Elas são
   atualizadas automaticamente no boot (`backfill` limitado, best-effort) e podem ser forçadas
   pela ação **Atualizar dados do grupo** (`POST /api/conversations/:id/refresh-group`).
@@ -140,10 +154,11 @@ Em **Configurações → WhatsApp** (`/configuracoes?tab=whatsapp`):
      código). Respostas `{ error: true }` da Evolution são tratadas como falha.
 3. A tela exibe o QR, permite **gerar novo QR** e faz *poll* de status até **Conectado**.
 4. O **webhook é configurado automaticamente** (eventos `MESSAGES_UPSERT`, `MESSAGES_UPDATE`,
-   `MESSAGES_EDITED`, `GROUPS_UPSERT`, `PRESENCE_UPDATE` e `CONNECTION_UPDATE`; `MESSAGES_SET` e
-   `MESSAGING_HISTORY_SET` somente quando a importação automática de histórico está habilitada) com
-   o token do segredo (da instância ou `EVOLUTION_WEBHOOK_SECRET`); há também a ação
-   **Reconfigurar webhook**.
+   `MESSAGES_EDITED`, `CONTACTS_UPSERT`, `CONTACTS_UPDATE`, `CHATS_SET`, `CHATS_UPSERT`,
+   `CHATS_UPDATE`, `GROUPS_UPSERT`, `GROUP_UPDATE`, `GROUP_PARTICIPANTS_UPDATE`,
+   `PRESENCE_UPDATE` e `CONNECTION_UPDATE`; `MESSAGES_SET` e `MESSAGING_HISTORY_SET` somente quando
+   a importação automática de histórico está habilitada) com o token do segredo (da instância ou
+   `EVOLUTION_WEBHOOK_SECRET`); há também a ação **Reconfigurar webhook**.
    No boot do backend o webhook é **reconciliado** para todas as instâncias conectadas/ativas, de
    modo que mudar `PUBLIC_API_URL` se autocorrige no próximo restart sem depender de reconfiguração
    manual.
@@ -211,6 +226,13 @@ manual:
 - falhas na Evolution são registradas e ignoradas, sem interromper a conexão.
 - A foto fica em `Contact.avatarUrl` e aparece na lista e no detalhe de contatos (fallback: iniciais).
 - Instâncias já conectadas antes desta funcionalidade são importadas no próximo boot, sem ação manual.
+- **Atualização incremental:** `CONTACTS_UPSERT`/`CONTACTS_UPDATE` (v2.4.0) atualizam o contato por
+  `(tenantId, phone)` sem recriar. Nome só substitui placeholder (telefone/vazio); foto só substitui
+  vazio ou uma URL anterior do WhatsApp (`pps.whatsapp.net`) — avatar manual é preservado. Eventos
+  sem foto mantêm a anterior. Grupos, `status@broadcast`, bots, newsletters e identificadores
+  `@lid` sem telefone convencional não viram `Contact`; o JID original permanece na conversa.
+- Mudanças de contato publicam `contact.updated` (e `conversation.updated` para cada conversa
+  vinculada), sem invalidar mensagens/mídias.
 
 ### Requisitos de configuração
 
@@ -539,13 +561,25 @@ responde `409 CONVERSATION_NOT_HUMAN_OWNED`. O bot só responde enquanto a conve
 - `messages.update` só altera mensagens `OUTBOUND` da **mesma instância e tenant**, e a progressão
   de status é monotônica (`SENT → DELIVERED → READ`); `ERROR` não regride `DELIVERED`/`READ`.
 - O webhook aceita `presence.update` da Evolution e publica `conversation.presence` somente na
-  sala do tenant da instância, após localizar a conversa por tenant, instância e JID.
-- Presença é transitória: não grava `WebhookEvent` nem passa pela deduplicação de mensagens.
-  Assim, sequências repetidas de digitação continuam aparecendo. A interface mostra
-  “digitando…”/“gravando áudio…” na lista e no cabeçalho, limpa ao desconectar e expira em 10 segundos.
+  sala do tenant da instância, após localizar a conversa por tenant, instância e JID. O payload
+  inclui `state` normalizado (`online`, `offline`, `composing`, `recording`), `participantName`/
+  `participantPhone` (participantes de grupo vêm de `ConversationParticipant`), `lastSeenAt`,
+  `occurredAt` (ordenação) e `receivedAt` (base do TTL no cliente).
+- Presença é transitória: não grava `WebhookEvent`, não cria mensagem/conversa e não passa pela
+  deduplicação de mensagens. A UI mantém o estado apenas em memória, por conversa.
+- No cabeçalho, o indicador mostra `Online`, `Visto por último …` (somente com `lastSeen` válido e
+  não futuro), `Offline` apenas após `unavailable`, ou `Status indisponível` quando não há evento
+  confiável. A ausência de eventos **não** é tratada como offline.
+- `composing`/`recording` expiram em 12 s na UI caso o evento de encerramento não chegue; `online`
+  expira em 2 min para não apresentar estado antigo como atual. `offline`/última visualização
+  permanecem até um evento mais novo. Eventos fora de ordem são descartados por `occurredAt`.
+- Atividade de um participante não é encerrada por evento `available` de outro participante do
+  grupo. O indicador fica isolado no componente do cabeçalho, sem invalidar queries nem remontar
+  mensagens/players de áudio e vídeo.
 - Instâncias novas assinam `PRESENCE_UPDATE`. Nas já conectadas, executar **Reconfigurar webhook**
   em Atendimento → WhatsApp para ativar esse evento. O indicador depende de a Evolution emitir
-  a presença do contato.
+  a presença do contato; a v2.4.0 não expõe um endpoint de “apenas assinar presença”, então alguns
+  contatos podem permanecer como `Status indisponível`.
 - Fotos dos contatos são buscadas na lista e no cabeçalho pelo endpoint autenticado
   `participant-avatar`, reutilizando o cache de 6 horas e a validação de vínculo com a conversa.
   Se o WhatsApp não disponibilizar a foto, permanecem as iniciais.
@@ -553,9 +587,11 @@ responde `409 CONVERSATION_NOT_HUMAN_OWNED`. O bot só responde enquanto a conve
   recolhido. Os balões limitam a largura no contêiner externo e acomodam textos longos e mídias.
 - As etiquetas da conversa podem ser alteradas diretamente pelo cabeçalho ou pelo menu de ações da
   lista, sem depender da abertura do painel de detalhes.
-- Não há dependências ou migrations novas. Testes: `npm test` e
-  `npm run test:e2e -- test/integration/whatsapp.integration-spec.ts` no backend com PostgreSQL e
-  Redis configurados. Execução local: `npm run start:dev` no backend e `npm run dev` no frontend.
+- A P2 adiciona a tabela `ConversationParticipant` (migration
+  `20261024150000_conversation_participants`). Testes unitários: `webhook.service.spec.ts`,
+  `contacts.service.sync.spec.ts`, `whatsapp-conversation-sync.service.spec.ts` (backend) e
+  `conversation-presence.test.tsx`, `use-realtime.test.tsx` (frontend). Execução local:
+  `npm run start:dev` no backend e `npm run dev` no frontend.
 
 Referência do evento: [implementação da Evolution](https://github.com/EvolutionAPI/evolution-api/blob/main/src/api/integrations/channel/whatsapp/whatsapp.baileys.service.ts).
 

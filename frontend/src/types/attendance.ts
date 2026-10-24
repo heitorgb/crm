@@ -145,3 +145,20 @@ export interface ContactEntry {
   phone: string | null;
 }
 
+
+export type ConversationPresenceState =
+  | 'online'
+  | 'offline'
+  | 'composing'
+  | 'recording'
+  | 'unknown';
+
+export interface ConversationPresence {
+  state: ConversationPresenceState;
+  participantId: string | null;
+  participantName: string | null;
+  participantPhone: string | null;
+  lastSeenAt: string | null;
+  occurredAt: string | null;
+  receivedAt: string | null;
+}

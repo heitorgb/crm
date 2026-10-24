@@ -27,35 +27,28 @@ afterEach(() => {
   });
 });
 
-describe('AttendanceMobileOptions inbox navigation', () => {
-  it('marks the current box as selected', () => {
+describe('AttendanceMobileOptions', () => {
+  it('does not duplicate the inbox navigation inside the mobile menu', () => {
     render(<AttendanceMobileOptions />);
 
-    expect(screen.getByRole('button', { name: 'Caixa de entrada' }).getAttribute('aria-pressed')).toBe(
-      'true',
-    );
-    expect(screen.getByRole('button', { name: 'Arquivadas' }).getAttribute('aria-pressed')).toBe(
-      'false',
-    );
+    expect(screen.queryByRole('group', { name: 'Filtrar por caixa' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Caixa de entrada' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Arquivadas' })).toBeNull();
   });
 
-  it('switches boxes without resetting the other filters', () => {
+  it('keeps the remaining filters available and resets them without clearing the search', () => {
     render(<AttendanceMobileOptions />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Arquivadas' }));
+    expect(screen.getByRole('combobox', { name: 'Filtrar por WhatsApp' })).toBeTruthy();
+    expect(screen.getByRole('combobox', { name: 'Filtrar por status' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Limpar filtros' }));
 
     expect(useAttendanceViewStore.getState()).toMatchObject({
-      archivedView: true,
       search: 'cliente',
-      status: 'OPEN',
-      instanceId: 'instance-1',
+      status: 'ALL',
+      instanceId: 'ALL',
+      archivedView: false,
     });
-    expect(screen.getByRole('button', { name: 'Arquivadas' }).getAttribute('aria-pressed')).toBe(
-      'true',
-    );
-
-    fireEvent.click(screen.getByRole('button', { name: 'Caixa de entrada' }));
-
-    expect(useAttendanceViewStore.getState().archivedView).toBe(false);
   });
 });

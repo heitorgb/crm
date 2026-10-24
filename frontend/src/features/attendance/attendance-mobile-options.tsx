@@ -1,4 +1,4 @@
-import { Archive, Inbox, Monitor, Moon, Sun } from 'lucide-react';
+import { Monitor, Moon, Sun } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Select,
@@ -24,11 +24,9 @@ export function AttendanceMobileOptions() {
   const search = useAttendanceViewStore((state) => state.search);
   const status = useAttendanceViewStore((state) => state.status);
   const instanceId = useAttendanceViewStore((state) => state.instanceId);
-  const archivedView = useAttendanceViewStore((state) => state.archivedView);
   const setSearch = useAttendanceViewStore((state) => state.setSearch);
   const setStatus = useAttendanceViewStore((state) => state.setStatus);
   const setInstanceId = useAttendanceViewStore((state) => state.setInstanceId);
-  const setArchivedView = useAttendanceViewStore((state) => state.setArchivedView);
   const resetFilters = useAttendanceViewStore((state) => state.resetFilters);
   const instancesQuery = useWhatsAppInstances({ perPage: 100 });
   const instances = instancesQuery.data?.data ?? [];
@@ -85,30 +83,6 @@ export function AttendanceMobileOptions() {
             <SelectItem value="CLOSED">Encerradas</SelectItem>
           </SelectContent>
         </Select>
-        <div className="grid grid-cols-2 gap-1" role="group" aria-label="Filtrar por caixa">
-          <Button
-            type="button"
-            variant={archivedView ? 'ghost' : 'secondary'}
-            size="sm"
-            className="h-auto flex-col gap-1 py-2 text-xs"
-            onClick={() => setArchivedView(false)}
-            aria-pressed={!archivedView}
-          >
-            <Inbox className="size-4" />
-            Caixa de entrada
-          </Button>
-          <Button
-            type="button"
-            variant={archivedView ? 'secondary' : 'ghost'}
-            size="sm"
-            className="h-auto flex-col gap-1 py-2 text-xs"
-            onClick={() => setArchivedView(true)}
-            aria-pressed={archivedView}
-          >
-            <Archive className="size-4" />
-            Arquivadas
-          </Button>
-        </div>
         <div className="flex items-center gap-2 pt-1">
           <Button
             type="button"

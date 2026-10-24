@@ -89,6 +89,19 @@ interface PresenceActivity {
   identity: PresenceIdentity;
 }
 
+const CONVERSATION_IDENTITY_SELECT = {
+  id: true,
+  status: true,
+  contactId: true,
+  groupName: true,
+  isGroup: true,
+  externalLid: true,
+} satisfies Prisma.ConversationSelect;
+
+type ConversationIdentity = Prisma.ConversationGetPayload<{
+  select: typeof CONVERSATION_IDENTITY_SELECT;
+}>;
+
 class HistoryIngestError extends Error {
   constructor(readonly result: HistoryIngestResult) {
     super('History batch had failed messages');
@@ -892,15 +905,30 @@ export class WebhookService implements OnModuleInit {
     }
 
     // A reaction never creates a conversation on its own. If the conversation
-    // is not in the CRM there is nothing to attach the reaction to yet.
-    const conversation = await this.prisma.conversation.findFirst({
-      where: {
-        tenantId: instance.tenantId,
-        whatsappInstanceId: instance.id,
-        externalContactId: remoteJid,
-      },
-      select: { id: true },
-    });
+    // is not in the CRM there is nothing to attach the reaction to yet. The
+    // lookup accepts the LID recorded on the conversation because a reaction
+    // sent from the phone may arrive addressed only by the LID.
+    const remoteLid = lidFromJid(remoteJid);
+    const conversation =
+      (await this.prisma.conversation.findFirst({
+        where: {
+          tenantId: instance.tenantId,
+          whatsappInstanceId: instance.id,
+          externalContactId: remoteJid,
+        },
+        select: { id: true },
+      })) ??
+      (remoteLid
+        ? await this.prisma.conversation.findFirst({
+            where: {
+              tenantId: instance.tenantId,
+              whatsappInstanceId: instance.id,
+              isGroup: false,
+              OR: [{ externalLid: remoteLid }, { externalContactId: remoteLid }],
+            },
+            select: { id: true },
+          })
+        : null);
     if (!conversation) {
       return { accepted: true, ignored: 'reaction_unknown_conversation' };
     }
@@ -1501,50 +1529,148 @@ export class WebhookService implements OnModuleInit {
     isGroup: boolean,
     externalLid: string | null,
     reopenClosed = true,
-  ) {
-    const existing = await this.prisma.conversation.findFirst({
-      where: { tenantId, whatsappInstanceId, externalContactId },
-      select: { id: true, status: true, contactId: true, groupName: true, isGroup: true, externalLid: true },
-    });
-
+  ): Promise<ConversationIdentity> {
+    const identity = {
+      tenantId,
+      whatsappInstanceId,
+      externalContactId,
+      contactId,
+      isGroup,
+      externalLid,
+    };
+    const existing = await this.findConversationByIdentity(identity);
     if (existing) {
-      const data: Prisma.ConversationUncheckedUpdateInput = {};
-      if (reopenClosed && existing.status === ConversationStatus.CLOSED) {
-        data.status = ConversationStatus.OPEN;
-        data.closedAt = null;
-      }
-      if (!isGroup && !existing.contactId && contactId) {
-        data.contactId = contactId;
-      }
-      if (!isGroup && externalLid && existing.externalLid !== externalLid) {
-        data.externalLid = externalLid;
-      }
-      if (isGroup && !existing.isGroup) {
-        data.isGroup = true;
-      }
-
-      if (Object.keys(data).length === 0) {
-        return existing;
-      }
-
-      return this.prisma.conversation.update({
-        where: { id: existing.id },
-        data,
-        select: { id: true, status: true, groupName: true },
-      });
+      return this.applyConversationIdentity(existing, identity, reopenClosed);
     }
 
-    return this.prisma.conversation.create({
-      data: {
-        tenantId,
-        whatsappInstanceId,
-        externalContactId,
-        externalLid: isGroup ? null : externalLid,
-        contactId,
-        isGroup,
-        status: ConversationStatus.OPEN,
-      },
-      select: { id: true, status: true, groupName: true },
+    try {
+      return await this.prisma.conversation.create({
+        data: {
+          tenantId,
+          whatsappInstanceId,
+          externalContactId,
+          externalLid: isGroup ? null : externalLid,
+          contactId,
+          isGroup,
+          status: ConversationStatus.OPEN,
+        },
+        select: CONVERSATION_IDENTITY_SELECT,
+      });
+    } catch (error) {
+      if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') {
+        throw error;
+      }
+
+      // A concurrent event created the same conversation between the lookup and
+      // the insert. Rereading includes the LID/contact aliases, so the losing
+      // event reuses the winner instead of failing the webhook.
+      const raced = await this.findConversationByIdentity(identity);
+      if (!raced) {
+        throw error;
+      }
+      return this.applyConversationIdentity(raced, identity, reopenClosed);
+    }
+  }
+
+  /**
+   * Resolves a 1:1 conversation by every identity the provider has already
+   * proven for this chat, in order of strength: the exact remote JID, the LID
+   * recorded on a previous event (Evolution swaps `remoteJid`/`remoteJidAlt`
+   * for LID-addressed inbound chats), a conversation created while only the LID
+   * was known, and finally the contact's single conversation in the instance.
+   * A LID is never converted into a phone: without a recorded association the
+   * message keeps its own LID conversation.
+   */
+  private async findConversationByIdentity(input: {
+    tenantId: string;
+    whatsappInstanceId: string;
+    externalContactId: string;
+    contactId: string | null;
+    isGroup: boolean;
+    externalLid: string | null;
+  }): Promise<ConversationIdentity | null> {
+    const scope = {
+      tenantId: input.tenantId,
+      whatsappInstanceId: input.whatsappInstanceId,
+    };
+    const exact = await this.prisma.conversation.findFirst({
+      where: { ...scope, externalContactId: input.externalContactId },
+      select: CONVERSATION_IDENTITY_SELECT,
+    });
+    if (exact || input.isGroup) {
+      return exact;
+    }
+
+    const lid = input.externalLid;
+    if (lid) {
+      const byRecordedLid = await this.prisma.conversation.findFirst({
+        where: { ...scope, isGroup: false, externalLid: lid },
+        orderBy: { createdAt: 'asc' },
+        select: CONVERSATION_IDENTITY_SELECT,
+      });
+      if (byRecordedLid) {
+        return byRecordedLid;
+      }
+
+      if (lid !== input.externalContactId) {
+        const byLidKey = await this.prisma.conversation.findFirst({
+          where: { ...scope, isGroup: false, externalContactId: lid },
+          select: CONVERSATION_IDENTITY_SELECT,
+        });
+        if (byLidKey) {
+          return byLidKey;
+        }
+      }
+    }
+
+    if (!input.contactId) {
+      return null;
+    }
+
+    const byContact = await this.prisma.conversation.findMany({
+      where: { ...scope, isGroup: false, contactId: input.contactId },
+      orderBy: { createdAt: 'asc' },
+      take: 2,
+      select: CONVERSATION_IDENTITY_SELECT,
+    });
+    // More than one conversation for the same contact means earlier duplicate
+    // data; picking one would split the history, so creation is left to the
+    // caller and the data issue is handled separately.
+    return byContact.length === 1 ? byContact[0] : null;
+  }
+
+  private async applyConversationIdentity(
+    existing: ConversationIdentity,
+    input: {
+      contactId: string | null;
+      isGroup: boolean;
+      externalLid: string | null;
+    },
+    reopenClosed: boolean,
+  ): Promise<ConversationIdentity> {
+    const data: Prisma.ConversationUncheckedUpdateInput = {};
+    if (reopenClosed && existing.status === ConversationStatus.CLOSED) {
+      data.status = ConversationStatus.OPEN;
+      data.closedAt = null;
+    }
+    if (!input.isGroup && !existing.contactId && input.contactId) {
+      data.contactId = input.contactId;
+    }
+    if (!input.isGroup && input.externalLid && existing.externalLid !== input.externalLid) {
+      data.externalLid = input.externalLid;
+    }
+    if (input.isGroup && !existing.isGroup) {
+      data.isGroup = true;
+    }
+
+    if (Object.keys(data).length === 0) {
+      return existing;
+    }
+
+    return this.prisma.conversation.update({
+      where: { id: existing.id },
+      data,
+      select: CONVERSATION_IDENTITY_SELECT,
     });
   }
 

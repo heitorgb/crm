@@ -5196,4 +5196,457 @@ describe('WhatsApp attendance (integration)', () => {
       expect(inbound).toHaveLength(1);
     });
   });
+
+  describe('contact identity resolution (LID regression)', () => {
+    const PHONE = '556192468074';
+    const PHONE_JID = `${PHONE}@s.whatsapp.net`;
+    const LID = '86840027656376@lid';
+
+    function lidPayload(
+      instanceName: string,
+      messageId: string,
+      text: string,
+      options: {
+        lid?: string;
+        phone?: string | null;
+        fromMe?: boolean;
+        pushName?: string;
+        groupJid?: string;
+        participant?: string;
+      } = {},
+    ) {
+      const {
+        lid = LID,
+        phone = null,
+        fromMe = false,
+        pushName = 'Atendente',
+        groupJid,
+        participant,
+      } = options;
+      const remoteJid = groupJid ?? (phone ? `${phone}@s.whatsapp.net` : lid);
+      return {
+        event: 'messages.upsert',
+        instance: instanceName,
+        data: {
+          key: {
+            id: messageId,
+            fromMe,
+            remoteJid,
+            participant: participant ?? '',
+            ...(phone && !groupJid ? { remoteJidAlt: lid } : {}),
+            ...(participant ? { participantAlt: PHONE_JID } : {}),
+            addressingMode: phone && !groupJid ? 'pn' : 'lid',
+          },
+          pushName,
+          message: { conversation: text },
+          messageType: 'conversation',
+          messageTimestamp: Math.floor(Date.now() / 1000),
+        },
+      };
+    }
+
+    it('links an inbound message to an already registered contact by its phone', async () => {
+      const instanceName = `lid-known-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      const contact = await prisma.contact.create({
+        data: { tenantId: ownerA.tenantId, phone: PHONE, name: 'Mãe' },
+      });
+
+      await postWebhook(lidPayload(instanceName, randomUUID(), 'Bom dia', { phone: PHONE }));
+      await postWebhook(lidPayload(instanceName, randomUUID(), 'Tudo bem?', { phone: PHONE }));
+
+      const contacts = await prisma.contact.findMany({ where: { tenantId: ownerA.tenantId } });
+      expect(contacts).toHaveLength(1);
+      expect(contacts[0].id).toBe(contact.id);
+      expect(contacts[0].name).toBe('Mãe');
+
+      const conversations = await prisma.conversation.findMany({
+        where: { tenantId: ownerA.tenantId },
+      });
+      expect(conversations).toHaveLength(1);
+      expect(conversations[0]).toMatchObject({
+        externalContactId: PHONE_JID,
+        externalLid: LID,
+        contactId: contact.id,
+      });
+
+      const messages = await prisma.message.findMany({
+        where: { tenantId: ownerA.tenantId },
+      });
+      expect(messages).toHaveLength(2);
+      expect(messages.every((message) => message.conversationId === conversations[0].id)).toBe(
+        true,
+      );
+    });
+
+    it('keeps a message sent from the phone addressed only by LID in the existing phone conversation', async () => {
+      const instanceName = `lid-regression-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+
+      // Evolution 2.4 swaps remoteJid/remoteJidAlt for an inbound LID chat, so
+      // the phone conversation is created first and records the LID.
+      await postWebhook(lidPayload(instanceName, randomUUID(), 'Bom dia', { phone: PHONE }));
+      const conversation = await prisma.conversation.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId },
+      });
+      const contact = await prisma.contact.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId },
+      });
+      await prisma.conversation.update({
+        where: { id: conversation.id },
+        data: { subject: 'Histórico da Mãe' },
+      });
+      const tag = await prisma.tag.create({
+        data: { tenantId: ownerA.tenantId, name: 'Família' },
+      });
+      await prisma.conversationTag.create({
+        data: { tenantId: ownerA.tenantId, conversationId: conversation.id, tagId: tag.id },
+      });
+
+      // The message the user sent from the phone: LID only, no remoteJidAlt.
+      const response = await postWebhook(
+        lidPayload(instanceName, '3EB05042A5A5931A5F5C4B', 'vamos', { fromMe: true }),
+      );
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({
+        accepted: true,
+        conversationId: conversation.id,
+      });
+
+      const conversations = await prisma.conversation.findMany({
+        where: { tenantId: ownerA.tenantId },
+      });
+      expect(conversations).toHaveLength(1);
+      expect(conversations[0]).toMatchObject({
+        id: conversation.id,
+        externalContactId: PHONE_JID,
+        externalLid: LID,
+        contactId: contact.id,
+        subject: 'Histórico da Mãe',
+      });
+
+      const messages = await prisma.message.findMany({
+        where: { tenantId: ownerA.tenantId },
+        orderBy: { createdAt: 'asc' },
+      });
+      expect(messages).toHaveLength(2);
+      expect(messages.map((message) => message.content)).toEqual(['Bom dia', 'vamos']);
+      expect(messages.every((message) => message.conversationId === conversation.id)).toBe(true);
+      const sentFromPhone = messages[1];
+      expect(sentFromPhone).toMatchObject({ direction: 'OUTBOUND', status: 'SENT' });
+      expect(sentFromPhone.metadata).toMatchObject({ remoteJid: LID });
+
+      expect(await prisma.contact.count({ where: { tenantId: ownerA.tenantId } })).toBe(1);
+      expect(
+        await prisma.conversationTag.count({
+          where: { tenantId: ownerA.tenantId, conversationId: conversation.id, tagId: tag.id },
+        }),
+      ).toBe(1);
+    });
+
+    it('does not turn a LID into a phone when no association was ever recorded', async () => {
+      const instanceName = `lid-unknown-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      // A coincidental contact whose phone matches the LID digits must stay separate.
+      const unrelated = await prisma.contact.create({
+        data: { tenantId: ownerA.tenantId, phone: '86840027656376', name: 'Outro contato' },
+      });
+
+      const response = await postWebhook(
+        lidPayload(instanceName, randomUUID(), 'Enviada para um LID', { fromMe: true }),
+      );
+
+      expect(response.statusCode).toBe(200);
+      const conversation = await prisma.conversation.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId },
+      });
+      expect(conversation).toMatchObject({
+        externalContactId: LID,
+        externalLid: LID,
+        contactId: null,
+      });
+      expect(await prisma.contact.count({ where: { tenantId: ownerA.tenantId } })).toBe(1);
+      const stored = await prisma.contact.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId },
+      });
+      expect(stored.id).toBe(unrelated.id);
+      const message = await prisma.message.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId },
+      });
+      expect(message.conversationId).toBe(conversation.id);
+      expect(message.metadata).toMatchObject({ remoteJid: LID });
+    });
+
+    it('reconciles a message sent by the CRM when the provider echoes it addressed by LID', async () => {
+      const instanceName = `lid-crm-echo-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      await postWebhook(lidPayload(instanceName, randomUUID(), 'Bom dia', { phone: PHONE }));
+      const conversation = await prisma.conversation.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId },
+      });
+
+      const sent = await app.inject({
+        method: 'POST',
+        url: `/api/conversations/${conversation.id}/messages`,
+        headers: authHeaders(ownerA),
+        payload: { content: 'Resposta enviada pelo CRM' },
+      });
+      expect(sent.statusCode).toBe(201);
+      expect(evolution.sent[0]?.number).toBe(LID);
+      const outbound = await prisma.message.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId, direction: 'OUTBOUND' },
+      });
+
+      const echo = await postWebhook(
+        lidPayload(
+          instanceName,
+          outbound.externalMessageId as string,
+          'Resposta enviada pelo CRM',
+          {
+            fromMe: true,
+          },
+        ),
+      );
+
+      expect(echo.json()).toMatchObject({
+        ignored: 'reconciled_message',
+        conversationId: conversation.id,
+        messageId: outbound.id,
+      });
+      expect(await prisma.conversation.count({ where: { tenantId: ownerA.tenantId } })).toBe(1);
+      expect(await prisma.message.count({ where: { tenantId: ownerA.tenantId } })).toBe(2);
+    });
+
+    it('keeps the group identity and the participant identity of a LID group message', async () => {
+      const instanceName = `lid-group-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      const groupJid = '120363000000000777@g.us';
+      const participant = '229428613357801@lid';
+
+      await postWebhook(
+        lidPayload(instanceName, randomUUID(), 'Mensagem no grupo', {
+          fromMe: false,
+          groupJid,
+          participant,
+          pushName: 'Participante',
+        }),
+      );
+      await postWebhook(
+        lidPayload(instanceName, randomUUID(), 'Outra mensagem', { groupJid, fromMe: true }),
+      );
+
+      const conversations = await prisma.conversation.findMany({
+        where: { tenantId: ownerA.tenantId },
+      });
+      expect(conversations).toHaveLength(1);
+      expect(conversations[0]).toMatchObject({
+        externalContactId: groupJid,
+        isGroup: true,
+        contactId: null,
+      });
+      expect(await prisma.contact.count({ where: { tenantId: ownerA.tenantId } })).toBe(0);
+
+      const messages = await prisma.message.findMany({
+        where: { tenantId: ownerA.tenantId },
+        orderBy: { createdAt: 'asc' },
+      });
+      expect(messages).toHaveLength(2);
+      expect(messages[0]).toMatchObject({ senderId: participant, senderName: 'Participante' });
+      expect(messages[1]).toMatchObject({ direction: 'OUTBOUND', senderId: null });
+      expect(messages.every((message) => message.conversationId === conversations[0].id)).toBe(
+        true,
+      );
+    });
+
+    it('does not create conversations for message update or edit events', async () => {
+      const instanceName = `lid-updates-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+
+      const update = await postWebhook({
+        event: 'messages.update',
+        instance: instanceName,
+        data: [{ keyId: randomUUID(), remoteJid: LID, fromMe: true, status: 'DELIVERED' }],
+      });
+      const edit = await postWebhook({
+        event: 'messages.edited',
+        instance: instanceName,
+        data: [
+          {
+            key: { id: randomUUID(), remoteJid: LID, fromMe: true },
+            editedMessage: { conversation: 'texto editado' },
+          },
+        ],
+      });
+
+      expect(update.statusCode).toBe(200);
+      expect(edit.statusCode).toBe(200);
+      expect(await prisma.conversation.count({ where: { tenantId: ownerA.tenantId } })).toBe(0);
+      expect(await prisma.message.count({ where: { tenantId: ownerA.tenantId } })).toBe(0);
+    });
+
+    it('is idempotent when the same LID webhook is delivered twice', async () => {
+      const instanceName = `lid-duplicate-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      await postWebhook(lidPayload(instanceName, randomUUID(), 'Bom dia', { phone: PHONE }));
+
+      const payload = lidPayload(instanceName, randomUUID(), 'vamos', { fromMe: true });
+      await postWebhook(payload);
+      const duplicate = await postWebhook(payload);
+
+      expect(duplicate.json().ignored).toBe('duplicate_event');
+      expect(await prisma.conversation.count({ where: { tenantId: ownerA.tenantId } })).toBe(1);
+      expect(
+        await prisma.message.count({ where: { tenantId: ownerA.tenantId, content: 'vamos' } }),
+      ).toBe(1);
+    });
+
+    it('serializes concurrent events for the same new contact into one conversation', async () => {
+      const instanceName = `lid-concurrent-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+
+      const [first, second] = await Promise.all([
+        postWebhook(
+          lidPayload(instanceName, randomUUID(), 'Primeira', { fromMe: false, phone: PHONE }),
+        ),
+        postWebhook(
+          lidPayload(instanceName, randomUUID(), 'Segunda', { fromMe: false, phone: PHONE }),
+        ),
+      ]);
+
+      expect(first.statusCode).toBe(200);
+      expect(second.statusCode).toBe(200);
+      expect(await prisma.contact.count({ where: { tenantId: ownerA.tenantId } })).toBe(1);
+      const conversations = await prisma.conversation.findMany({
+        where: { tenantId: ownerA.tenantId },
+      });
+      expect(conversations).toHaveLength(1);
+      const messages = await prisma.message.findMany({
+        where: { tenantId: ownerA.tenantId },
+      });
+      expect(messages).toHaveLength(2);
+      expect(messages.every((message) => message.conversationId === conversations[0].id)).toBe(
+        true,
+      );
+    });
+
+    it('keeps similar phone numbers as distinct contacts and conversations', async () => {
+      const instanceName = `lid-similar-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      const firstPhone = '5511988888888';
+      const secondPhone = '5511988888889';
+
+      await postWebhook(
+        lidPayload(instanceName, randomUUID(), 'Primeiro número', {
+          fromMe: false,
+          phone: firstPhone,
+          lid: '11111111111111@lid',
+        }),
+      );
+      await postWebhook(
+        lidPayload(instanceName, randomUUID(), 'Segundo número', {
+          fromMe: false,
+          phone: secondPhone,
+          lid: '22222222222222@lid',
+        }),
+      );
+
+      const contacts = await prisma.contact.findMany({
+        where: { tenantId: ownerA.tenantId },
+        orderBy: { phone: 'asc' },
+      });
+      expect(contacts.map((contact) => contact.phone)).toEqual([firstPhone, secondPhone]);
+      const conversations = await prisma.conversation.findMany({
+        where: { tenantId: ownerA.tenantId },
+        orderBy: { externalContactId: 'asc' },
+      });
+      expect(conversations).toHaveLength(2);
+      expect(conversations.map((conversation) => conversation.externalContactId)).toEqual([
+        `${firstPhone}@s.whatsapp.net`,
+        `${secondPhone}@s.whatsapp.net`,
+      ]);
+      expect(
+        conversations.find((conversation) => conversation.contactId === contacts[0].id),
+      ).toBeDefined();
+      expect(
+        conversations.find((conversation) => conversation.contactId === contacts[1].id),
+      ).toBeDefined();
+    });
+
+    it('scopes the LID association to the tenant and to the instance', async () => {
+      const instanceA1 = `lid-scope-a1-${randomUUID()}`;
+      const instanceA2 = `lid-scope-a2-${randomUUID()}`;
+      const instanceB = `lid-scope-b-${randomUUID()}`;
+      await createInstance(ownerA, instanceA1);
+      await createInstance(ownerA, instanceA2);
+      await createInstance(ownerB, instanceB);
+
+      await postWebhook(lidPayload(instanceA1, randomUUID(), 'Bom dia', { phone: PHONE }));
+      await postWebhook(lidPayload(instanceA2, randomUUID(), 'Outra instância', { fromMe: true }));
+      await postWebhook(lidPayload(instanceB, randomUUID(), 'Outro tenant', { fromMe: true }));
+
+      const conversationsA = await prisma.conversation.findMany({
+        where: { tenantId: ownerA.tenantId },
+        orderBy: { externalContactId: 'asc' },
+      });
+      expect(conversationsA).toHaveLength(2);
+      const conversationsB = await prisma.conversation.findMany({
+        where: { tenantId: ownerB.tenantId },
+      });
+      expect(conversationsB).toHaveLength(1);
+      expect(conversationsB[0]).toMatchObject({
+        externalContactId: LID,
+        contactId: null,
+      });
+      expect(await prisma.contact.count({ where: { tenantId: ownerA.tenantId } })).toBe(1);
+      expect(await prisma.contact.count({ where: { tenantId: ownerB.tenantId } })).toBe(0);
+      const messagesB = await prisma.message.findMany({
+        where: { tenantId: ownerB.tenantId },
+      });
+      expect(messagesB).toHaveLength(1);
+      expect(messagesB[0].conversationId).toBe(conversationsB[0].id);
+    });
+
+    it('attaches a reaction addressed by LID to the phone conversation', async () => {
+      const instanceName = `lid-reaction-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+      const targetId = randomUUID();
+      await postWebhook(
+        lidPayload(instanceName, targetId, 'Mensagem original', { fromMe: false, phone: PHONE }),
+      );
+      const conversation = await prisma.conversation.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId },
+      });
+      const target = await prisma.message.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId, externalMessageId: targetId },
+      });
+
+      const response = await postWebhook(
+        reactionPayload(instanceName, randomUUID(), '❤️', {
+          remoteJid: LID,
+          fromMe: true,
+          targetId,
+          targetFromMe: false,
+        }),
+      );
+
+      expect(response.json()).toMatchObject({
+        accepted: true,
+        conversationId: conversation.id,
+        messageId: target.id,
+      });
+      expect(await prisma.conversation.count({ where: { tenantId: ownerA.tenantId } })).toBe(1);
+      expect(await prisma.message.count({ where: { tenantId: ownerA.tenantId } })).toBe(1);
+      const reaction = await prisma.messageReaction.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId },
+      });
+      expect(reaction).toMatchObject({
+        conversationId: conversation.id,
+        targetExternalId: targetId,
+        fromMe: true,
+        reactorId: 'self',
+        emoji: '❤️',
+      });
+    });
+  });
 });

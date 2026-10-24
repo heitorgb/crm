@@ -407,14 +407,19 @@ CRM (sem dependências novas). A tela é **full-bleed**: `MainContent` deixa de 
   normalmente.
 - **Mensagens enviadas pelo celular / WhatsApp Web**: o webhook trata `messages.upsert` com
   `key.fromMe = true` como mensagem `OUTBOUND` enviada pela própria conta conectada, exibindo-a na
-  conversa ao lado das mensagens enviadas pelo CRM. A instância, o contato e a conversa são
-  resolvidos pelo `remoteJid` (com fallback de telefone em `participantAlt`/`remoteJidAlt` e suporte a
-  `@lid`, sem inventar contato quando não há telefone). A mensagem é deduplicada por
-  `(tenantId, externalMessageId)`: um evento do provedor para uma mensagem **já salva pelo envio do
-  CRM** é reconciliado no registro existente (`metadata` enriquecido), sem criar duplicata nem emitir
-  novo `message.created`; eventos repetidos são idempotentes. Mensagens externas de mídia também são
-  baixadas (`getBase64FromMediaMessage` com `fromMe` correspondente) e anexadas. Mensagens `OUTBOUND`
-  não alteram contadores de não lidas nem o estado de leitura.
+  conversa ao lado das mensagens enviadas pelo CRM. A conversa é resolvida pela identidade da
+  conversa, não apenas pelo `remoteJid` bruto: primeiro pelo JID exato; depois pelo LID já registrado
+  em `Conversation.externalLid` (a Evolution 2.4 troca `remoteJid`/`remoteJidAlt` nos eventos
+  inbound de chats endereçados por LID); depois por uma conversa criada quando só o LID era
+  conhecido; por fim, pela única conversa do contato resolvido pela telefone naquela instância. O
+  telefone só é usado quando vem em `remoteJid` (`@s.whatsapp.net`/`@c.us`),
+  `participantAlt`/`remoteJidAlt`; um LID **nunca** é convertido em telefone por suposição. A
+  mensagem é deduplicada por `(tenantId, externalMessageId)`: um evento do provedor para uma
+  mensagem **já salva pelo envio do CRM** é reconciliado no registro existente (`metadata`
+  enriquecido), sem criar duplicata nem emitir novo `message.created`; eventos repetidos são
+  idempotentes. Mensagens externas de mídia também são baixadas (`getBase64FromMediaMessage` com
+  `fromMe` correspondente) e anexadas. Mensagens `OUTBOUND` não alteram contadores de não lidas nem
+  o estado de leitura.
 - **Mensagens de cobrança**: os lembretes enviados pelo módulo Financeiro → Cobranças (manuais e
   automáticos) também aparecem na conversa, como mensagens enviadas (OUTBOUND, alinhadas à direita),
   com o conteúdo real, quebras de linha e o horário da confirmação do envio. A conversa é
@@ -573,7 +578,13 @@ responde `409 CONVERSATION_NOT_HUMAN_OWNED`. O bot só responde enquanto a conve
   `Conversation.preferredAddress`, usado nos envios seguintes. A mensagem guarda
   `metadata.destinationType` e `metadata.fallbackAttempted`, que garante no máximo **um** fallback
   por mensagem (sem loops). O LID é capturado no mesmo evento em que o contato/telefone é resolvido,
-  então um novo inbound popula conversas já existentes.
+  então um novo inbound popula conversas já existentes. Mensagens **enviadas pelo celular** de um
+  chat endereçado por LID podem chegar sem `remoteJidAlt` (a Evolution não as reescreve); nesse caso
+  a conversa é encontrada pelo LID já gravado em `externalLid`, sem inventar telefone nem criar uma
+  segunda conversa para o mesmo contato. Quando não existe nenhuma associação registrada entre o LID
+  e um telefone/contato, o CRM mantém a conversa própria do LID (comportamento seguro) e não a
+  funde por nome, foto ou semelhança de dígitos. A busca é sempre limitada ao `tenantId` e à
+  instância (`whatsappInstanceId`); o vínculo não atravessa tenants nem conexões.
 - O webhook usa `webhook_events` como caixa de entrada durável: o evento é reivindicado antes do
   processamento e só recebe `processedAt` após o sucesso. Eventos já processados são idempotentes;
   eventos reivindicados e não concluídos são reprocessados. Em falha de banco/processamento a API

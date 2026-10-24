@@ -50,8 +50,36 @@ log "HEAD em $(git rev-parse --short HEAD) — $(git log -1 --pretty=%s)"
 log "Construindo imagens (backend, migrate, frontend)"
 docker compose -f "$COMPOSE_FILE" build
 
+run_migrations() {
+  docker compose -f "$COMPOSE_FILE" run --rm migrate
+}
+
+list_failed_migrations() {
+  docker compose -f "$COMPOSE_FILE" exec -T postgres \
+    sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT migration_name FROM _prisma_migrations WHERE finished_at IS NULL AND rolled_back_at IS NULL ORDER BY started_at;"' \
+    2>/dev/null || true
+}
+
 log "Aplicando migrations do banco"
-docker compose -f "$COMPOSE_FILE" run --rm migrate
+if ! run_migrations; then
+  failed_migrations="$(list_failed_migrations)"
+
+  if [[ -z "$failed_migrations" ]]; then
+    fail "Migrations falharam e não foi possível identificar registros de falha para recuperação."
+  fi
+
+  warn "Migrations com falha registrada serão marcadas como revertidas antes da nova tentativa:"
+  while IFS= read -r migration; do
+    [[ -n "$migration" ]] || continue
+    warn "  - $migration"
+    docker compose -f "$COMPOSE_FILE" run --rm migrate \
+      npx --no-install prisma migrate resolve --rolled-back "$migration"
+  done <<< "$failed_migrations"
+
+  log "Reaplicando migrations do banco"
+  run_migrations ||
+    fail "Migrations continuam falhando após reverter os registros anteriores. Verifique os logs acima."
+fi
 
 log "Subindo serviços"
 docker compose -f "$COMPOSE_FILE" up -d --remove-orphans postgres redis backend frontend

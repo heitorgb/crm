@@ -28,6 +28,41 @@ ALTER TABLE "message_reactions" ADD CONSTRAINT "message_reactions_tenant_id_fkey
 ALTER TABLE "message_reactions" ADD CONSTRAINT "message_reactions_conversation_id_fkey" FOREIGN KEY ("conversation_id") REFERENCES "conversations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- Migrate reactions previously stored as standalone Message rows.
+-- Keep only the latest reaction per (tenant, conversation, target, reactor), since
+-- multiple REACTION rows may map to the same unique key and ON CONFLICT cannot
+-- update the same row twice within a single statement.
+WITH "reaction_rows" AS (
+    SELECT
+        m."id",
+        m."tenant_id",
+        m."conversation_id",
+        m."metadata" -> 'reaction' ->> 'targetMessageId' AS "target_external_id",
+        m."metadata" -> 'reaction' ->> 'targetFromMe' AS "target_from_me_raw",
+        CASE
+            WHEN m."direction" = 'OUTBOUND' THEN 'self'
+            ELSE COALESCE(m."sender_id", 'unknown:' || m."id"::text)
+        END AS "reactor_id",
+        m."sender_name",
+        m."direction" = 'OUTBOUND' AS "from_me",
+        m."content",
+        m."occurred_at",
+        ROW_NUMBER() OVER (
+            PARTITION BY
+                m."tenant_id",
+                m."conversation_id",
+                m."metadata" -> 'reaction' ->> 'targetMessageId',
+                CASE
+                    WHEN m."direction" = 'OUTBOUND' THEN 'self'
+                    ELSE COALESCE(m."sender_id", 'unknown:' || m."id"::text)
+                END
+            ORDER BY m."occurred_at" DESC, m."id" DESC
+        ) AS "position"
+    FROM "messages" m
+    WHERE m."type" = 'REACTION'
+      AND m."metadata" -> 'reaction' ->> 'targetMessageId' IS NOT NULL
+      AND m."content" IS NOT NULL
+      AND m."content" <> ''
+)
 INSERT INTO "message_reactions" (
     "id",
     "tenant_id",
@@ -45,34 +80,20 @@ SELECT
     m."id",
     m."tenant_id",
     m."conversation_id",
-    m."metadata" -> 'reaction' ->> 'targetMessageId',
+    m."target_external_id",
     CASE
-        WHEN m."metadata" -> 'reaction' ->> 'targetFromMe' IN ('true', 'false')
-            THEN (m."metadata" -> 'reaction' ->> 'targetFromMe')::boolean
+        WHEN m."target_from_me_raw" IN ('true', 'false')
+            THEN m."target_from_me_raw"::boolean
         ELSE false
     END,
-    CASE
-        WHEN m."direction" = 'OUTBOUND' THEN 'self'
-        ELSE COALESCE(m."sender_id", 'unknown:' || m."id"::text)
-    END,
+    m."reactor_id",
     m."sender_name",
-    m."direction" = 'OUTBOUND',
+    m."from_me",
     m."content",
     m."occurred_at",
     CURRENT_TIMESTAMP
-FROM "messages" m
-WHERE m."type" = 'REACTION'
-  AND m."metadata" -> 'reaction' ->> 'targetMessageId' IS NOT NULL
-  AND m."content" IS NOT NULL
-  AND m."content" <> ''
-ON CONFLICT ("tenant_id", "conversation_id", "target_external_id", "reactor_id") DO UPDATE SET
-    "target_from_me" = EXCLUDED."target_from_me",
-    "reactor_name" = EXCLUDED."reactor_name",
-    "from_me" = EXCLUDED."from_me",
-    "emoji" = EXCLUDED."emoji",
-    "occurred_at" = EXCLUDED."occurred_at",
-    "updated_at" = CURRENT_TIMESTAMP
-WHERE EXCLUDED."occurred_at" >= "message_reactions"."occurred_at";
+FROM "reaction_rows" m
+WHERE m."position" = 1;
 
 -- Recompute the conversation preview without the reaction rows that are removed below.
 UPDATE "conversations" c

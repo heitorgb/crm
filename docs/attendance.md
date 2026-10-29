@@ -165,10 +165,10 @@ Em **Configurações → WhatsApp** (`/configuracoes?tab=whatsapp`):
 4. O **webhook é configurado automaticamente** (eventos `MESSAGES_UPSERT`, `MESSAGES_UPDATE`,
    `MESSAGES_EDITED`, `CONTACTS_UPSERT`, `CONTACTS_UPDATE`, `CHATS_SET`, `CHATS_UPSERT`,
    `CHATS_UPDATE`, `GROUPS_UPSERT`, `GROUP_UPDATE`, `GROUP_PARTICIPANTS_UPDATE`,
-   `PRESENCE_UPDATE`, `CONNECTION_UPDATE`, `QRCODE_UPDATED`, `STATUS_INSTANCE` e `LOGOUT_INSTANCE`;
-   `MESSAGES_SET` e `MESSAGING_HISTORY_SET` somente quando a importação automática de histórico
-   está habilitada) com o token do segredo (da instância ou `EVOLUTION_WEBHOOK_SECRET`); há também
-   a ação **Reconfigurar webhook**.
+   `PRESENCE_UPDATE`, `CONNECTION_UPDATE`, `QRCODE_UPDATED`, `STATUS_INSTANCE`,
+   `LOGOUT_INSTANCE` e `MESSAGING_HISTORY_SET`; `MESSAGES_SET` somente quando a importação
+   automática de histórico está habilitada) com o token do segredo (da instância ou
+   `EVOLUTION_WEBHOOK_SECRET`); há também a ação **Reconfigurar webhook**.
    No boot do backend o webhook é **reconciliado** para todas as instâncias ativas (inclusive
    desconectadas), de modo que mudar `PUBLIC_API_URL` ou adicionar eventos se autocorrige no próximo
    restart sem depender de reconfiguração manual.
@@ -193,18 +193,53 @@ Em **Configurações → WhatsApp** (`/configuracoes?tab=whatsapp`):
   com o mesmo pipeline de `MESSAGES_UPSERT`, importando apenas mensagens dentro de
   `WHATSAPP_HISTORY_IMPORT_DAYS` (padrão 30 dias). Mensagens mais antigas são ignoradas.
 - O CRM persiste o estado da sincronização em `WhatsAppInstance` (`history_sync_status`,
-  `history_sync_progress`, `history_sync_started_at`, `history_sync_completed_at`,
+  `history_sync_progress`, `history_sync_chunks`, `history_sync_messages`,
+  `history_sync_started_at`, `history_sync_completed_at`, `history_sync_updated_at`,
   `history_sync_error`) e o expõe em `GET /api/whatsapp/instances[/:id]` como `historySync`.
   Os estados são `IDLE`, `SYNCING`, `COMPLETED` e `FAILED`.
-- `progress` é copiado apenas quando a Evolution o envia (0–100). `isLatest` **não** significa
-  conclusão (é apenas um indicador de lote do Baileys) e nunca é usado para declarar o histórico
-  completo. A conclusão vem de `progress === 100` no `MESSAGES_SET` ou do
-  evento `MESSAGING_HISTORY_SET` (`progress: 100`), ambos confirmados na Evolution 2.4.0.
+- **Origem real do progresso na Evolution 2.4.0-rc2:**
+  - `MESSAGES_SET` carrega `progress` (0–100) no envelope do webhook; é processado e importado
+    somente quando `WHATSAPP_HISTORY_IMPORT_ENABLED=true`.
+  - Quando a importação automática está desligada, o progresso chega em `messages.edited` com
+    `data.type = "HISTORY_SYNC_NOTIFICATION"` e
+    `data.historySyncNotification = { progress, chunkOrder, syncType }`. Esse é um comportamento
+    real da rc2 (a notificação de histórico é classificada como edição pelo provedor). O CRM a
+    interpreta como progresso de sincronização, **não** como edição de mensagem, e não importa
+    nenhuma mensagem nesse caminho. Apenas `RECENT`, `FULL` e `INITIAL_BOOTSTRAP` alimentam o
+    indicador; `ON_DEMAND` (histórico carregado ao rolar) e `PUSH_NAME` são ignorados.
+    Se uma versão futura da Evolution deixar de classificar essa notificação como
+    `messages.edited`, o CRM ainda receberá a conclusão por `MESSAGING_HISTORY_SET`, mas poderá
+    não conhecer o progresso intermediário quando a importação automática estiver desligada.
+  - `MESSAGING_HISTORY_SET` (`data.progress = 100`, com `messageCount`/`chatCount`/`contactCount`)
+    é o sinal definitivo de conclusão. Ele é assinado **sempre**, mesmo com a importação
+    automática desligada. O `MESSAGES_SET` completo só é assinado quando a importação está
+    habilitada.
+  - A Evolution 2.4 não expõe um endpoint REST confiável para consultar o estado atual da
+    sincronização; por isso o CRM persiste o estado e o reconstrói a partir dos eventos.
+- `progress` é copiado apenas quando a Evolution o envia (0–100). `chunks` usa o `chunkOrder`
+  informado pela notificação (máximo observado, nunca regride). `messages` usa o `messageCount`
+  informado no evento de conclusão. Nenhum total é inferido a partir de `isLatest` ou do número
+  de mensagens recebidas.
+- Eventos de sincronização são ordenados por `history_sync_updated_at` (header `X-Timestamp` do
+  webhook ou instante de recebimento). Um evento antigo não reabre um ciclo concluído nem regride
+  o progresso.
 - Se um lote tiver mensagens que falharam, o estado fica `FAILED` e o webhook responde `5xx` para a
   Evolution reenviar o lote. Mensagens já importadas são ignoradas por idempotência no retry.
   Reconexão/queda de conexão durante um sync também marca `FAILED`. O frontend só mostra
   “Histórico sincronizado” quando o estado persistido é `COMPLETED`.
-- O progresso é publicado em tempo real por `whatsapp.history.updated` na sala do tenant.
+- **Reinício do backend:** o estado `SYNCING` e o último progresso permanecem no banco. O CRM não
+  marca a sincronização como concluída automaticamente após reiniciar. Se a sincronização terminou
+  enquanto o backend estava fora do ar, o estado pode ficar `SYNCING`; após 10 minutos sem
+  atualizações o Atendimento passa a exibir “Sincronização do histórico sem atualizações recentes”
+  (indeterminado, sem afirmar conclusão).
+- O progresso é publicado em tempo real por `whatsapp.history.updated` na sala do tenant, incluindo
+  `progress`, `chunks`, `messages`, `startedAt`, `completedAt`, `updatedAt` e `error`.
+- **Indicador no Atendimento:** um banner discreto no topo informa “Sincronizando histórico do
+  WhatsApp”, mostra a barra/percentual somente quando o provedor enviou o valor e usa uma barra
+  indeterminada quando não há percentual. Ele não bloqueia a tela; as conversas e mensagens já
+  persistidas continuam disponíveis e os `messages.upsert` continuam sendo processados. Ao
+  concluir, uma confirmação discreta é exibida por alguns segundos. Falhas confirmadas exibem uma
+  mensagem amigável sem detalhes internos.
 - A ingestão é deduplicada por `(tenantId, externalMessageId)` e pelo contexto da instância.
   Webhook e backfill podem rodar simultaneamente sem duplicar mensagens.
 - Mensagens recentes recuperadas do histórico emitem eventos realtime; mensagens antigas são
@@ -217,10 +252,13 @@ Em **Configurações → WhatsApp** (`/configuracoes?tab=whatsapp`):
 - **Backfill manual:** `POST /api/whatsapp/instances/:id/backfill` (OWNER/ADMIN), body opcional
   `{ "days": 30, "maxMessages": 1000 }`. A rotina consulta `POST /chat/findMessages` paginado,
   importa o que falta e retorna `{ scanned, imported, skipped, failed, pages }`.
-- Logs: `whatsapp.history.batch`, `whatsapp.history.import`, `whatsapp.history.backfill`,
-  `whatsapp.message.persisted` e `whatsapp.history.message.failed` (sem conteúdo sensível).
-- Instâncias existentes recebem `MESSAGES_SET` na reconciliação de webhook do boot ou pela ação
-  **Reconfigurar webhook**.
+- Logs: `whatsapp.history.batch`, `whatsapp.history.notification`, `whatsapp.history.import`,
+  `whatsapp.history.backfill`, `whatsapp.message.persisted` e `whatsapp.history.message.failed`
+  (sem conteúdo sensível). O log de notificação registra apenas instância, progresso, chunk e
+  conclusão.
+- Instâncias existentes recebem `MESSAGING_HISTORY_SET` na reconciliação de webhook do boot ou
+  pela ação **Reconfigurar webhook**. `MESSAGES_SET` só é assinado quando a importação automática
+  está habilitada.
 
 ### Importação automática de contatos
 

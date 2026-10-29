@@ -5,6 +5,7 @@ import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useRealtime } from '@/providers/use-realtime';
 import { contactKeys } from '@/features/contacts/queries';
+import { whatsappKeys } from '@/features/whatsapp/queries';
 import { attendanceKeys } from './queries';
 import { useAttendanceRealtime } from './use-realtime';
 
@@ -75,9 +76,7 @@ beforeEach(() => {
   queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  invalidateQueries = vi
-    .spyOn(queryClient, 'invalidateQueries')
-    .mockResolvedValue(undefined);
+  invalidateQueries = vi.spyOn(queryClient, 'invalidateQueries').mockResolvedValue(undefined);
   vi.mocked(useRealtime).mockReturnValue({ socket: socket as never, connected: true });
 });
 
@@ -101,7 +100,9 @@ describe('useAttendanceRealtime invalidation scope', () => {
     expectNotInvalidated(attendanceKeys.conversation(ACTIVE_ID));
     expectNotInvalidated(attendanceKeys.messages(ACTIVE_ID));
     expect(
-      invalidatedKeys().some((key: unknown) => Array.isArray(key) && key[0] === 'attendance-attachment'),
+      invalidatedKeys().some(
+        (key: unknown) => Array.isArray(key) && key[0] === 'attendance-attachment',
+      ),
     ).toBe(false);
   });
 
@@ -121,7 +122,9 @@ describe('useAttendanceRealtime invalidation scope', () => {
     expectInvalidated(attendanceKeys.messages(ACTIVE_ID));
     expectNotInvalidated(attendanceKeys.messages(OTHER_ID));
     expect(
-      invalidatedKeys().some((key: unknown) => Array.isArray(key) && key[0] === 'attendance-attachment'),
+      invalidatedKeys().some(
+        (key: unknown) => Array.isArray(key) && key[0] === 'attendance-attachment',
+      ),
     ).toBe(false);
   });
 
@@ -153,24 +156,42 @@ describe('useAttendanceRealtime invalidation scope', () => {
   });
 
   it('keeps attachment keys outside the attendance invalidation prefix', () => {
-    const attachmentKey = attendanceKeys.attachment(
-      ACTIVE_ID,
-      'message-a',
-      'attachment-a',
-      'main',
-    );
+    const attachmentKey = attendanceKeys.attachment(ACTIVE_ID, 'message-a', 'attachment-a', 'main');
 
     expect(attachmentKey[0]).not.toBe(attendanceKeys.all[0]);
+  });
+
+  it('refreshes the WhatsApp instances when connection or history state changes', () => {
+    renderRealtime();
+
+    act(() => {
+      socket.emit('whatsapp.history.updated', {
+        instanceId: 'instance-1',
+        status: 'SYNCING',
+        progress: 42,
+      });
+    });
+    expectInvalidated(whatsappKeys.all);
+
+    invalidateQueries.mockClear();
+
+    act(() => {
+      socket.emit('whatsapp.instance.updated', {
+        instanceId: 'instance-1',
+        status: 'CONNECTED',
+      });
+    });
+    expectInvalidated(whatsappKeys.all);
   });
 
   it('removes every listener on unmount', () => {
     const { unmount } = renderRealtime();
 
-    expect(socket.listenerCount()).toBe(7);
+    expect(socket.listenerCount()).toBe(9);
     unmount();
 
     expect(socket.listenerCount()).toBe(0);
-    expect(socket.off).toHaveBeenCalledTimes(7);
+    expect(socket.off).toHaveBeenCalledTimes(9);
   });
 
   it('patches a reaction on the target message without invalidating queries', () => {
@@ -248,7 +269,9 @@ describe('useAttendanceRealtime invalidation scope', () => {
     expectInvalidated(attendanceKeys.conversation(ACTIVE_ID));
     expectInvalidated(attendanceKeys.messages(ACTIVE_ID));
     expect(
-      invalidatedKeys().some((key: unknown) => Array.isArray(key) && key[0] === 'attendance-attachment'),
+      invalidatedKeys().some(
+        (key: unknown) => Array.isArray(key) && key[0] === 'attendance-attachment',
+      ),
     ).toBe(false);
   });
 

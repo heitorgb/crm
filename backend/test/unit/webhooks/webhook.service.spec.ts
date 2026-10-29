@@ -504,6 +504,7 @@ describe('WebhookService history synchronization state', () => {
 
     expect(instances.applyHistorySyncUpdate).toHaveBeenCalledWith('inst-1', {
       progress: 42,
+      observedAt: expect.any(Date),
       completed: false,
       failed: false,
       error: null,
@@ -540,6 +541,7 @@ describe('WebhookService history synchronization state', () => {
 
     expect(instances.applyHistorySyncUpdate).toHaveBeenCalledWith('inst-1', {
       progress: 100,
+      observedAt: expect.any(Date),
       completed: true,
       failed: false,
       error: null,
@@ -567,8 +569,90 @@ describe('WebhookService history synchronization state', () => {
 
     expect(instances.applyHistorySyncUpdate).toHaveBeenCalledWith('inst-1', {
       progress: 100,
+      messages: 10,
+      observedAt: expect.any(Date),
       completed: true,
     });
+  });
+
+  it('records the completion even when automatic history import is disabled', async () => {
+    const { service, instances } = createHarness();
+
+    const result = await service.ingestEvolution({
+      event: 'MESSAGING_HISTORY_SET',
+      instance: 'inst-1',
+      data: { messageCount: 82744, chatCount: 120, contactCount: 300, progress: 100 },
+    });
+
+    expect(result.accepted).toBe(true);
+    expect(instances.applyHistorySyncUpdate).toHaveBeenCalledWith('inst-1', {
+      progress: 100,
+      messages: 82744,
+      observedAt: expect.any(Date),
+      completed: true,
+    });
+  });
+
+  it('updates the real progress from the history sync notification', async () => {
+    const { service, instances } = createHarness();
+    const observedAt = new Date('2026-10-29T13:48:04.000Z');
+
+    await service.ingestEvolution(
+      {
+        event: 'messages.edited',
+        instance: 'inst-1',
+        data: {
+          type: 'HISTORY_SYNC_NOTIFICATION',
+          historySyncNotification: {
+            progress: 83,
+            chunkOrder: 14,
+            syncType: 'RECENT',
+          },
+        },
+      },
+      { observedAt },
+    );
+
+    expect(instances.applyHistorySyncUpdate).toHaveBeenCalledWith('inst-1', {
+      progress: 83,
+      chunks: 14,
+      observedAt,
+      completed: false,
+    });
+  });
+
+  it('ignores on-demand history notifications when reporting initial sync', async () => {
+    const { service, instances } = createHarness();
+
+    await service.ingestEvolution({
+      event: 'messages.edited',
+      instance: 'inst-1',
+      data: {
+        type: 'HISTORY_SYNC_NOTIFICATION',
+        historySyncNotification: {
+          progress: 20,
+          chunkOrder: 2,
+          syncType: 'ON_DEMAND',
+        },
+      },
+    });
+
+    expect(instances.applyHistorySyncUpdate).not.toHaveBeenCalled();
+  });
+
+  it('does not treat non-history messages.edited payloads as sync progress', async () => {
+    const { service, instances } = createHarness();
+
+    await service.ingestEvolution({
+      event: 'messages.edited',
+      instance: 'inst-1',
+      data: {
+        type: 'NON_BLOCKING_DATA',
+        message: { conversation: 'not a history notification' },
+      },
+    });
+
+    expect(instances.applyHistorySyncUpdate).not.toHaveBeenCalled();
   });
 
   it('marks a batch with failed messages as failed and asks Evolution to retry', async () => {
@@ -600,6 +684,7 @@ describe('WebhookService history synchronization state', () => {
 
     expect(instances.applyHistorySyncUpdate).toHaveBeenCalledWith('inst-1', {
       progress: 30,
+      observedAt: expect.any(Date),
       failed: true,
       error: 'history_import_failed',
     });

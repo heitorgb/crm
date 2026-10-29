@@ -32,8 +32,11 @@ const instance: WhatsAppInstance = {
   historySync: {
     status: 'IDLE',
     progress: null,
+    chunks: null,
+    messages: null,
     startedAt: null,
     completedAt: null,
+    updatedAt: null,
     error: null,
   },
   createdAt: new Date().toISOString(),

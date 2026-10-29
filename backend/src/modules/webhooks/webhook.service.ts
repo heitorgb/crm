@@ -305,20 +305,19 @@ export class WebhookService implements OnModuleInit {
       }
 
       try {
-        await this.handleMessagesSet(instance, payload);
+        await this.handleMessagesSet(instance, payload, observedAt);
         return { accepted: true };
       } catch (error) {
         throw error instanceof AppException ? error : new WebhookProcessingError(error);
       }
     }
 
+    // The completion event is small and is always handled, even when history
+    // import is disabled. It is the provider's definitive completion signal and
+    // lets the UI leave the syncing state without importing the history.
     if (eventType === 'messaging-history.set') {
-      if (!this.config.get('WHATSAPP_HISTORY_IMPORT_ENABLED')) {
-        return { accepted: true, ignored: 'history_import_disabled' };
-      }
-
       try {
-        await this.handleMessagingHistorySet(instance, payload);
+        await this.handleMessagingHistorySet(instance, payload, observedAt);
         return { accepted: true };
       } catch (error) {
         throw error instanceof AppException ? error : new WebhookProcessingError(error);
@@ -408,7 +407,7 @@ export class WebhookService implements OnModuleInit {
     }
 
     if (eventType === 'messages.edited') {
-      await this.handleMessageEdited(instance, payload);
+      await this.handleMessageEdited(instance, payload, observedAt);
       return { accepted: true };
     }
 
@@ -460,6 +459,7 @@ export class WebhookService implements OnModuleInit {
   private async handleMessagesSet(
     instance: ResolvedInstance,
     payload: Record<string, unknown>,
+    observedAt: Date,
   ): Promise<void> {
     const records = toArray(payload.data).filter(isRecord);
     const isLatest = typeof payload.isLatest === 'boolean' ? payload.isLatest : null;
@@ -477,6 +477,7 @@ export class WebhookService implements OnModuleInit {
       const failed = error instanceof HistoryIngestError ? error.result.failed : 0;
       await this.updateHistorySync(instance, {
         progress,
+        observedAt,
         failed: true,
         error: 'history_import_failed',
       });
@@ -495,6 +496,7 @@ export class WebhookService implements OnModuleInit {
     const completed = !failed && progress === 100;
     await this.updateHistorySync(instance, {
       progress,
+      observedAt,
       completed,
       failed,
       error: failed ? 'history_import_failed' : null,
@@ -523,22 +525,32 @@ export class WebhookService implements OnModuleInit {
   private async handleMessagingHistorySet(
     instance: ResolvedInstance,
     payload: Record<string, unknown>,
+    observedAt: Date,
   ): Promise<void> {
     const data = isRecord(payload.data) ? payload.data : null;
     const progress = readProgress(data?.progress) ?? readProgress(payload.progress);
+    const messages = readCount(data?.messageCount);
 
     if (progress !== null && progress < 100) {
-      await this.updateHistorySync(instance, { progress });
+      await this.updateHistorySync(instance, { progress, messages, observedAt });
       return;
     }
 
-    await this.updateHistorySync(instance, { progress: 100, completed: true });
+    await this.updateHistorySync(instance, {
+      progress: 100,
+      messages,
+      observedAt,
+      completed: true,
+    });
   }
 
   private async updateHistorySync(
     instance: ResolvedInstance,
     update: {
       progress?: number | null;
+      chunks?: number | null;
+      messages?: number | null;
+      observedAt?: Date;
       completed?: boolean;
       failed?: boolean;
       error?: string | null;
@@ -550,8 +562,11 @@ export class WebhookService implements OnModuleInit {
         instanceId: state.instanceId,
         status: state.status,
         progress: state.progress,
+        chunks: state.chunks,
+        messages: state.messages,
         startedAt: state.startedAt,
         completedAt: state.completedAt,
+        updatedAt: state.updatedAt,
         error: state.error,
       });
     }
@@ -1363,7 +1378,50 @@ export class WebhookService implements OnModuleInit {
   private async handleMessageEdited(
     instance: ResolvedInstance,
     payload: Record<string, unknown>,
+    observedAt: Date,
   ): Promise<void> {
+    const data = isRecord(payload.data) ? payload.data : null;
+    const notification =
+      data && isRecord(data.historySyncNotification) ? data.historySyncNotification : null;
+
+    // Evolution 2.4 classifies the WhatsApp history sync notification as
+    // `messages.edited`. It is not a message edit: it carries the provider's
+    // real progress and chunk order, and it is the only progress signal
+    // available when automatic history import is disabled.
+    if (data?.type === 'HISTORY_SYNC_NOTIFICATION' && notification) {
+      const syncType = readString(notification.syncType);
+      // On-demand history (older messages loaded while scrolling) and contact
+      // name sync are not the initial synchronization shown in the attendance
+      // banner. They must not reopen or advance that indicator.
+      const initialSync =
+        syncType === null ||
+        syncType === 'RECENT' ||
+        syncType === 'FULL' ||
+        syncType === 'INITIAL_BOOTSTRAP';
+
+      if (initialSync) {
+        const progress = readProgress(notification.progress);
+        const chunks = readCount(notification.chunkOrder);
+
+        await this.updateHistorySync(instance, {
+          progress,
+          chunks,
+          observedAt,
+          completed: progress === 100,
+        });
+
+        this.logger.log(
+          `whatsapp.history.notification ${JSON.stringify({
+            instance: instance.instanceName,
+            progress,
+            chunks,
+            completed: progress === 100,
+          })}`,
+        );
+      }
+      return;
+    }
+
     const entries = toArray(payload.data).filter(isRecord);
 
     for (const entry of entries) {
@@ -2400,6 +2458,7 @@ const REDACTED_KEYS = new Set([
   'qr',
   'pairingcode',
   'pairing_code',
+  'historysyncnotification',
 ]);
 
 /**
@@ -2702,6 +2761,21 @@ function readProgress(value: unknown): number | null {
   }
 
   return Math.round(numeric);
+}
+
+function readCount(value: unknown): number | null {
+  const numeric =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string' && value.length > 0
+        ? Number(value)
+        : Number.NaN;
+
+  if (!Number.isFinite(numeric) || numeric < 0) {
+    return null;
+  }
+
+  return Math.trunc(numeric);
 }
 
 function readString(value: unknown): string | null {

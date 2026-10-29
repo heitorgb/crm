@@ -29,8 +29,11 @@ import {
 export interface WhatsAppHistorySyncView {
   status: WhatsAppHistorySyncStatus;
   progress: number | null;
+  chunks: number | null;
+  messages: number | null;
   startedAt: Date | null;
   completedAt: Date | null;
+  updatedAt: Date | null;
   error: string | null;
 }
 
@@ -58,6 +61,9 @@ export interface AppliedHistorySyncState extends WhatsAppHistorySyncView {
 
 export interface HistorySyncUpdate {
   progress?: number | null;
+  chunks?: number | null;
+  messages?: number | null;
+  observedAt?: Date;
   completed?: boolean;
   failed?: boolean;
   error?: string | null;
@@ -156,6 +162,7 @@ const TERMINAL_DISCONNECT_REASONS = new Set([401, 403]);
 export class WhatsAppInstancesService implements OnModuleInit {
   private readonly logger = new Logger(WhatsAppInstancesService.name);
   private readonly connectionOperations = new Map<string, string>();
+  private readonly historyOperations = new Map<string, Promise<void>>();
   private readonly qrCache = new Map<string, WhatsAppConnectionQr>();
   private reconcileRunning = false;
 
@@ -877,6 +884,15 @@ export class WhatsAppInstancesService implements OnModuleInit {
     instanceName: string,
     update: HistorySyncUpdate,
   ): Promise<AppliedHistorySyncState | null> {
+    return this.enqueueHistoryOperation(instanceName, () =>
+      this.applyHistorySyncUpdateUnlocked(instanceName, update),
+    );
+  }
+
+  private async applyHistorySyncUpdateUnlocked(
+    instanceName: string,
+    update: HistorySyncUpdate,
+  ): Promise<AppliedHistorySyncState | null> {
     const instance = await this.prisma.whatsAppInstance.findUnique({
       where: { instanceName },
       select: {
@@ -884,8 +900,11 @@ export class WhatsAppInstancesService implements OnModuleInit {
         tenantId: true,
         historySyncStatus: true,
         historySyncProgress: true,
+        historySyncChunks: true,
+        historySyncMessages: true,
         historySyncStartedAt: true,
         historySyncCompletedAt: true,
+        historySyncUpdatedAt: true,
         historySyncError: true,
       },
     });
@@ -893,25 +912,25 @@ export class WhatsAppInstancesService implements OnModuleInit {
       return null;
     }
 
-    const current: AppliedHistorySyncState = {
-      instanceId: instance.id,
-      tenantId: instance.tenantId,
-      status: instance.historySyncStatus,
-      progress: instance.historySyncProgress,
-      startedAt: instance.historySyncStartedAt,
-      completedAt: instance.historySyncCompletedAt,
-      error: instance.historySyncError,
-      changed: false,
-    };
+    const current = toHistorySyncState(instance);
 
     if (update.onlyIfSyncing && current.status !== WhatsAppHistorySyncStatus.SYNCING) {
       return current;
     }
 
-    const now = new Date();
+    const now = update.observedAt ?? new Date();
+    if (current.updatedAt && now.getTime() < current.updatedAt.getTime()) {
+      return current;
+    }
+
     const observed = normalizeHistoryProgress(update.progress);
+    const chunks = normalizeHistoryCount(update.chunks);
+    const messages = normalizeHistoryCount(update.messages);
+
     let status = current.status;
     let progress = current.progress;
+    let currentChunks = current.chunks;
+    let currentMessages = current.messages;
     let startedAt = current.startedAt;
     let completedAt = current.completedAt;
     let error = current.error;
@@ -919,6 +938,12 @@ export class WhatsAppInstancesService implements OnModuleInit {
     if (update.completed) {
       status = WhatsAppHistorySyncStatus.COMPLETED;
       progress = 100;
+      if (chunks !== null) {
+        currentChunks = maxCount(currentChunks, chunks);
+      }
+      if (messages !== null) {
+        currentMessages = messages;
+      }
       startedAt ??= now;
       completedAt = current.completedAt ?? now;
       error = null;
@@ -930,6 +955,12 @@ export class WhatsAppInstancesService implements OnModuleInit {
       if (observed !== null && (progress === null || observed >= progress)) {
         progress = observed;
       }
+      if (chunks !== null) {
+        currentChunks = maxCount(currentChunks, chunks);
+      }
+      if (messages !== null) {
+        currentMessages = messages;
+      }
       startedAt ??= now;
       completedAt = null;
       error = update.error ?? 'history_import_failed';
@@ -940,6 +971,8 @@ export class WhatsAppInstancesService implements OnModuleInit {
       if (observed !== null && observed < 100) {
         status = WhatsAppHistorySyncStatus.SYNCING;
         progress = observed;
+        currentChunks = chunks;
+        currentMessages = messages;
         startedAt = now;
         completedAt = null;
         error = null;
@@ -949,6 +982,12 @@ export class WhatsAppInstancesService implements OnModuleInit {
       if (observed !== null && (progress === null || observed >= progress)) {
         progress = observed;
       }
+      if (chunks !== null) {
+        currentChunks = maxCount(currentChunks, chunks);
+      }
+      if (messages !== null) {
+        currentMessages = messages;
+      }
       startedAt ??= now;
       completedAt = null;
       error = null;
@@ -957,21 +996,48 @@ export class WhatsAppInstancesService implements OnModuleInit {
     const changed =
       status !== current.status ||
       progress !== current.progress ||
+      currentChunks !== current.chunks ||
+      currentMessages !== current.messages ||
       !sameDate(startedAt, current.startedAt) ||
       !sameDate(completedAt, current.completedAt) ||
       error !== current.error;
 
     if (changed) {
-      await this.prisma.whatsAppInstance.update({
-        where: { id: instance.id },
+      const applied = await this.prisma.whatsAppInstance.updateMany({
+        where: {
+          id: instance.id,
+          OR: [{ historySyncUpdatedAt: null }, { historySyncUpdatedAt: { lte: now } }],
+        },
         data: {
           historySyncStatus: status,
           historySyncProgress: progress,
+          historySyncChunks: currentChunks,
+          historySyncMessages: currentMessages,
           historySyncStartedAt: startedAt,
           historySyncCompletedAt: completedAt,
+          historySyncUpdatedAt: now,
           historySyncError: error,
         },
       });
+
+      if (applied.count === 0) {
+        const latest = await this.prisma.whatsAppInstance.findUnique({
+          where: { id: instance.id },
+          select: {
+            id: true,
+            tenantId: true,
+            historySyncStatus: true,
+            historySyncProgress: true,
+            historySyncChunks: true,
+            historySyncMessages: true,
+            historySyncStartedAt: true,
+            historySyncCompletedAt: true,
+            historySyncUpdatedAt: true,
+            historySyncError: true,
+          },
+        });
+        return latest ? toHistorySyncState(latest) : null;
+      }
     }
 
     return {
@@ -979,8 +1045,11 @@ export class WhatsAppInstancesService implements OnModuleInit {
       tenantId: instance.tenantId,
       status,
       progress,
+      chunks: currentChunks,
+      messages: currentMessages,
       startedAt,
       completedAt,
+      updatedAt: changed ? now : current.updatedAt,
       error,
       changed,
     };
@@ -995,6 +1064,34 @@ export class WhatsAppInstancesService implements OnModuleInit {
       error: reason,
       onlyIfSyncing: true,
     });
+  }
+
+  /**
+   * Serializes history-sync writes per instance in this process. The provider
+   * can deliver a batch, a notification and the completion event close
+   * together; without serialization a stale read could overwrite newer
+   * progress. The conditional update in `applyHistorySyncUpdate` remains as a
+   * second line of defense.
+   */
+  private async enqueueHistoryOperation<T>(instanceName: string, fn: () => Promise<T>): Promise<T> {
+    const previous = this.historyOperations.get(instanceName) ?? Promise.resolve();
+    const run = previous.then(
+      () => fn(),
+      () => fn(),
+    );
+    const guard = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.historyOperations.set(instanceName, guard);
+
+    try {
+      return await run;
+    } finally {
+      if (this.historyOperations.get(instanceName) === guard) {
+        this.historyOperations.delete(instanceName);
+      }
+    }
   }
 
   private runConnectionOperation<T>(
@@ -1314,9 +1411,14 @@ export class WhatsAppInstancesService implements OnModuleInit {
   }
 
   private webhookEvents(): string[] {
+    // The completion event is small and always useful for the history-sync
+    // indicator. Full history batches are only subscribed when import is
+    // explicitly enabled; the indicator can also use the progress carried by
+    // the history notification event.
+    const events = ['MESSAGING_HISTORY_SET', ...WEBHOOK_EVENTS];
     return this.config.get('WHATSAPP_HISTORY_IMPORT_ENABLED')
-      ? ['MESSAGES_SET', 'MESSAGING_HISTORY_SET', ...WEBHOOK_EVENTS]
-      : WEBHOOK_EVENTS;
+      ? ['MESSAGES_SET', ...events]
+      : events;
   }
 
   private resolveWebhookSecret(credentialsEncrypted: string | null): string {
@@ -1422,6 +1524,35 @@ export class WhatsAppInstancesService implements OnModuleInit {
   }
 }
 
+interface HistorySyncRow {
+  id: string;
+  tenantId: string;
+  historySyncStatus: WhatsAppHistorySyncStatus;
+  historySyncProgress: number | null;
+  historySyncChunks: number | null;
+  historySyncMessages: number | null;
+  historySyncStartedAt: Date | null;
+  historySyncCompletedAt: Date | null;
+  historySyncUpdatedAt: Date | null;
+  historySyncError: string | null;
+}
+
+function toHistorySyncState(row: HistorySyncRow): AppliedHistorySyncState {
+  return {
+    instanceId: row.id,
+    tenantId: row.tenantId,
+    status: row.historySyncStatus,
+    progress: row.historySyncProgress,
+    chunks: row.historySyncChunks,
+    messages: row.historySyncMessages,
+    startedAt: row.historySyncStartedAt,
+    completedAt: row.historySyncCompletedAt,
+    updatedAt: row.historySyncUpdatedAt,
+    error: row.historySyncError,
+    changed: false,
+  };
+}
+
 function toView(instance: {
   id: string;
   name: string;
@@ -1435,8 +1566,11 @@ function toView(instance: {
   credentialsEncrypted: string | null;
   historySyncStatus?: WhatsAppHistorySyncStatus;
   historySyncProgress?: number | null;
+  historySyncChunks?: number | null;
+  historySyncMessages?: number | null;
   historySyncStartedAt?: Date | null;
   historySyncCompletedAt?: Date | null;
+  historySyncUpdatedAt?: Date | null;
   historySyncError?: string | null;
   createdAt: Date;
   updatedAt: Date;
@@ -1455,8 +1589,11 @@ function toView(instance: {
     historySync: {
       status: instance.historySyncStatus ?? WhatsAppHistorySyncStatus.IDLE,
       progress: instance.historySyncProgress ?? null,
+      chunks: instance.historySyncChunks ?? null,
+      messages: instance.historySyncMessages ?? null,
       startedAt: instance.historySyncStartedAt ?? null,
       completedAt: instance.historySyncCompletedAt ?? null,
+      updatedAt: instance.historySyncUpdatedAt ?? null,
       error: instance.historySyncError ?? null,
     },
     createdAt: instance.createdAt,
@@ -1590,6 +1727,17 @@ function normalizeHistoryProgress(value: number | null | undefined): number | nu
     return null;
   }
   return Math.round(value);
+}
+
+function normalizeHistoryCount(value: number | null | undefined): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    return null;
+  }
+  return Math.trunc(value);
+}
+
+function maxCount(current: number | null, next: number): number {
+  return current === null || next > current ? next : current;
 }
 
 function sameDate(left: Date | null, right: Date | null): boolean {

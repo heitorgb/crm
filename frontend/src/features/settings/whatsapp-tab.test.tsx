@@ -40,8 +40,11 @@ vi.mock('@/features/whatsapp/queries', () => ({
           historySync: {
             status: 'SYNCING',
             progress: 42,
+            chunks: 3,
+            messages: null,
             startedAt: new Date().toISOString(),
             completedAt: null,
+            updatedAt: new Date().toISOString(),
             error: null,
           },
           createdAt: new Date().toISOString(),
@@ -85,9 +88,7 @@ describe('WhatsAppTab instance limit', () => {
     fireEvent.click(screen.getByRole('button', { name: /nova instância/i }));
 
     expect(await screen.findByText('Não é possível adicionar outra instância')).toBeTruthy();
-    expect(
-      screen.getByText(/já possui uma instância WhatsApp cadastrada/i),
-    ).toBeTruthy();
+    expect(screen.getByText(/já possui uma instância WhatsApp cadastrada/i)).toBeTruthy();
     expect(screen.queryByText(/limite/i)).toBeNull();
     expect(screen.queryByText(/administrador da plataforma/i)).toBeNull();
   });

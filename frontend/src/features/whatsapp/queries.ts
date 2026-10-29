@@ -1,9 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { WhatsAppInstanceInput, WhatsAppInstanceUpdateInput } from '@/types/whatsapp';
-import {
-  whatsappService,
-  type ListWhatsAppInstancesParams,
-} from './services/whatsapp-service';
+import { whatsappService, type ListWhatsAppInstancesParams } from './services/whatsapp-service';
 
 export const whatsappKeys = {
   all: ['whatsapp-instances'] as const,
@@ -12,11 +9,15 @@ export const whatsappKeys = {
   status: (id: string) => ['whatsapp-instances', 'status', id] as const,
 };
 
-export function useWhatsAppInstances(params: ListWhatsAppInstancesParams = {}) {
+export function useWhatsAppInstances(
+  params: ListWhatsAppInstancesParams = {},
+  options: { refetchInterval?: number | false } = {},
+) {
   return useQuery({
     queryKey: whatsappKeys.list(params),
     queryFn: () => whatsappService.list(params),
     placeholderData: (previous) => previous,
+    refetchInterval: options.refetchInterval,
   });
 }
 

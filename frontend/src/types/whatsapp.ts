@@ -4,8 +4,11 @@ export type WhatsAppHistorySyncStatus = 'IDLE' | 'SYNCING' | 'COMPLETED' | 'FAIL
 export interface WhatsAppHistorySync {
   status: WhatsAppHistorySyncStatus;
   progress: number | null;
+  chunks: number | null;
+  messages: number | null;
   startedAt: string | null;
   completedAt: string | null;
+  updatedAt: string | null;
   error: string | null;
 }
 

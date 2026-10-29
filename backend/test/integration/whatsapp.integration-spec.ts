@@ -947,30 +947,26 @@ describe('WhatsApp attendance (integration)', () => {
       const newer = new Date(Date.now() + 2_000);
       const older = new Date(Date.now() + 1_000);
 
-      await app.inject({
-        method: 'POST',
-        url: `/api/webhooks/evolution?token=test-webhook-secret`,
-        headers: {
-          'x-timestamp': newer.getTime().toString(),
-        },
-        payload: {
+      const opened = await postWebhook(
+        {
           event: 'connection.update',
           instance: instanceName,
           data: { instance: instanceName, state: 'open' },
         },
-      });
-      await app.inject({
-        method: 'POST',
-        url: `/api/webhooks/evolution?token=test-webhook-secret`,
-        headers: {
-          'x-timestamp': older.getTime().toString(),
-        },
-        payload: {
+        undefined,
+        { observedAt: newer },
+      );
+      expect(opened.statusCode).toBe(200);
+      const closed = await postWebhook(
+        {
           event: 'connection.update',
           instance: instanceName,
           data: { instance: instanceName, state: 'close', statusReason: 401 },
         },
-      });
+        undefined,
+        { observedAt: older },
+      );
+      expect(closed.statusCode).toBe(200);
 
       const stored = await prisma.whatsAppInstance.findUniqueOrThrow({
         where: { id: instanceId },

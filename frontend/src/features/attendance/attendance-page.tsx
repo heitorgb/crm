@@ -14,6 +14,7 @@ import { ChatPanel } from './chat-panel';
 import { ContactPanel } from './contact-panel';
 import { ConversationList } from './conversation-list';
 import { ConversationTagsDialog } from './conversation-tags-dialog';
+import { HistorySyncBanner } from './history-sync-banner';
 import { PhotoSendFlow } from './photo-send-flow';
 import { buildTimeline, conversationLabel } from './attendance-utils';
 import { isMediaPending } from './media-message-utils';
@@ -72,7 +73,9 @@ export function AttendancePage() {
   const selectedId = searchParams.get('conversation');
   const { connected } = useAttendanceRealtime(selectedId);
 
-  const instancesQuery = useWhatsAppInstances({ perPage: 100 });
+  // Socket events are the primary update path; this fallback catches a missed
+  // completion event without making the attendance screen depend on polling.
+  const instancesQuery = useWhatsAppInstances({ perPage: 100 }, { refetchInterval: 60_000 });
   const conversationsQuery = useConversations({
     perPage: 50,
     search: search || undefined,
@@ -104,9 +107,7 @@ export function AttendancePage() {
     messagesQuery.data?.data ?? [],
   ).filter((message) => !isMediaPending(message));
   const totalPages = messagesQuery.data?.meta.totalPages ?? 1;
-  const hasOlderMessages = historyQuery.data
-    ? historyQuery.hasNextPage === true
-    : totalPages > 1;
+  const hasOlderMessages = historyQuery.data ? historyQuery.hasNextPage === true : totalPages > 1;
   const loadingOlderMessages =
     historyQuery.isFetchingNextPage || (historyEnabled && historyQuery.isPending);
   const mobileChatView = selectedId !== null;
@@ -232,6 +233,11 @@ export function AttendancePage() {
         </div>
       ) : null}
 
+      <HistorySyncBanner
+        instances={instancesQuery.data?.data ?? []}
+        selectedInstanceId={instanceId}
+      />
+
       <div className="flex min-h-0 flex-1">
         <div
           className={cn(
@@ -266,17 +272,14 @@ export function AttendancePage() {
             onToggleArchive={handleToggleArchive}
             archivePendingId={setArchived.isPending ? (setArchived.variables?.id ?? null) : null}
             onDelete={handleDeleteRequest}
-            deletePendingId={deleteConversation.isPending ? (deleteConversation.variables ?? null) : null}
+            deletePendingId={
+              deleteConversation.isPending ? (deleteConversation.variables ?? null) : null
+            }
             onEditTags={setTagConversation}
           />
         </div>
 
-        <div
-          className={cn(
-            'min-h-0 min-w-0 flex-1',
-            mobileChatView ? 'flex' : 'hidden md:flex',
-          )}
-        >
+        <div className={cn('min-h-0 min-w-0 flex-1', mobileChatView ? 'flex' : 'hidden md:flex')}>
           {!activeId ? (
             <div className="flex flex-1 items-center justify-center p-6">
               <EmptyState

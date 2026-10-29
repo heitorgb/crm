@@ -3,6 +3,7 @@ import { useQueryClient, type InfiniteData, type QueryKey } from '@tanstack/reac
 import { useRealtime } from '@/providers/use-realtime';
 import type { ConversationMessage, MessageReaction } from '@/types/attendance';
 import { contactKeys } from '@/features/contacts/queries';
+import { whatsappKeys } from '@/features/whatsapp/queries';
 import type { PageResult } from '@/types/crm';
 import { attendanceKeys } from './queries';
 
@@ -99,9 +100,9 @@ function hasMessageId(payload: unknown): boolean {
   return typeof value === 'string' && value.length > 0;
 }
 
-export function useAttendanceRealtime(
-  activeConversationId: string | null = null,
-): { connected: boolean } {
+export function useAttendanceRealtime(activeConversationId: string | null = null): {
+  connected: boolean;
+} {
   const { socket, connected } = useRealtime();
   const queryClient = useQueryClient();
   const activeConversationIdRef = useRef(activeConversationId);
@@ -179,8 +180,7 @@ export function useAttendanceRealtime(
       );
       queryClient.setQueryData<InfiniteData<PageResult<ConversationMessage>>>(
         attendanceKeys.historyMessages(conversationId),
-        (current) =>
-          current ? withReactionsInPages(current, messageId, reactions) : current,
+        (current) => (current ? withReactionsInPages(current, messageId, reactions) : current),
       );
     };
 
@@ -205,11 +205,16 @@ export function useAttendanceRealtime(
       invalidateActiveMessages();
     };
 
+    const handleWhatsAppInstanceUpdated = (): void => {
+      invalidate(whatsappKeys.all);
+    };
+
     const handleConnect = (): void => {
       invalidateConversationList();
       invalidate(attendanceKeys.unreadCount);
       invalidateActiveConversation();
       invalidateActiveMessages();
+      invalidate(whatsappKeys.all);
     };
 
     socket.on('connect', handleConnect);
@@ -219,6 +224,8 @@ export function useAttendanceRealtime(
     socket.on('conversation.updated', handleConversationUpdated);
     socket.on('conversation.deleted', handleConversationDeleted);
     socket.on('contact.updated', handleContactUpdated);
+    socket.on('whatsapp.instance.updated', handleWhatsAppInstanceUpdated);
+    socket.on('whatsapp.history.updated', handleWhatsAppInstanceUpdated);
 
     return () => {
       socket.off('connect', handleConnect);
@@ -228,6 +235,8 @@ export function useAttendanceRealtime(
       socket.off('conversation.updated', handleConversationUpdated);
       socket.off('conversation.deleted', handleConversationDeleted);
       socket.off('contact.updated', handleContactUpdated);
+      socket.off('whatsapp.instance.updated', handleWhatsAppInstanceUpdated);
+      socket.off('whatsapp.history.updated', handleWhatsAppInstanceUpdated);
     };
   }, [socket, queryClient]);
 

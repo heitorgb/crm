@@ -23,6 +23,7 @@ export const JOB_NAMES = {
   MEDIA_PROCESS: 'media.process',
   TRANSCRIPTION_PROCESS: 'transcription.process',
   CONTACTS_SYNC: 'whatsapp.contacts.sync',
+  WHATSAPP_INSTANCE_RECONCILE: 'whatsapp.instance.reconcile',
   BILLING_SCAN: 'billing.scan',
   BILLING_REMINDER_SEND: 'billing.reminder.send',
   BULK_MEDIA_SCAN: 'bulk-media.scan',

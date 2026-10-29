@@ -2,6 +2,7 @@ import { apiRequest } from '@/lib/api-client';
 import { toQueryString } from '@/lib/query-params';
 import type { PageResult } from '@/types/crm';
 import type {
+  WhatsAppConnectionStatus,
   WhatsAppConnectionTicket,
   WhatsAppQuota,
   WhatsAppInstance,
@@ -53,8 +54,7 @@ export const whatsappService = {
       body: {},
     }),
 
-  status: (id: string) =>
-    apiRequest<{ status: WhatsAppInstanceStatus }>(`/whatsapp/instances/${id}/status`),
+  status: (id: string) => apiRequest<WhatsAppConnectionStatus>(`/whatsapp/instances/${id}/status`),
 
   configureWebhook: (id: string) =>
     apiRequest<WhatsAppWebhookResult>(`/whatsapp/instances/${id}/webhook`, {

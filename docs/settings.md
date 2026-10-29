@@ -112,9 +112,12 @@ endpoints em [`ai.md`](./ai.md).
 Administração das instâncias da integração com a Evolution API (endpoints `/api/whatsapp/instances`):
 listagem (nome, `instanceName`, telefone, status de conexão e indicador de credenciais próprias),
 criação, edição, exclusão, conexão/reconexão com **QR code** (`connect`, com *poll* de `status`) e
-**reconfiguração de webhook**. A lógica de integração não muda; a interface foi movida de
-Atendimento para Configurações. Fluxo completo em [`attendance.md`](./attendance.md). Nenhuma
-credencial é exibida após ser salva.
+**reconfiguração de webhook**. O QR é atualizado em tempo real quando a Evolution o renova; o
+diálogo diferencia conexão recusada/limite de QR, QR expirado e conexão confirmada. `GET /status` é
+restrito a `OWNER`/`ADMIN`. O andamento da sincronização inicial do histórico também aparece no
+**Atendimento** (banner com progresso real ou indicador indeterminado), sem bloquear as conversas.
+A lógica de integração não muda; a interface foi movida de Atendimento para Configurações. Fluxo
+completo em [`attendance.md`](./attendance.md). Nenhuma credencial é exibida após ser salva.
 
 ## Configurações da plataforma (admin)
 

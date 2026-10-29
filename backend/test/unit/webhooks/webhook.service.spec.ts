@@ -34,7 +34,8 @@ interface Harness {
   };
   instances: {
     resolveByInstanceName: ReturnType<typeof vi.fn>;
-    applyProviderConnectionState: ReturnType<typeof vi.fn>;
+    applyConnectionObservation: ReturnType<typeof vi.fn>;
+    applyProviderQr: ReturnType<typeof vi.fn>;
     applyHistorySyncUpdate: ReturnType<typeof vi.fn>;
     markHistorySyncInterrupted: ReturnType<typeof vi.fn>;
   };
@@ -83,7 +84,8 @@ function createHarness(): Harness {
       instanceName: 'inst-1',
       status: 'CONNECTED',
     }),
-    applyProviderConnectionState: vi.fn().mockResolvedValue(null),
+    applyConnectionObservation: vi.fn().mockResolvedValue(null),
+    applyProviderQr: vi.fn().mockResolvedValue(undefined),
     applyHistorySyncUpdate: vi.fn().mockResolvedValue(null),
     markHistorySyncInterrupted: vi.fn().mockResolvedValue(null),
   };
@@ -326,47 +328,120 @@ describe('WebhookService messages.set', () => {
   });
 });
 
-describe('WebhookService connection.update', () => {
-  it('persists the provider state and broadcasts the change', async () => {
-    const { service, instances, realtime } = createHarness();
-    instances.applyProviderConnectionState.mockResolvedValue({
-      instanceId: 'instance-1',
-      tenantId: 'tenant-1',
-      status: 'DISCONNECTED',
-      changed: true,
-    });
+describe('WebhookService connection lifecycle', () => {
+  it('applies connection.update with a numeric statusReason and the provider timestamp', async () => {
+    const { service, instances } = createHarness();
+    const observedAt = new Date('2026-10-29T10:00:00Z');
 
-    const result = await service.ingestEvolution({
-      event: 'connection.update',
-      instance: 'inst-1',
-      data: { instance: 'inst-1', state: 'close', statusReason: 'conflict' },
-    });
+    const result = await service.ingestEvolution(
+      {
+        event: 'connection.update',
+        instance: 'inst-1',
+        data: { instance: 'inst-1', state: 'close', statusReason: 401 },
+      },
+      { observedAt },
+    );
 
     expect(result.accepted).toBe(true);
-    expect(instances.applyProviderConnectionState).toHaveBeenCalledWith('inst-1', 'close');
-    expect(realtime.emitToTenant).toHaveBeenCalledWith(
-      'tenant-1',
-      'whatsapp.instance.updated',
-      expect.objectContaining({ instanceId: 'instance-1', status: 'DISCONNECTED' }),
-    );
+    expect(instances.applyConnectionObservation).toHaveBeenCalledWith('inst-1', 'close', {
+      observedAt,
+      reason: 401,
+      source: 'webhook',
+    });
   });
 
-  it('does not broadcast when the connection state did not change', async () => {
-    const { service, instances, realtime } = createHarness();
-    instances.applyProviderConnectionState.mockResolvedValue({
-      instanceId: 'instance-1',
-      tenantId: 'tenant-1',
-      status: 'CONNECTED',
-      changed: false,
-    });
+  it('does not call the state handler when connection.update has no state', async () => {
+    const { service, instances } = createHarness();
 
     await service.ingestEvolution({
       event: 'connection.update',
       instance: 'inst-1',
-      data: { instance: 'inst-1', state: 'open' },
+      data: { instance: 'inst-1' },
     });
 
-    expect(realtime.emitToTenant).not.toHaveBeenCalled();
+    expect(instances.applyConnectionObservation).not.toHaveBeenCalled();
+  });
+
+  it('treats status.instance closed as a disconnected session', async () => {
+    const { service, instances } = createHarness();
+    const disconnectionAt = new Date(Date.now() - 1_000);
+
+    const result = await service.ingestEvolution({
+      event: 'status.instance',
+      instance: 'inst-1',
+      data: {
+        instance: 'inst-1',
+        status: 'closed',
+        disconnectionReasonCode: 401,
+        disconnectionAt: disconnectionAt.toISOString(),
+      },
+    });
+
+    expect(result.accepted).toBe(true);
+    expect(instances.applyConnectionObservation).toHaveBeenCalledWith('inst-1', 'close', {
+      observedAt: disconnectionAt,
+      reason: 401,
+      source: 'webhook',
+    });
+  });
+
+  it('ignores status.instance events that are not closed', async () => {
+    const { service, instances } = createHarness();
+
+    await service.ingestEvolution({
+      event: 'status.instance',
+      instance: 'inst-1',
+      data: { instance: 'inst-1', status: 'created' },
+    });
+
+    expect(instances.applyConnectionObservation).not.toHaveBeenCalled();
+  });
+
+  it('treats logout.instance as a disconnected session', async () => {
+    const { service, instances } = createHarness();
+    const observedAt = new Date('2026-10-29T10:00:00Z');
+
+    await service.ingestEvolution(
+      { event: 'logout.instance', instance: 'inst-1', data: null },
+      { observedAt },
+    );
+
+    expect(instances.applyConnectionObservation).toHaveBeenCalledWith('inst-1', 'close', {
+      observedAt,
+      reason: null,
+      source: 'webhook',
+    });
+  });
+
+  it('handles qrcode.updated without persisting the QR payload', async () => {
+    const { service, instances, prisma } = createHarness();
+    const observedAt = new Date('2026-10-29T10:00:00Z');
+    const data = { qrcode: { base64: 'ZmFrZS1xcg==', code: '2@qr', pairingCode: '12345678' } };
+
+    const result = await service.ingestEvolution(
+      { event: 'qrcode.updated', instance: 'inst-1', data },
+      { observedAt },
+    );
+
+    expect(result).toEqual({ accepted: true });
+    expect(instances.applyProviderQr).toHaveBeenCalledWith(
+      expect.objectContaining({ instanceName: 'inst-1', tenantId: 'tenant-1' }),
+      data,
+      observedAt,
+    );
+    expect(prisma.webhookEvent.create).not.toHaveBeenCalled();
+  });
+
+  it('accepts uppercase event names for the new lifecycle events', async () => {
+    const { service, instances } = createHarness();
+
+    await service.ingestEvolution({
+      event: 'STATUS_INSTANCE',
+      instance: 'inst-1',
+      data: { instance: 'inst-1', status: 'closed' },
+    });
+
+    expect(instances.applyConnectionObservation).toHaveBeenCalled();
   });
 });
 
@@ -429,6 +504,7 @@ describe('WebhookService history synchronization state', () => {
 
     expect(instances.applyHistorySyncUpdate).toHaveBeenCalledWith('inst-1', {
       progress: 42,
+      observedAt: expect.any(Date),
       completed: false,
       failed: false,
       error: null,
@@ -465,6 +541,7 @@ describe('WebhookService history synchronization state', () => {
 
     expect(instances.applyHistorySyncUpdate).toHaveBeenCalledWith('inst-1', {
       progress: 100,
+      observedAt: expect.any(Date),
       completed: true,
       failed: false,
       error: null,
@@ -492,8 +569,90 @@ describe('WebhookService history synchronization state', () => {
 
     expect(instances.applyHistorySyncUpdate).toHaveBeenCalledWith('inst-1', {
       progress: 100,
+      messages: 10,
+      observedAt: expect.any(Date),
       completed: true,
     });
+  });
+
+  it('records the completion even when automatic history import is disabled', async () => {
+    const { service, instances } = createHarness();
+
+    const result = await service.ingestEvolution({
+      event: 'MESSAGING_HISTORY_SET',
+      instance: 'inst-1',
+      data: { messageCount: 82744, chatCount: 120, contactCount: 300, progress: 100 },
+    });
+
+    expect(result.accepted).toBe(true);
+    expect(instances.applyHistorySyncUpdate).toHaveBeenCalledWith('inst-1', {
+      progress: 100,
+      messages: 82744,
+      observedAt: expect.any(Date),
+      completed: true,
+    });
+  });
+
+  it('updates the real progress from the history sync notification', async () => {
+    const { service, instances } = createHarness();
+    const observedAt = new Date('2026-10-29T13:48:04.000Z');
+
+    await service.ingestEvolution(
+      {
+        event: 'messages.edited',
+        instance: 'inst-1',
+        data: {
+          type: 'HISTORY_SYNC_NOTIFICATION',
+          historySyncNotification: {
+            progress: 83,
+            chunkOrder: 14,
+            syncType: 'RECENT',
+          },
+        },
+      },
+      { observedAt },
+    );
+
+    expect(instances.applyHistorySyncUpdate).toHaveBeenCalledWith('inst-1', {
+      progress: 83,
+      chunks: 14,
+      observedAt,
+      completed: false,
+    });
+  });
+
+  it('ignores on-demand history notifications when reporting initial sync', async () => {
+    const { service, instances } = createHarness();
+
+    await service.ingestEvolution({
+      event: 'messages.edited',
+      instance: 'inst-1',
+      data: {
+        type: 'HISTORY_SYNC_NOTIFICATION',
+        historySyncNotification: {
+          progress: 20,
+          chunkOrder: 2,
+          syncType: 'ON_DEMAND',
+        },
+      },
+    });
+
+    expect(instances.applyHistorySyncUpdate).not.toHaveBeenCalled();
+  });
+
+  it('does not treat non-history messages.edited payloads as sync progress', async () => {
+    const { service, instances } = createHarness();
+
+    await service.ingestEvolution({
+      event: 'messages.edited',
+      instance: 'inst-1',
+      data: {
+        type: 'NON_BLOCKING_DATA',
+        message: { conversation: 'not a history notification' },
+      },
+    });
+
+    expect(instances.applyHistorySyncUpdate).not.toHaveBeenCalled();
   });
 
   it('marks a batch with failed messages as failed and asks Evolution to retry', async () => {
@@ -525,6 +684,7 @@ describe('WebhookService history synchronization state', () => {
 
     expect(instances.applyHistorySyncUpdate).toHaveBeenCalledWith('inst-1', {
       progress: 30,
+      observedAt: expect.any(Date),
       failed: true,
       error: 'history_import_failed',
     });
@@ -630,7 +790,7 @@ describe('WebhookService presence.update', () => {
         presences: {
           '5511999999999@s.whatsapp.net': {
             lastKnownPresence: 'unavailable',
-            lastSeen: Date.parse('2026-10-25T12:00:00.000Z'),
+            lastSeen: Date.now() + 10 * 60_000,
           },
         },
       },

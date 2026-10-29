@@ -4,8 +4,11 @@ export type WhatsAppHistorySyncStatus = 'IDLE' | 'SYNCING' | 'COMPLETED' | 'FAIL
 export interface WhatsAppHistorySync {
   status: WhatsAppHistorySyncStatus;
   progress: number | null;
+  chunks: number | null;
+  messages: number | null;
   startedAt: string | null;
   completedAt: string | null;
+  updatedAt: string | null;
   error: string | null;
 }
 
@@ -16,6 +19,8 @@ export interface WhatsAppInstance {
   externalInstanceId: string | null;
   phone: string | null;
   status: WhatsAppInstanceStatus;
+  statusReason: number | null;
+  connectionObservedAt: string | null;
   active: boolean;
   hasCredentials: boolean;
   historySync: WhatsAppHistorySync;
@@ -33,6 +38,20 @@ export interface WhatsAppConnectionTicket {
   qrCodeBase64: string | null;
   pairingCode: string | null;
   code: string | null;
+  updatedAt?: string;
+}
+
+export interface WhatsAppConnectionStatus {
+  status: WhatsAppInstanceStatus;
+  reason?: number | null;
+}
+
+export interface WhatsAppQrEvent {
+  instanceId: string;
+  qrCodeBase64: string | null;
+  pairingCode: string | null;
+  code: string | null;
+  updatedAt: string;
 }
 
 export interface WhatsAppWebhookResult {

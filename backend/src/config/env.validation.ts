@@ -104,6 +104,11 @@ const integrationEnvSchema = z.object({
   PUBLIC_API_URL: optionalEnv(z.url()),
   WHATSAPP_HISTORY_IMPORT_ENABLED: optionalBoolean.default(false),
   WHATSAPP_HISTORY_IMPORT_DAYS: z.coerce.number().int().min(1).max(365).default(30),
+  WHATSAPP_INSTANCE_RECONCILE_INTERVAL_MS: z.coerce.number().int().min(5_000).default(60_000),
+  WHATSAPP_DISCONNECT_CONFIRM_TIMEOUT_MS: z.coerce.number().int().min(1_000).default(10_000),
+  WHATSAPP_CONNECT_FLOW_GRACE_MS: z.coerce.number().int().min(0).default(20_000),
+  WHATSAPP_QR_CACHE_TTL_MS: z.coerce.number().int().min(1_000).default(60_000),
+  WHATSAPP_AUTO_RECREATE_STALE_SESSION: optionalBoolean.default(false),
   WEBHOOK_DEBUG: optionalBoolean,
   WEBHOOK_DEBUG_PAYLOAD: optionalBoolean,
   STORAGE_PROVIDER: z.enum(['local', 'minio', 's3']).default('local'),
@@ -214,8 +219,7 @@ export const envSchema = appEnvSchema
         ctx.addIssue({
           code: 'custom',
           path: ['CREDENTIALS_ENCRYPTION_KEY'],
-          message:
-            'CREDENTIALS_ENCRYPTION_KEY is required in production when WhatsApp is enabled',
+          message: 'CREDENTIALS_ENCRYPTION_KEY is required in production when WhatsApp is enabled',
         });
       }
 

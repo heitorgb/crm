@@ -28,7 +28,9 @@ export class WebhooksController {
     @Query('token') token?: string,
   ): Promise<unknown> {
     await this.assertSecret(request, token);
-    return this.webhooks.ingestEvolution(request.body);
+    return this.webhooks.ingestEvolution(request.body, {
+      observedAt: providerObservedAt(request.headers['x-timestamp']),
+    });
   }
 
   private async assertSecret(request: FastifyRequest, token?: string): Promise<void> {
@@ -58,6 +60,28 @@ export class WebhooksController {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Evolution 2.4 sends `X-Timestamp` (Date.now in ms) on every webhook. It is
+ * the provider clock at dispatch and is used to order concurrently delivered
+ * events; the payload's `date_time` is not used because 2.4 builds it with a
+ * timezone offset. Values far from the local clock fall back to receipt time.
+ */
+function providerObservedAt(header: string | string[] | undefined): Date | null {
+  const raw = Array.isArray(header) ? header[0] : header;
+  if (!raw) {
+    return null;
+  }
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return null;
+  }
+  const now = Date.now();
+  if (Math.abs(now - parsed) > 10 * 60_000) {
+    return null;
+  }
+  return new Date(parsed);
 }
 
 function safeEqual(provided: string, expected: string): boolean {

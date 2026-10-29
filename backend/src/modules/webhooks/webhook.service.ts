@@ -7,7 +7,6 @@ import {
   MessageStatus,
   MessageType,
   Prisma,
-  WhatsAppInstanceStatus,
 } from '@prisma/client';
 import { AppException } from '../../common/errors/app.exception.js';
 import {
@@ -175,35 +174,43 @@ export class WebhookService implements OnModuleInit {
   }
 
   private async replayRecordedEvent(payload: Record<string, unknown>): Promise<void> {
-    const webhookEventId = typeof payload.webhookEventId === 'string' ? payload.webhookEventId : null;
+    const webhookEventId =
+      typeof payload.webhookEventId === 'string' ? payload.webhookEventId : null;
     if (!webhookEventId) {
       return;
     }
 
     const stored = await this.prisma.webhookEvent.findUnique({
       where: { id: webhookEventId },
-      select: { id: true, payload: true, processedAt: true },
+      select: { id: true, payload: true, processedAt: true, createdAt: true },
     });
     if (!stored || stored.processedAt) {
       return;
     }
 
-    await this.processEvolution(stored.payload, { scheduleRecovery: false });
+    await this.processEvolution(stored.payload, {
+      scheduleRecovery: false,
+      observedAt: stored.createdAt,
+    });
     await this.markEventProcessed(webhookEventId);
   }
 
-  async ingestEvolution(payload: unknown): Promise<WebhookIngestResult> {
+  async ingestEvolution(
+    payload: unknown,
+    options: { observedAt?: Date | null } = {},
+  ): Promise<WebhookIngestResult> {
     try {
-      const result = await this.processEvolution(payload);
+      const result = await this.processEvolution(payload, {
+        scheduleRecovery: true,
+        observedAt: options.observedAt ?? null,
+      });
       this.traceWebhook(payload, result);
       return result;
     } catch (error) {
       this.logger.error(
         `Failed to process webhook event: ${error instanceof Error ? error.message : 'unknown'}`,
       );
-      throw error instanceof AppException
-        ? error
-        : new WebhookProcessingError(error);
+      throw error instanceof AppException ? error : new WebhookProcessingError(error);
     }
   }
 
@@ -236,7 +243,7 @@ export class WebhookService implements OnModuleInit {
           (key ? readString(key.id) : null) ?? (data ? readString(data.keyId) : null),
         originalMessageId: edit?.externalMessageId ?? null,
         fromMe: key?.fromMe === true || (data ? data.fromMe === true : false),
-        messageType: data ? readString(data.messageType) ?? readString(data.status) : null,
+        messageType: data ? (readString(data.messageType) ?? readString(data.status)) : null,
         editDetected: edit !== null,
         normalizedType: edit?.type ?? null,
         normalizedContent: edit ? edit.content !== null : null,
@@ -253,8 +260,12 @@ export class WebhookService implements OnModuleInit {
 
   private async processEvolution(
     payload: unknown,
-    options: { scheduleRecovery: boolean } = { scheduleRecovery: true },
+    options: { scheduleRecovery: boolean; observedAt: Date | null } = {
+      scheduleRecovery: true,
+      observedAt: null,
+    },
   ): Promise<WebhookIngestResult> {
+    const observedAt = options.observedAt ?? new Date();
     if (!isRecord(payload)) {
       return { accepted: false, ignored: 'invalid_payload' };
     }
@@ -276,6 +287,14 @@ export class WebhookService implements OnModuleInit {
       return { accepted: true };
     }
 
+    // QRs are short-lived pairing credentials. They are handled before
+    // `recordEvent` so the base64 is never persisted in webhook_events nor
+    // written to logs; only the administrators of the tenant receive it.
+    if (eventType === 'qrcode.updated') {
+      await this.instances.applyProviderQr(instance, payload.data, observedAt);
+      return { accepted: true };
+    }
+
     // History sync batches are large and idempotent at the message level.
     // Handling them before `recordEvent` avoids storing the whole batch payload
     // in webhook_events while still importing every missing message. A batch
@@ -286,20 +305,19 @@ export class WebhookService implements OnModuleInit {
       }
 
       try {
-        await this.handleMessagesSet(instance, payload);
+        await this.handleMessagesSet(instance, payload, observedAt);
         return { accepted: true };
       } catch (error) {
         throw error instanceof AppException ? error : new WebhookProcessingError(error);
       }
     }
 
+    // The completion event is small and is always handled, even when history
+    // import is disabled. It is the provider's definitive completion signal and
+    // lets the UI leave the syncing state without importing the history.
     if (eventType === 'messaging-history.set') {
-      if (!this.config.get('WHATSAPP_HISTORY_IMPORT_ENABLED')) {
-        return { accepted: true, ignored: 'history_import_disabled' };
-      }
-
       try {
-        await this.handleMessagingHistorySet(instance, payload);
+        await this.handleMessagingHistorySet(instance, payload, observedAt);
         return { accepted: true };
       } catch (error) {
         throw error instanceof AppException ? error : new WebhookProcessingError(error);
@@ -325,7 +343,7 @@ export class WebhookService implements OnModuleInit {
     }
 
     try {
-      const result = await this.processRecordedEvent(instance, eventType, payload);
+      const result = await this.processRecordedEvent(instance, eventType, payload, observedAt);
       await this.markEventProcessed(claim.id);
       return result;
     } catch (error) {
@@ -340,6 +358,7 @@ export class WebhookService implements OnModuleInit {
     instance: ResolvedInstance,
     eventType: string,
     payload: Record<string, unknown>,
+    observedAt: Date,
   ): Promise<WebhookIngestResult> {
     if (eventType === 'groups.upsert' || eventType === 'groups.update') {
       await this.handleGroupUpsert(instance, payload, eventType === 'groups.upsert');
@@ -358,11 +377,7 @@ export class WebhookService implements OnModuleInit {
       return { accepted: true };
     }
 
-    if (
-      eventType === 'chats.upsert' ||
-      eventType === 'chats.update' ||
-      eventType === 'chats.set'
-    ) {
+    if (eventType === 'chats.upsert' || eventType === 'chats.update' || eventType === 'chats.set') {
       await this.handleChatSync(instance, payload);
       return { accepted: true };
     }
@@ -372,7 +387,17 @@ export class WebhookService implements OnModuleInit {
     // connection closed) that `connectionState: open` alone can hide, so it is
     // persisted and broadcast to the tenant.
     if (eventType === 'connection.update') {
-      await this.handleConnectionUpdate(instance, payload);
+      await this.handleConnectionUpdate(instance, payload, observedAt);
+      return { accepted: true };
+    }
+
+    if (eventType === 'status.instance') {
+      await this.handleStatusInstance(instance, payload, observedAt);
+      return { accepted: true };
+    }
+
+    if (eventType === 'logout.instance') {
+      await this.handleLogoutInstance(instance, observedAt);
       return { accepted: true };
     }
 
@@ -382,7 +407,7 @@ export class WebhookService implements OnModuleInit {
     }
 
     if (eventType === 'messages.edited') {
-      await this.handleMessageEdited(instance, payload);
+      await this.handleMessageEdited(instance, payload, observedAt);
       return { accepted: true };
     }
 
@@ -434,6 +459,7 @@ export class WebhookService implements OnModuleInit {
   private async handleMessagesSet(
     instance: ResolvedInstance,
     payload: Record<string, unknown>,
+    observedAt: Date,
   ): Promise<void> {
     const records = toArray(payload.data).filter(isRecord);
     const isLatest = typeof payload.isLatest === 'boolean' ? payload.isLatest : null;
@@ -451,6 +477,7 @@ export class WebhookService implements OnModuleInit {
       const failed = error instanceof HistoryIngestError ? error.result.failed : 0;
       await this.updateHistorySync(instance, {
         progress,
+        observedAt,
         failed: true,
         error: 'history_import_failed',
       });
@@ -469,6 +496,7 @@ export class WebhookService implements OnModuleInit {
     const completed = !failed && progress === 100;
     await this.updateHistorySync(instance, {
       progress,
+      observedAt,
       completed,
       failed,
       error: failed ? 'history_import_failed' : null,
@@ -497,22 +525,32 @@ export class WebhookService implements OnModuleInit {
   private async handleMessagingHistorySet(
     instance: ResolvedInstance,
     payload: Record<string, unknown>,
+    observedAt: Date,
   ): Promise<void> {
     const data = isRecord(payload.data) ? payload.data : null;
     const progress = readProgress(data?.progress) ?? readProgress(payload.progress);
+    const messages = readCount(data?.messageCount);
 
     if (progress !== null && progress < 100) {
-      await this.updateHistorySync(instance, { progress });
+      await this.updateHistorySync(instance, { progress, messages, observedAt });
       return;
     }
 
-    await this.updateHistorySync(instance, { progress: 100, completed: true });
+    await this.updateHistorySync(instance, {
+      progress: 100,
+      messages,
+      observedAt,
+      completed: true,
+    });
   }
 
   private async updateHistorySync(
     instance: ResolvedInstance,
     update: {
       progress?: number | null;
+      chunks?: number | null;
+      messages?: number | null;
+      observedAt?: Date;
       completed?: boolean;
       failed?: boolean;
       error?: string | null;
@@ -524,8 +562,11 @@ export class WebhookService implements OnModuleInit {
         instanceId: state.instanceId,
         status: state.status,
         progress: state.progress,
+        chunks: state.chunks,
+        messages: state.messages,
         startedAt: state.startedAt,
         completedAt: state.completedAt,
+        updatedAt: state.updatedAt,
         error: state.error,
       });
     }
@@ -568,8 +609,7 @@ export class WebhookService implements OnModuleInit {
 
       const occurredAt = readMessageTimestamp(record);
       const recent =
-        occurredAt !== null &&
-        occurredAt.getTime() >= Date.now() - HISTORY_REALTIME_WINDOW_MS;
+        occurredAt !== null && occurredAt.getTime() >= Date.now() - HISTORY_REALTIME_WINDOW_MS;
 
       try {
         const result = await this.ingestMessage(instance, record, {
@@ -750,8 +790,7 @@ export class WebhookService implements OnModuleInit {
     const contacts = extractContacts(message);
     const occurredAt = readMessageTimestamp(data);
     const recent =
-      occurredAt !== null &&
-      occurredAt.getTime() >= Date.now() - HISTORY_REALTIME_WINDOW_MS;
+      occurredAt !== null && occurredAt.getTime() >= Date.now() - HISTORY_REALTIME_WINDOW_MS;
     const processRecentMedia = !options.history || recent;
 
     const senderId = fromMe ? null : isGroup ? participant : null;
@@ -1175,7 +1214,9 @@ export class WebhookService implements OnModuleInit {
       const aliases = presenceLookupAliases(activity.participantId);
       const cached = aliases
         .map((alias) => directory.senderNames.get(alias))
-        .filter((entry): entry is PresenceNameEntry => entry !== undefined && entry.expiresAt > now);
+        .filter(
+          (entry): entry is PresenceNameEntry => entry !== undefined && entry.expiresAt > now,
+        );
       const cachedName = cached.find((entry) => entry.name)?.name;
       if (cachedName) {
         activity.identity.name = cachedName;
@@ -1210,9 +1251,7 @@ export class WebhookService implements OnModuleInit {
     });
     const senderNameById = new Map(
       senders.flatMap((sender) =>
-        sender.senderId && sender.senderName
-          ? [[sender.senderId, sender.senderName] as const]
-          : [],
+        sender.senderId && sender.senderName ? [[sender.senderId, sender.senderName] as const] : [],
       ),
     );
     for (const alias of senderIds) {
@@ -1256,54 +1295,133 @@ export class WebhookService implements OnModuleInit {
   private async handleConnectionUpdate(
     instance: ResolvedInstance,
     payload: Record<string, unknown>,
+    observedAt: Date,
   ): Promise<void> {
     const data = isRecord(payload.data) ? payload.data : null;
     const state = readString(data?.state) ?? readString(data?.connection);
-    const statusReason = readString(data?.statusReason) ?? readString(data?.reason);
+    const statusReason = readNumber(data?.statusReason) ?? readNumber(data?.reason);
 
-    const result = await this.instances.applyProviderConnectionState(instance.instanceName, state);
-    if (!result) {
+    if (!state) {
+      this.logger.warn(`connection.update without state for ${instance.instanceName}`);
       return;
     }
+
+    const result = await this.instances.applyConnectionObservation(instance.instanceName, state, {
+      observedAt,
+      reason: statusReason,
+      source: 'webhook',
+    });
+
+    if (result) {
+      this.logger.log(
+        `Connection update for ${instance.instanceName}: ${state} -> ${result.status}${
+          statusReason !== null ? ` (${statusReason})` : ''
+        }`,
+      );
+    }
+  }
+
+  /**
+   * `status.instance` is emitted by Evolution alongside `connection.update` on
+   * non-reconnectable closes (for example when the device is removed from the
+   * phone). It is a second, independent signal so a lost `connection.update`
+   * does not leave the CRM reporting a connected session.
+   */
+  private async handleStatusInstance(
+    instance: ResolvedInstance,
+    payload: Record<string, unknown>,
+    observedAt: Date,
+  ): Promise<void> {
+    const data = isRecord(payload.data) ? payload.data : null;
+    const status = readString(data?.status)?.toLowerCase();
+    if (status !== 'closed') {
+      return;
+    }
+
+    const reason = readNumber(data?.disconnectionReasonCode);
+    const reportedAt = readDate(data?.disconnectionAt);
+    const disconnectedAt =
+      reportedAt && Math.abs(reportedAt.getTime() - Date.now()) <= 10 * 60_000
+        ? reportedAt
+        : observedAt;
+
+    const result = await this.instances.applyConnectionObservation(instance.instanceName, 'close', {
+      observedAt: disconnectedAt,
+      reason,
+      source: 'webhook',
+    });
 
     this.logger.log(
-      `Connection update for ${instance.instanceName}: ${state ?? 'unknown'} -> ${result.status}${
-        statusReason ? ` (${statusReason})` : ''
+      `Status instance for ${instance.instanceName}: closed -> ${result?.status ?? 'unchanged'}${
+        reason !== null ? ` (${reason})` : ''
       }`,
     );
+  }
 
-    if (result.status !== WhatsAppInstanceStatus.CONNECTED) {
-      const history = await this.instances.markHistorySyncInterrupted(
-        instance.instanceName,
-        'connection_lost',
-      );
-      if (history?.changed) {
-        this.realtime.emitToTenant(instance.tenantId, 'whatsapp.history.updated', {
-          instanceId: history.instanceId,
-          status: history.status,
-          progress: history.progress,
-          startedAt: history.startedAt,
-          completedAt: history.completedAt,
-          error: history.error,
-        });
-      }
-    }
-
-    if (!result.changed) {
-      return;
-    }
-
-    this.realtime.emitToTenant(instance.tenantId, 'whatsapp.instance.updated', {
-      instanceId: result.instanceId,
-      status: result.status,
-      reason: statusReason,
+  /**
+   * `logout.instance` has no data payload. It fires when the provider ends the
+   * session (device removed or logout), so it always maps to a disconnected
+   * state. The observation timestamp is the webhook receipt time.
+   */
+  private async handleLogoutInstance(instance: ResolvedInstance, observedAt: Date): Promise<void> {
+    const result = await this.instances.applyConnectionObservation(instance.instanceName, 'close', {
+      observedAt,
+      reason: null,
+      source: 'webhook',
     });
+
+    this.logger.log(
+      `Logout instance for ${instance.instanceName} -> ${result?.status ?? 'unchanged'}`,
+    );
   }
 
   private async handleMessageEdited(
     instance: ResolvedInstance,
     payload: Record<string, unknown>,
+    observedAt: Date,
   ): Promise<void> {
+    const data = isRecord(payload.data) ? payload.data : null;
+    const notification =
+      data && isRecord(data.historySyncNotification) ? data.historySyncNotification : null;
+
+    // Evolution 2.4 classifies the WhatsApp history sync notification as
+    // `messages.edited`. It is not a message edit: it carries the provider's
+    // real progress and chunk order, and it is the only progress signal
+    // available when automatic history import is disabled.
+    if (data?.type === 'HISTORY_SYNC_NOTIFICATION' && notification) {
+      const syncType = readString(notification.syncType);
+      // On-demand history (older messages loaded while scrolling) and contact
+      // name sync are not the initial synchronization shown in the attendance
+      // banner. They must not reopen or advance that indicator.
+      const initialSync =
+        syncType === null ||
+        syncType === 'RECENT' ||
+        syncType === 'FULL' ||
+        syncType === 'INITIAL_BOOTSTRAP';
+
+      if (initialSync) {
+        const progress = readProgress(notification.progress);
+        const chunks = readCount(notification.chunkOrder);
+
+        await this.updateHistorySync(instance, {
+          progress,
+          chunks,
+          observedAt,
+          completed: progress === 100,
+        });
+
+        this.logger.log(
+          `whatsapp.history.notification ${JSON.stringify({
+            instance: instance.instanceName,
+            progress,
+            chunks,
+            completed: progress === 100,
+          })}`,
+        );
+      }
+      return;
+    }
+
     const entries = toArray(payload.data).filter(isRecord);
 
     for (const entry of entries) {
@@ -1326,7 +1444,9 @@ export class WebhookService implements OnModuleInit {
     edit: ParsedMessageEdit,
   ): Promise<void> {
     if (edit.type === MessageType.UNKNOWN && edit.content === null) {
-      this.logger.warn(`Ignoring message edit without usable content (instance ${instance.instanceName})`);
+      this.logger.warn(
+        `Ignoring message edit without usable content (instance ${instance.instanceName})`,
+      );
       return;
     }
 
@@ -1344,15 +1464,10 @@ export class WebhookService implements OnModuleInit {
       return;
     }
 
-    this.realtime.emitToConversation(
-      instance.tenantId,
-      updated.conversationId,
-      'message.updated',
-      {
-        conversationId: updated.conversationId,
-        messageId: updated.messageId,
-      },
-    );
+    this.realtime.emitToConversation(instance.tenantId, updated.conversationId, 'message.updated', {
+      conversationId: updated.conversationId,
+      messageId: updated.messageId,
+    });
     this.realtime.emitToTenant(instance.tenantId, 'conversation.updated', {
       conversationId: updated.conversationId,
     });
@@ -1736,8 +1851,7 @@ export class WebhookService implements OnModuleInit {
     const entries = toArray(payload.data).filter(isRecord);
 
     for (const entry of entries) {
-      const jid =
-        readString(entry.remoteJid) ?? readString(entry.id) ?? readString(entry.jid);
+      const jid = readString(entry.remoteJid) ?? readString(entry.id) ?? readString(entry.jid);
       if (!jid) {
         continue;
       }
@@ -1746,9 +1860,7 @@ export class WebhookService implements OnModuleInit {
         tenantId: instance.tenantId,
         jid,
         name:
-          readString(entry.pushName) ??
-          readString(entry.name) ??
-          readString(entry.verifiedName),
+          readString(entry.pushName) ?? readString(entry.name) ?? readString(entry.verifiedName),
         avatarUrl:
           readString(entry.profilePicUrl) ??
           readString(entry.profilePictureUrl) ??
@@ -1934,8 +2046,7 @@ export class WebhookService implements OnModuleInit {
         type,
         audioDurationSeconds:
           type === MessageType.AUDIO
-            ? (input.audioDurationSeconds ??
-              readAudioDurationFromMetadata(quoted))
+            ? (input.audioDurationSeconds ?? readAudioDurationFromMetadata(quoted))
             : null,
       };
       const nextMetadata = { ...metadata, quoted: nextQuoted };
@@ -1947,15 +2058,10 @@ export class WebhookService implements OnModuleInit {
         where: { id: reply.id },
         data: { metadata: nextMetadata as unknown as Prisma.InputJsonValue },
       });
-      this.realtime.emitToConversation(
-        input.tenantId,
-        input.conversationId,
-        'message.updated',
-        {
-          conversationId: input.conversationId,
-          messageId: reply.id,
-        },
-      );
+      this.realtime.emitToConversation(input.tenantId, input.conversationId, 'message.updated', {
+        conversationId: input.conversationId,
+        messageId: reply.id,
+      });
       this.realtime.emitToTenant(input.tenantId, 'conversation.updated', {
         conversationId: input.conversationId,
       });
@@ -1989,10 +2095,8 @@ export class WebhookService implements OnModuleInit {
       return null;
     }
 
-    const remoteJid =
-      readString(contextInfo.remoteJid) ?? readString(contextInfo.remoteJidAlt);
-    const authorJid =
-      readString(contextInfo.participant) ?? readString(contextInfo.participantAlt);
+    const remoteJid = readString(contextInfo.remoteJid) ?? readString(contextInfo.remoteJidAlt);
+    const authorJid = readString(contextInfo.participant) ?? readString(contextInfo.participantAlt);
     const quotedRaw = contextInfo.quotedMessage;
     let content = extractText(quotedRaw);
     let type = detectType(quotedRaw);
@@ -2066,11 +2170,7 @@ export class WebhookService implements OnModuleInit {
       where: {
         tenantId,
         conversationId,
-        OR: [
-          { jid: { in: aliases } },
-          { lid: { in: aliases } },
-          ...(phone ? [{ phone }] : []),
-        ],
+        OR: [{ jid: { in: aliases } }, { lid: { in: aliases } }, ...(phone ? [{ phone }] : [])],
       },
       select: { name: true },
     });
@@ -2134,7 +2234,10 @@ function computeEventId(
 }
 
 function contentFingerprint(value: unknown): string {
-  return createHash('sha256').update(JSON.stringify(value ?? null)).digest('hex').slice(0, 16);
+  return createHash('sha256')
+    .update(JSON.stringify(value ?? null))
+    .digest('hex')
+    .slice(0, 16);
 }
 
 function mapEvolutionStatus(value: string | null): MessageStatus | null {
@@ -2350,6 +2453,12 @@ const REDACTED_KEYS = new Set([
   'secret',
   'webhooksecret',
   'webhook_secret',
+  'base64',
+  'qrcode',
+  'qr',
+  'pairingcode',
+  'pairing_code',
+  'historysyncnotification',
 ]);
 
 /**
@@ -2535,9 +2644,8 @@ export function extractWhatsAppLinkPreview(message: unknown): LinkPreviewMetadat
   }
 
   const contextInfo = isRecord(extended.contextInfo) ? extended.contextInfo : null;
-  const adReply = contextInfo && isRecord(contextInfo.externalAdReply)
-    ? contextInfo.externalAdReply
-    : null;
+  const adReply =
+    contextInfo && isRecord(contextInfo.externalAdReply) ? contextInfo.externalAdReply : null;
   if (!adReply) {
     return null;
   }
@@ -2631,6 +2739,9 @@ const EVENT_TYPE_ALIASES: Record<string, string> = {
   GROUP_PARTICIPANTS_UPDATE: 'group-participants.update',
   PRESENCE_UPDATE: 'presence.update',
   CONNECTION_UPDATE: 'connection.update',
+  QRCODE_UPDATED: 'qrcode.updated',
+  STATUS_INSTANCE: 'status.instance',
+  LOGOUT_INSTANCE: 'logout.instance',
 };
 
 function normalizeEventType(value: string): string {
@@ -2652,8 +2763,43 @@ function readProgress(value: unknown): number | null {
   return Math.round(numeric);
 }
 
+function readCount(value: unknown): number | null {
+  const numeric =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string' && value.length > 0
+        ? Number(value)
+        : Number.NaN;
+
+  if (!Number.isFinite(numeric) || numeric < 0) {
+    return null;
+  }
+
+  return Math.trunc(numeric);
+}
+
 function readString(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+function readNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.trunc(value);
+  }
+  if (typeof value === 'string' && value.length > 0) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
+  }
+  return null;
+}
+
+function readDate(value: unknown): Date | null {
+  const raw = readString(value);
+  if (!raw) {
+    return null;
+  }
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
 /**

@@ -6,6 +6,7 @@ import { WhatsAppContactSyncService } from './whatsapp-contact-sync.service.js';
 import { WhatsAppConversationSyncService } from './whatsapp-conversation-sync.service.js';
 import { WhatsAppDirectoryService } from './whatsapp-directory.service.js';
 import { WhatsAppInstancesController } from './whatsapp-instances.controller.js';
+import { WhatsAppInstancesSchedulerService } from './whatsapp-instances-scheduler.service.js';
 import { WhatsAppInstancesService } from './whatsapp-instances.service.js';
 
 @Module({
@@ -14,6 +15,7 @@ import { WhatsAppInstancesService } from './whatsapp-instances.service.js';
   providers: [
     EvolutionClient,
     WhatsAppInstancesService,
+    WhatsAppInstancesSchedulerService,
     WhatsAppDirectoryService,
     WhatsAppContactSyncService,
     WhatsAppConversationSyncService,

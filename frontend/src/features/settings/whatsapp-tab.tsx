@@ -35,6 +35,7 @@ import type {
   WhatsAppHistorySync,
   WhatsAppInstance,
   WhatsAppInstanceStatus,
+  WhatsAppQrEvent,
   WhatsAppQuota,
 } from '@/types/whatsapp';
 
@@ -103,6 +104,11 @@ export function WhatsAppTab() {
   const configureWebhook = useConfigureWhatsAppWebhook();
   const deleteInstance = useDeleteWhatsAppInstance();
 
+  const [connectState, setConnectState] = useState<{
+    instance: WhatsAppInstance;
+    ticket: WhatsAppConnectionTicket;
+  } | null>(null);
+
   useEffect(() => {
     if (!socket) {
       return;
@@ -110,21 +116,37 @@ export function WhatsAppTab() {
     const invalidate = (): void => {
       void queryClient.invalidateQueries({ queryKey: whatsappKeys.all });
     };
+    const onQr = (payload: WhatsAppQrEvent): void => {
+      setConnectState((current) => {
+        if (!current || current.instance.id !== payload.instanceId) {
+          return current;
+        }
+        return {
+          ...current,
+          ticket: {
+            status: 'CONNECTING',
+            qrCodeBase64: payload.qrCodeBase64,
+            pairingCode: payload.pairingCode,
+            code: payload.code,
+            updatedAt: payload.updatedAt,
+          },
+        };
+      });
+    };
+
     socket.on('whatsapp.instance.updated', invalidate);
     socket.on('whatsapp.history.updated', invalidate);
+    socket.on('whatsapp.instance.qr', onQr);
     return () => {
       socket.off('whatsapp.instance.updated', invalidate);
       socket.off('whatsapp.history.updated', invalidate);
+      socket.off('whatsapp.instance.qr', onQr);
     };
   }, [socket, queryClient]);
 
   const [formOpen, setFormOpen] = useState(false);
   const [formNonce, setFormNonce] = useState(0);
   const [editing, setEditing] = useState<WhatsAppInstance | null>(null);
-  const [connectState, setConnectState] = useState<{
-    instance: WhatsAppInstance;
-    ticket: WhatsAppConnectionTicket;
-  } | null>(null);
   const [pendingDelete, setPendingDelete] = useState<WhatsAppInstance | null>(null);
   const [limitReached, setLimitReached] = useState<WhatsAppQuota | null>(null);
   const [feedback, setFeedback] = useState<{ tone: 'success' | 'danger'; message: string } | null>(

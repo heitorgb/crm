@@ -32,7 +32,13 @@ export function useWhatsAppInstanceStatus(id: string | undefined, enabled: boole
     queryKey: whatsappKeys.status(id ?? ''),
     queryFn: () => whatsappService.status(id as string),
     enabled: Boolean(id) && enabled,
-    refetchInterval: enabled ? 3000 : false,
+    refetchInterval: (query) => {
+      if (!enabled) {
+        return false;
+      }
+      const status = query.state.data?.status;
+      return status === 'CONNECTING' || status === undefined ? 3000 : false;
+    },
   });
 }
 
@@ -62,8 +68,13 @@ export function useDeleteWhatsAppInstance() {
 }
 
 export function useConnectWhatsAppInstance() {
+  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => whatsappService.connect(id),
+    onSuccess: (_ticket, id) => {
+      void queryClient.invalidateQueries({ queryKey: whatsappKeys.status(id) });
+      void queryClient.invalidateQueries({ queryKey: whatsappKeys.all });
+    },
   });
 }
 

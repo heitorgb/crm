@@ -51,6 +51,9 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
 
       await socket.join(this.realtime.tenantRoom(context.tenantId));
       await socket.join(this.realtime.userRoom(context.tenantId, context.userId));
+      if (context.role === 'OWNER' || context.role === 'ADMIN') {
+        await socket.join(this.realtime.tenantAdminRoom(context.tenantId));
+      }
 
       socket.data.tenantId = context.tenantId;
       socket.data.userId = context.userId;

@@ -12,6 +12,16 @@ export class WhatsAppInstanceNameConflictError extends AppException {
   }
 }
 
+export class WhatsAppConnectionInProgressError extends AppException {
+  constructor() {
+    super(
+      'WHATSAPP_CONNECTION_IN_PROGRESS',
+      'Já existe uma operação de conexão ou desconexão em andamento para esta instância. Aguarde e tente novamente.',
+      409,
+    );
+  }
+}
+
 export class WhatsAppInstanceLimitReachedError extends AppException {
   constructor(used: number) {
     const message =

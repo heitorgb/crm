@@ -150,27 +150,37 @@ Em **Configurações → WhatsApp** (`/configuracoes?tab=whatsapp`):
    - Se **já existe e está `open`**, reutiliza: grava `CONNECTED` e não gera QR nem recria.
    - Se **já existe e está `close`/`connecting`**, reutiliza via `GET /instance/connect` e devolve
      o QR/ticket atual. Não há remoção nem recriação.
-   - Só recria (`DELETE /instance/delete` + `POST /instance/create`) quando a tentativa de reuso
-     não devolve ticket utilizável (sessão em memória quebrada ou resposta de erro).
+   - Se o `connect` não devolver ticket, o backend tenta novamente uma vez. Só recria
+     (`DELETE /instance/delete` + `POST /instance/create`) quando
+     `WHATSAPP_AUTO_RECREATE_STALE_SESSION=true`; por padrão a API responde erro para que a sessão
+     existente **não** seja apagada automaticamente.
    - O CRM só grava `CONNECTING` quando recebe um **ticket válido** (QR base64, pairing code ou
      código). Respostas `{ error: true }` da Evolution são tratadas como falha.
+   - `connect` e `disconnect` são serializados por instância. Uma segunda operação concorrente
+     recebe `409 WHATSAPP_CONNECTION_IN_PROGRESS` em vez de abrir outro socket/QR na Evolution.
 3. A tela exibe o QR, permite **gerar novo QR** e faz *poll* de status até **Conectado**.
+   A Evolution rotaciona o QR a cada ~45 s; cada `QRCODE_UPDATED` substitui a imagem exibida em
+   tempo real. O QR fica apenas em memória (nunca no banco nem nos logs) e é enviado somente à sala
+   `tenant:{tenantId}:admin`.
 4. O **webhook é configurado automaticamente** (eventos `MESSAGES_UPSERT`, `MESSAGES_UPDATE`,
    `MESSAGES_EDITED`, `CONTACTS_UPSERT`, `CONTACTS_UPDATE`, `CHATS_SET`, `CHATS_UPSERT`,
    `CHATS_UPDATE`, `GROUPS_UPSERT`, `GROUP_UPDATE`, `GROUP_PARTICIPANTS_UPDATE`,
-   `PRESENCE_UPDATE` e `CONNECTION_UPDATE`; `MESSAGES_SET` e `MESSAGING_HISTORY_SET` somente quando
-   a importação automática de histórico está habilitada) com o token do segredo (da instância ou
-   `EVOLUTION_WEBHOOK_SECRET`); há também a ação **Reconfigurar webhook**.
-   No boot do backend o webhook é **reconciliado** para todas as instâncias conectadas/ativas, de
-   modo que mudar `PUBLIC_API_URL` se autocorrige no próximo restart sem depender de reconfiguração
-   manual.
+   `PRESENCE_UPDATE`, `CONNECTION_UPDATE`, `QRCODE_UPDATED`, `STATUS_INSTANCE` e `LOGOUT_INSTANCE`;
+   `MESSAGES_SET` e `MESSAGING_HISTORY_SET` somente quando a importação automática de histórico
+   está habilitada) com o token do segredo (da instância ou `EVOLUTION_WEBHOOK_SECRET`); há também
+   a ação **Reconfigurar webhook**.
+   No boot do backend o webhook é **reconciliado** para todas as instâncias ativas (inclusive
+   desconectadas), de modo que mudar `PUBLIC_API_URL` ou adicionar eventos se autocorrige no próximo
+   restart sem depender de reconfiguração manual.
 5. **Desconectar** usa `DELETE /instance/logout` e só grava `DISCONNECTED` após
-   `GET /instance/connectionState` confirmar `close`/`disconnected` (com algumas tentativas
-   curtas para absorver a latência do provedor). Se o logout responder erro/timeout mas o estado
-   confirmar `close`, a desconexão é considerada concluída; se o estado não confirmar, a API
+   `GET /instance/connectionState` confirmar `close`/`disconnected`
+   (`WHATSAPP_DISCONNECT_CONFIRM_TIMEOUT_MS`, padrão 10 s). Se o logout responder erro/timeout mas o
+   estado confirmar `close`, a desconexão é considerada concluída; se o estado não confirmar, a API
    responde erro e o CRM **não** declara sucesso. Cada chamada HTTP à Evolution tem timeout
-   (`EVOLUTION_REQUEST_TIMEOUT_MS`, padrão 20 s). Eventos `connection.update` atrasados de uma
-   sessão anterior não reativam uma instância explicitamente desconectada.
+   (`EVOLUTION_REQUEST_TIMEOUT_MS`, padrão 20 s). Eventos atrasados de uma sessão anterior não
+   reativam uma instância explicitamente desconectada.
+6. O endpoint `GET /api/whatsapp/instances/:id/status` é restrito a `OWNER`/`ADMIN` e força uma
+   leitura do estado real na Evolution (usada pelo *poll* do diálogo de conexão).
 6. **Excluir** remove a instância na Evolution com `DELETE /instance/delete` antes de apagar a
    linha local; falhas de rede mantêm a linha local para permitir nova tentativa.
 
@@ -498,7 +508,7 @@ fluxo humano existente.
 | POST   | `/api/whatsapp/instances/:id/connect`            | `OWNER`, `ADMIN` |
 | POST   | `/api/whatsapp/instances/:id/disconnect`         | `OWNER`, `ADMIN` |
 | POST   | `/api/whatsapp/instances/:id/webhook`            | `OWNER`, `ADMIN` |
-| GET    | `/api/whatsapp/instances/:id/status`             | autenticado      |
+| GET    | `/api/whatsapp/instances/:id/status`             | `OWNER`, `ADMIN` |
 | POST   | `/api/webhooks/evolution`                         | público (segredo)|
 | GET    | `/api/conversations`                             | autenticado      |
 | GET    | `/api/conversations/unread-count`                | autenticado      |
@@ -690,20 +700,41 @@ Referência do evento: [implementação da Evolution](https://github.com/Evoluti
   Evolution emitir o recibo — se o destinatário tiver desativado confirmações de leitura, o azul
   pode nunca aparecer.
 
-### Estado da conexão (CONNECTION_UPDATE)
+### Estado da conexão (webhooks + reconciliação)
 
-- Instâncias novas assinam `CONNECTION_UPDATE`. O webhook trata `connection.update`
-  (`data.state`: `open`/`connecting`/`close`, com `statusReason`) persistindo o novo estado da
-  instância (`WhatsAppInstance.status`) e emitindo `whatsapp.instance.updated` na sala
-  `tenant:{tenantId}` (somente quando o estado muda). A tela **Configurações → WhatsApp** reage ao
-  evento invalidando a listagem.
-- Um `connecting` atrasado de socket antigo **não** reativa uma instância marcada como
-  `DISCONNECTED`; apenas uma nova solicitação de conexão ou um `open`/erro autoritativo altera o
-  estado. A mesma guarda vale para o polling de `/status`.
+- O CRM mantém uma máquina de estados única em
+  `WhatsAppInstancesService.applyConnectionObservation`, usada por webhook, *poll* e reconciliação.
+  Estados confirmados: `CONNECTED` (`open`), `CONNECTING` (`connecting`), `DISCONNECTED`
+  (`close`/`disconnected`) e `ERROR` (`refused`/`error`).
+- A Evolution 2.4 reporta o ciclo por `connection.update` (`data.state`), `status.instance`
+  (`status: closed` + `disconnectionReasonCode`) e `logout.instance`. Os três são tratados; os dois
+  últimos funcionam como sinais independentes caso um `connection.update` se perca.
+- Cada observação carrega um instante (`X-Timestamp` do webhook, início da leitura no *poll* ou da
+  reconciliação). `WhatsAppInstance.connection_observed_at` é monotônico: uma observação mais antiga
+  é ignorada e não sobrescreve um estado mais novo. O motivo (`connection_status_reason`) é
+  persistido e logado.
+- Uma conexão explícita grava `connection_requested_at`; uma desconexão confirmada zera esse campo.
+  Eventos assíncronos atrasados não reativam uma instância desconectada, mas uma leitura ao vivo da
+  Evolution (`connectionState: open`) continua sendo autoritativa.
+- Durante uma tentativa de conexão há uma janela de tolerância
+  (`WHATSAPP_CONNECT_FLOW_GRACE_MS`, padrão 20 s) na qual um `close` transitório não derruba o
+  `CONNECTING`.
+- **Reconciliação periódica**: a cada 60 s
+  (`WHATSAPP_INSTANCE_RECONCILE_INTERVAL_MS`) o backend relê `GET /instance/connectionState` das
+  instâncias ativas em `CONNECTED`/`CONNECTING`/`ERROR`, dentro do contexto do tenant, e corrige
+  webhooks perdidos (backend fora do ar, URL alterada, `close` silencioso). Uma execução inicial
+  ocorre ~10 s após o boot. Falha de comunicação com a Evolution **não** rebaixa o estado.
+- A tela **Configurações → WhatsApp** reage a `whatsapp.instance.updated` invalidando a listagem.
+  O QR rotacionado chega por `whatsapp.instance.qr` e substitui a imagem no diálogo.
 - `connectionState: open` **não** é prova de que o envio funciona: sessões degradadas
   (`Stream Errored (conflict)`, `device_removed`, `Connection Closed`) podem continuar reportando
   `open`. O `connection.update` é a evidência autoritativa para rebaixar o status. A recuperação da
   sessão (reconectar o número) continua sendo uma ação manual do operador.
+- **Limitação da Evolution 2.4 (documentada, não presumida):** `connection.update` de `close` só é
+  emitido quando o motivo é não reconectável (401/403/402/406/408). Fechamentos reconectáveis,
+  incluindo `515 restartRequired`, reconectam sem emitir o evento — por isso a reconciliação
+  periódica é necessária. O `payload.date_time` da 2.4 não é usado para ordenar eventos porque é
+  gerado com deslocamento de timezone; o header `X-Timestamp` é usado quando presente.
 
 ### Observabilidade do envio
 

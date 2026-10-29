@@ -18,6 +18,10 @@ export class RealtimeService {
     return `tenant:${tenantId}`;
   }
 
+  tenantAdminRoom(tenantId: string): string {
+    return `tenant:${tenantId}:admin`;
+  }
+
   userRoom(tenantId: string, userId: string): string {
     return `tenant:${tenantId}:user:${userId}`;
   }
@@ -28,6 +32,10 @@ export class RealtimeService {
 
   emitToTenant(tenantId: string, event: string, payload: unknown): void {
     this.server?.to(this.tenantRoom(tenantId)).emit(event, payload);
+  }
+
+  emitToTenantAdmins(tenantId: string, event: string, payload: unknown): void {
+    this.server?.to(this.tenantAdminRoom(tenantId)).emit(event, payload);
   }
 
   emitToUser(tenantId: string, userId: string, event: string, payload: unknown): void {

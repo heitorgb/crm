@@ -674,6 +674,9 @@ model WhatsAppInstance {
   externalInstanceId     String?                   @map("external_instance_id")
   phone                  String?
   status                 WhatsAppInstanceStatus    @default(DISCONNECTED)
+  connectionObservedAt   DateTime?                 @map("connection_observed_at")
+  connectionStatusReason Int?                      @map("connection_status_reason")
+  connectionRequestedAt  DateTime?                 @map("connection_requested_at")
   credentialsEncrypted   String?                   @map("credentials_encrypted")
   active                 Boolean                   @default(true)
   historySyncStatus      WhatsAppHistorySyncStatus @default(IDLE) @map("history_sync_status")

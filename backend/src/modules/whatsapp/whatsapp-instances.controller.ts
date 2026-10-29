@@ -74,6 +74,7 @@ export class WhatsAppInstancesController {
     return this.instances.configureWebhook(id);
   }
 
+  @Roles('OWNER', 'ADMIN')
   @Get(':id/status')
   status(@Param('id', ParseUUIDPipe) id: string) {
     return this.instances.refreshStatus(id);

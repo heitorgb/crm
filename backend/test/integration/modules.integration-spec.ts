@@ -140,6 +140,7 @@ describe('Modules management (integration)', () => {
         'billing.charges',
         'billing.collection',
         'webhooks',
+        'deliveries',
       ]),
     );
     expect((response.json() as { enabled: boolean }[]).every((m) => m.enabled)).toBe(true);

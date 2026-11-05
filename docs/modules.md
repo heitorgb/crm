@@ -55,6 +55,7 @@ Cada habilitação/desabilitação grava uma linha em `admin_audit_logs`
 | `billing.charges`    | Cobranças          | Financeiro |
 | `billing.collection` | Régua de Cobrança  | Financeiro |
 | `webhooks`           | Webhooks           | Integrações |
+| `deliveries`         | Entregas           | Operação   |
 
 `billing.charges` e `billing.collection` são módulos **independentes**: é possível desativar a
 Régua de Cobrança sem desativar o restante do Financeiro.
@@ -90,6 +91,10 @@ Módulo NestJS `src/modules/modules/`:
 - `billing` (cobranças/recorrências) → `billing.charges`.
 - `billing` (settings, lembretes, envio manual) → `billing.collection`.
 - `integrations/webhooks` (cadastro, consulta, histórico e execução externa) → `webhooks`.
+- `store-orders` (lojas, pedidos, status e recepção de aprovações) → `deliveries`.
+  A recepção pública valida a credencial da loja antes de consultar a disponibilidade do módulo.
+  Se desabilitado, retorna `MODULE_DISABLED`; o sistema de pedidos mantém o evento na fila
+  para nova tentativa quando a organização reativar Entregas.
 - Jobs automáticos revalidam o módulo por tenant:
   - `BillingRemindersService.runScan/generateReminders/dispatch/processReminder` e
     `sendManual` checam `billing.collection`.
@@ -123,3 +128,6 @@ administrativa invalida `['modules']`. Sessões abertas são bloqueadas imediata
 `20261017090000_modules` cria `modules`, `tenant_modules` e `admin_audit_logs` e insere o catálogo
 de forma idempotente (`ON CONFLICT (key) DO NOTHING`). Nenhum dado de negócio é alterado e nenhuma
 funcionalidade é desativada. Aplicar com `npm run prisma:deploy` (ou `npm run prisma:migrate` em dev).
+
+`20261105110000_deliveries_module` adiciona Entregas ao catálogo. O módulo começa habilitado
+para organizações sem configuração explícita e pode ser desativado no painel da plataforma.

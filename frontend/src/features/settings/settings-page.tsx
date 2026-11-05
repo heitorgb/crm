@@ -6,6 +6,7 @@ import {
   Palette,
   Smartphone,
   Sparkles,
+  Store,
   Users,
 } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
@@ -20,6 +21,9 @@ import { CustomMenuTab } from '@/features/custom-menu/custom-menu-tab';
 import { OrganizationTab } from './organization-tab';
 import { TeamTab } from './team-tab';
 import { WhatsAppTab } from './whatsapp-tab';
+import { StoresSettingsTab } from '@/features/store-orders/stores-settings-tab';
+import { useEnabledModules } from '@/features/modules/queries';
+import { MODULE_KEYS } from '@/types/modules';
 
 const settingsTabs = [
   'organization',
@@ -28,6 +32,7 @@ const settingsTabs = [
   'attendance',
   'notifications',
   'whatsapp',
+  'stores',
   'menu',
   'ai',
 ] as const;
@@ -41,10 +46,12 @@ function isSettingsTab(value: string | null): value is SettingsTab {
 export function SettingsPage() {
   const role = useAuthStore((state) => state.session?.role);
   const canManage = role === 'OWNER' || role === 'ADMIN';
+  const enabledModules = useEnabledModules().data;
+  const deliveriesEnabled = !enabledModules || enabledModules.includes(MODULE_KEYS.DELIVERIES);
 
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get('tab');
-  const activeTab: SettingsTab = isSettingsTab(tabParam) ? tabParam : 'organization';
+  const activeTab: SettingsTab = isSettingsTab(tabParam) && (tabParam !== 'stores' || deliveriesEnabled) ? tabParam : 'organization';
 
   const handleTabChange = (value: string): void => {
     if (!isSettingsTab(value)) return;
@@ -55,7 +62,7 @@ export function SettingsPage() {
     <div className="space-y-5">
       <PageHeader
         title="Configurações"
-        description="Organização, equipe, aparência, WhatsApp, menu personalizado e IA."
+        description="Organização, equipe, lojas, aparência, WhatsApp, menu personalizado e IA."
       />
 
       <Tabs value={activeTab} onValueChange={handleTabChange}>
@@ -84,6 +91,10 @@ export function SettingsPage() {
             <Smartphone />
             WhatsApp
           </TabsTrigger>
+          {deliveriesEnabled && <TabsTrigger value="stores">
+            <Store />
+            Lojas
+          </TabsTrigger>}
           <TabsTrigger value="menu">
             <Menu />
             Menu Personalizado
@@ -112,6 +123,9 @@ export function SettingsPage() {
         <TabsContent value="whatsapp">
           <WhatsAppTab />
         </TabsContent>
+        {deliveriesEnabled && <TabsContent value="stores">
+          <StoresSettingsTab canManage={canManage} />
+        </TabsContent>}
         <TabsContent value="menu">
           <CustomMenuTab canManage={canManage} />
         </TabsContent>

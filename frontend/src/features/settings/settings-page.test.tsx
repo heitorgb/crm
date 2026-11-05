@@ -3,6 +3,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 
+const moduleState = vi.hoisted(() => ({ deliveriesEnabled: true }));
+vi.mock('@/features/modules/queries', () => ({
+  useEnabledModules: () => ({ data: moduleState.deliveriesEnabled ? ['deliveries'] : [] }),
+}));
+
 vi.mock('./appearance-tab', () => ({ AppearanceTab: () => <div>Aparência</div> }));
 vi.mock('./attendance-tab', () => ({ AttendanceTab: () => <div>Atendimento</div> }));
 vi.mock('./notifications-tab', () => ({ NotificationsTab: () => <div>Notificações</div> }));
@@ -18,7 +23,7 @@ vi.mock('@/features/ai/ai-settings-tab', () => ({
 
 import { SettingsPage } from './settings-page';
 
-afterEach(cleanup);
+afterEach(() => { cleanup(); moduleState.deliveriesEnabled = true; });
 
 function renderSettings(path: string) {
   return render(
@@ -56,5 +61,13 @@ describe('SettingsPage', () => {
 
     expect(tabs.classList.contains('hidden')).toBe(true);
     expect(tabs.classList.contains('lg:inline-flex')).toBe(true);
+  });
+
+  it('hides store settings when deliveries is disabled', () => {
+    moduleState.deliveriesEnabled = false;
+    renderSettings('/configuracoes?tab=stores');
+
+    expect(screen.queryByRole('tab', { name: 'Lojas' })).toBeNull();
+    expect(screen.getByRole('tabpanel').textContent).toBe('Organização');
   });
 });

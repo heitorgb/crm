@@ -77,6 +77,9 @@ const LeadBoardPage = lazy(() =>
 const TagsPage = lazy(() =>
   import('@/features/tags/tags-page').then((module) => ({ default: module.TagsPage })),
 );
+const StoreOrdersPage = lazy(() =>
+  import('@/features/store-orders/store-orders-page').then((module) => ({ default: module.StoreOrdersPage })),
+);
 
 export function AppRoutes() {
   return (
@@ -164,6 +167,7 @@ export function AppRoutes() {
             }
           />
           <Route path="/clientes/tags" element={<Navigate to="/crm/etiquetas" replace />} />
+          <Route path="/entregas" element={<ModuleRoute moduleKey={MODULE_KEYS.DELIVERIES}><StoreOrdersPage /></ModuleRoute>} />
 
           <Route
             path="/contatos"

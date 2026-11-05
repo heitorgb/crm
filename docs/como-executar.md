@@ -7,7 +7,7 @@ Guia prático para rodar o CRM (Multi WhatsApp + Chat + Contatos) localmente.
 | Serviço            | Porta  | Onde roda            |
 | ------------------ | ------ | -------------------- |
 | Frontend (Vite)    | `5173` | host (npm)           |
-| Backend (NestJS)   | `3000` | host (npm)           |
+| Backend (NestJS)   | `3003` | host (npm)           |
 | PostgreSQL (CRM)   | `5432` | Docker               |
 | Redis (CRM)        | `6379` | Docker               |
 | Evolution API      | `8080` | Docker (opcional)    |
@@ -41,7 +41,7 @@ cp .env.example .env      # se ainda não existir .env
 npm install
 npm run prisma:deploy     # aplica as migrations (ou: npm run prisma:migrate em dev)
 npm run prisma:seed       # cria usuário de dev
-npm run start:dev         # http://localhost:3000/api/health
+npm run start:dev         # http://localhost:3003/api/health
 ```
 
 Credenciais do seed:
@@ -67,7 +67,7 @@ Sem essa variável, a área administrativa fica indisponível para todos. Detalh
 
 ```bash
 cd frontend
-cp .env.example .env      # opcional (Vite faz proxy de /api → :3000)
+cp .env.example .env      # opcional (Vite faz proxy de /api → :3003)
 npm install
 npm run dev               # http://localhost:5173
 ```
@@ -107,7 +107,7 @@ EVOLUTION_API_BASE_URL=http://localhost:8080
 EVOLUTION_API_KEY=change-me-evolution-api-key
 EVOLUTION_WEBHOOK_SECRET=local-dev-webhook-secret
 CREDENTIALS_ENCRYPTION_KEY=<segredo com 32+ caracteres>
-PUBLIC_API_URL=http://host.docker.internal:3000
+PUBLIC_API_URL=http://host.docker.internal:3003
 ```
 
 - `EVOLUTION_API_KEY` deve ser igual ao `AUTHENTICATION_API_KEY` da Evolution.
@@ -116,11 +116,11 @@ PUBLIC_API_URL=http://host.docker.internal:3000
 ### 4.3 Webhook
 
 A Evolution precisa **alcançar o backend**. O compose já inclui `host.docker.internal`, então, com o
-backend rodando no host, use `PUBLIC_API_URL=http://host.docker.internal:3000`.
+backend rodando no host, use `PUBLIC_API_URL=http://host.docker.internal:3003`.
 
 Alternativas:
 
-- Túnel: `ngrok http 3000` → `PUBLIC_API_URL=https://<url-do-tunel>`.
+- Túnel: `ngrok http 3003` → `PUBLIC_API_URL=https://<url-do-tunel>`.
 - Mesmo Docker network: `PUBLIC_API_URL=http://<host-do-backend>:3000`.
 
 Sem uma URL alcançável, a configuração automática do webhook falha (`PUBLIC_API_URL_MISSING`).
@@ -195,10 +195,10 @@ docker compose -f docker-compose.yml -f docker-compose.evolution.yml down -v
 | --- | --- | --- |
 | `open .../backend/docker-compose.yml: no such file or directory` | comando rodado dentro de `backend/` | rode da raiz ou use `-f ../docker-compose.yml` |
 | `pull access denied for atendai/evolution-api` | namespace antigo da imagem | use `evoapicloud/evolution-api:2.4.0-rc2` (já configurado) |
-| `PUBLIC_API_URL_MISSING` ao conectar | webhook inalcançável | defina `PUBLIC_API_URL=http://host.docker.internal:3000` (ou túnel) e reinicie o backend |
+| `PUBLIC_API_URL_MISSING` ao conectar | webhook inalcançável | defina `PUBLIC_API_URL=http://host.docker.internal:3003` (ou túnel) e reinicie o backend |
 | `EVOLUTION_UNAVAILABLE` ao conectar | `EVOLUTION_API_BASE_URL`/`EVOLUTION_API_KEY` vazios ou Evolution fora do ar | suba a Evolution e preencha o `.env` |
 | "Página não encontrada" após login | rota antiga `/dashboard` | já corrigido: redireciona para `/atendimento/conversas` |
-| `port is already allocated` | porta 3000/5173/8080/5432/6379 em uso | pare o processo conflitante ou ajuste a porta |
+| `port is already allocated` | porta 3003/5173/8080/5432/6379 em uso | pare o processo conflitante ou ajuste a porta |
 | Auth do webhook falhando | `EVOLUTION_WEBHOOK_SECRET` divergente | alinhe o segredo entre Evolution e backend |
 
 ---
@@ -208,6 +208,6 @@ docker compose -f docker-compose.yml -f docker-compose.evolution.yml down -v
 | Recurso            | URL                                      |
 | ------------------ | ---------------------------------------- |
 | Frontend           | http://localhost:5173                    |
-| API (health)       | http://localhost:3000/api/health         |
+| API (health)       | http://localhost:3003/api/health         |
 | Evolution API      | http://localhost:8080                    |
 | Evolution Manager  | http://localhost:8080/manager            |

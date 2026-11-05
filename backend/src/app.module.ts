@@ -41,6 +41,7 @@ import { LeadsModule } from './modules/leads/leads.module.js';
 import { CustomMenuModule } from './modules/custom-menu/custom-menu.module.js';
 import { AiModule } from './modules/ai/ai.module.js';
 import { TranscriptionModule } from './modules/transcription/transcription.module.js';
+import { StoreOrdersModule } from './modules/store-orders/store-orders.module.js';
 
 @Module({
   imports: [
@@ -91,6 +92,7 @@ import { TranscriptionModule } from './modules/transcription/transcription.modul
     CustomMenuModule,
     AiModule,
     TranscriptionModule,
+    StoreOrdersModule,
   ],
   providers: [{ provide: APP_FILTER, useClass: AllExceptionsFilter }],
 })

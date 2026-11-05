@@ -32,7 +32,7 @@ npm run build
 npm run preview
 ```
 
-O Vite faz proxy de `/api` para `http://localhost:3000` (backend). Para apontar para outra API, use
+O Vite faz proxy de `/api` para `http://localhost:3003` (backend). Para apontar para outra API, use
 `VITE_API_BASE_URL`.
 
 Login real usa `POST /api/auth/login` (access token em memória/cookie HttpOnly do refresh). A entrada

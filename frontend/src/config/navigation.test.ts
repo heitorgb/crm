@@ -15,6 +15,7 @@ const allModules = [
   MODULE_KEYS.BILLING_CHARGES,
   MODULE_KEYS.BILLING_COLLECTION,
   MODULE_KEYS.WEBHOOKS,
+  MODULE_KEYS.DELIVERIES,
 ];
 
 describe('visibleNavigation', () => {
@@ -32,6 +33,7 @@ describe('visibleNavigation', () => {
         'Contatos',
         'Cobranças',
         'Webhooks',
+        'Entregas',
       ]),
     );
   });
@@ -61,6 +63,7 @@ describe('visibleNavigation', () => {
     });
 
     expect(titles(entries)).not.toContain('Cobranças');
+    expect(titles(entries)).not.toContain('Entregas');
     expect(titles(entries)).not.toContain('Financeiro');
     expect(titles(entries)).not.toContain('CRM');
     expect(titles(entries)).not.toContain('Oportunidades');

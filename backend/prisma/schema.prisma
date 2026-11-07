@@ -230,6 +230,7 @@ enum DeliveryConfirmationSource {
 model Tenant {
   id                    String   @id @default(uuid()) @db.Uuid
   name                  String
+  deliveryVisibleStatuses StoreOrderStatus[] @default([PENDENTE_SEPARACAO, SEPARANDO, SEPARADO, EM_ROTA, OBSERVACAO, ENTREGUE]) @map("delivery_visible_statuses")
   whatsappInstanceLimit Int      @default(3) @map("whatsapp_instance_limit")
   createdAt             DateTime @default(now()) @map("created_at")
   updatedAt             DateTime @updatedAt @map("updated_at")
@@ -414,6 +415,8 @@ model Store {
   name                     String
   externalCode             String                   @map("external_code")
   integrationSecretHash    String?                  @map("integration_secret_hash")
+  logoStorageKey           String?                  @map("logo_storage_key")
+  logoUpdatedAt            DateTime?                @map("logo_updated_at")
   deliveryConfirmationMode DeliveryConfirmationMode @default(AUTOMATIC) @map("delivery_confirmation_mode")
   active                   Boolean                  @default(true)
   createdAt                DateTime                 @default(now()) @map("created_at")
@@ -436,6 +439,8 @@ model StoreOrder {
   contactId                  String?                     @map("contact_id") @db.Uuid
   customerName               String?                     @map("customer_name")
   orderText                  String?                     @map("order_text")
+  items                      Json?
+  totalAmount                Decimal?                    @map("total_amount") @db.Decimal(14, 4)
   status                     StoreOrderStatus            @default(PENDENTE_SEPARACAO)
   deliveryConfirmationMode   DeliveryConfirmationMode?   @map("delivery_confirmation_mode")
   deliveryConfirmationSource DeliveryConfirmationSource? @map("delivery_confirmation_source")

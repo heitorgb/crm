@@ -1,6 +1,33 @@
-import { IsEnum, IsISO8601, IsOptional, IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
+import { ArrayMaxSize, ArrayUnique, IsArray, IsEnum, IsISO8601, IsOptional, IsString, IsUUID, Matches, MaxLength, MinLength, ValidateNested } from 'class-validator';
 import { DeliveryConfirmationMode, StoreOrderStatus } from '@prisma/client';
 import { IsBoolean } from 'class-validator';
+import { Type } from 'class-transformer';
+
+const DECIMAL_PATTERN = /^\d{1,10}(?:\.\d{1,4})?$/;
+
+export class ApprovedOrderItemDto {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(120)
+  productCode!: string;
+
+  @IsString()
+  @MinLength(1)
+  @MaxLength(500)
+  description!: string;
+
+  @IsString()
+  @Matches(DECIMAL_PATTERN)
+  quantity!: string;
+
+  @IsString()
+  @Matches(DECIMAL_PATTERN)
+  unitPrice!: string;
+
+  @IsString()
+  @Matches(DECIMAL_PATTERN)
+  lineTotal!: string;
+}
 
 export class CreateStoreDto {
   @IsString()
@@ -52,9 +79,25 @@ export class ApprovedOrderDto {
   @IsString()
   @MaxLength(10000)
   orderText?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(200)
+  @ValidateNested({ each: true })
+  @Type(() => ApprovedOrderItemDto)
+  items?: ApprovedOrderItemDto[];
+
+  @IsOptional()
+  @IsString()
+  @Matches(DECIMAL_PATTERN)
+  totalAmount?: string;
 }
 
 export class CreateManualOrderDto {
+  @IsOptional()
+  @IsUUID()
+  requestId?: string;
+
   @IsUUID()
   storeId!: string;
 
@@ -70,4 +113,12 @@ export class CreateManualOrderDto {
 export class UpdateOrderStatusDto {
   @IsEnum(StoreOrderStatus)
   status!: StoreOrderStatus;
+}
+
+export class UpdateDeliveryCardsDto {
+  @IsArray()
+  @ArrayMaxSize(6)
+  @ArrayUnique()
+  @IsEnum(StoreOrderStatus, { each: true })
+  statuses!: StoreOrderStatus[];
 }

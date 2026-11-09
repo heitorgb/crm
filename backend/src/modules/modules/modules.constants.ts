@@ -5,6 +5,7 @@ export const MODULE_KEYS = {
   BILLING_CHARGES: 'billing.charges',
   BILLING_COLLECTION: 'billing.collection',
   WEBHOOKS: 'webhooks',
+  DELIVERIES: 'deliveries',
 } as const;
 
 export type ModuleKey = (typeof MODULE_KEYS)[keyof typeof MODULE_KEYS];

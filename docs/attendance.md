@@ -288,7 +288,7 @@ manual:
 
 - `PUBLIC_API_URL`: URL pública do backend usada para montar o webhook
   (`{PUBLIC_API_URL}/api/webhooks/evolution?token=...`). Em **dev local** a Evolution precisa
-  alcançar o backend, então use um túnel (ngrok/cloudflared) apontando para `http://localhost:3000`
+  alcançar o backend, então use um túnel (ngrok/cloudflared) apontando para `http://localhost:3003`
   e defina `PUBLIC_API_URL` com a URL do túnel. Sem ele, a configuração de webhook falha com
   `PUBLIC_API_URL_MISSING`.
 - `EVOLUTION_WEBHOOK_SECRET` (ou o `webhookSecret` por instância) é o token validado no webhook.

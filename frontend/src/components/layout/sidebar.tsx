@@ -59,7 +59,8 @@ export function Sidebar({
     ) : settingsAsGroup && entry.to === '/configuracoes' ? (
       <SidebarGroup
         key="group-configuracoes"
-        group={settingsNavigation}
+        group={{ ...settingsNavigation, items: settingsNavigation.items.filter((item) =>
+          !item.moduleKey || !enabledModules || enabledModules.includes(item.moduleKey)) }}
         collapsed={collapsed}
         onNavigate={onNavigate}
       />

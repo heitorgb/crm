@@ -70,7 +70,7 @@ services:
       CONFIG_SESSION_PHONE_NAME: Chrome
       DEL_INSTANCE: 'false'
       LOG_LEVEL: ERROR
-    # Permite a Evolution alcançar o backend rodando no host (PUBLIC_API_URL=http://host.docker.internal:3000).
+    # Permite a Evolution alcançar o backend rodando no host (PUBLIC_API_URL=http://host.docker.internal:3003).
     extra_hosts:
       - 'host.docker.internal:host-gateway'
     depends_on:

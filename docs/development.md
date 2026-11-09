@@ -56,7 +56,7 @@ npm install
 npm run prisma:generate     # gera o Prisma Client
 npm run prisma:migrate      # aplica as migrations
 npm run prisma:seed         # cria tenant/usuário de desenvolvimento (idempotente)
-npm run start:dev           # watch mode: http://localhost:3000/api/health
+npm run start:dev           # watch mode: http://localhost:3003/api/health
 ```
 
 ### Usuário de desenvolvimento (seed)
@@ -213,7 +213,7 @@ PUBLIC_API_URL=https://<url-publica-do-backend>
 - `EVOLUTION_API_KEY` deve ser igual ao `AUTHENTICATION_API_KEY` da Evolution.
 - `PUBLIC_API_URL` precisa ser alcançável **pela Evolution**. O compose da Evolution já inclui
   `host.docker.internal`; com o backend no host, use
-  `PUBLIC_API_URL=http://host.docker.internal:3000`. Alternativas: túnel (`ngrok http 3000`) ou,
+  `PUBLIC_API_URL=http://host.docker.internal:3003`. Alternativas: túnel (`ngrok http 3003`) ou,
   se backend e Evolution estiverem no mesmo Docker network, `http://<host-do-backend>:3000`. Sem uma
   URL alcançável, o webhook falha com `PUBLIC_API_URL_MISSING`.
 - Se backend e Evolution estiverem no mesmo Docker network, use
@@ -250,7 +250,7 @@ O frontend fica em `frontend/` (React + Vite + Tailwind + shadcn/ui). Detalhes c
 ```bash
 cd frontend
 npm install
-npm run dev        # http://localhost:5173 (proxy de /api para :3000)
+npm run dev        # http://localhost:5173 (proxy de /api para :3003)
 npm run lint
 npm run typecheck
 npm run build

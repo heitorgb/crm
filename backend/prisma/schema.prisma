@@ -208,9 +208,29 @@ enum LeadStageKind {
   LOST
 }
 
+enum StoreOrderStatus {
+  PENDENTE_SEPARACAO
+  SEPARANDO
+  SEPARADO
+  EM_ROTA
+  OBSERVACAO
+  ENTREGUE
+}
+
+enum DeliveryConfirmationMode {
+  AUTOMATIC
+  MANUAL
+}
+
+enum DeliveryConfirmationSource {
+  AUTOMATIC
+  MANUAL
+}
+
 model Tenant {
   id                    String   @id @default(uuid()) @db.Uuid
   name                  String
+  deliveryVisibleStatuses StoreOrderStatus[] @default([PENDENTE_SEPARACAO, SEPARANDO, SEPARADO, EM_ROTA, OBSERVACAO, ENTREGUE]) @map("delivery_visible_statuses")
   whatsappInstanceLimit Int      @default(3) @map("whatsapp_instance_limit")
   createdAt             DateTime @default(now()) @map("created_at")
   updatedAt             DateTime @updatedAt @map("updated_at")
@@ -254,6 +274,9 @@ model Tenant {
   leadCommercialContexts     LeadCommercialContext[]
   leadRecommendations        LeadRecommendation[]
   leadFollowUps              LeadFollowUp[]
+  stores                     Store[]
+  storeOrders                StoreOrder[]
+  storeOrderStatusChanges    StoreOrderStatusChange[]
 
   @@map("tenants")
 }
@@ -377,11 +400,85 @@ model Contact {
   billingCharges     BillingCharge[]
   billingRecurrences BillingRecurrence[]
   leads              Lead[]
+  storeOrders        StoreOrder[]
 
+  @@unique([tenantId, id])
   @@unique([tenantId, phone])
   @@index([tenantId, customerId])
   @@index([tenantId, createdAt])
   @@map("contacts")
+}
+
+model Store {
+  id                       String                   @id @default(uuid()) @db.Uuid
+  tenantId                 String                   @map("tenant_id") @db.Uuid
+  name                     String
+  externalCode             String                   @map("external_code")
+  integrationSecretHash    String?                  @map("integration_secret_hash")
+  logoStorageKey           String?                  @map("logo_storage_key")
+  logoUpdatedAt            DateTime?                @map("logo_updated_at")
+  deliveryConfirmationMode DeliveryConfirmationMode @default(AUTOMATIC) @map("delivery_confirmation_mode")
+  active                   Boolean                  @default(true)
+  createdAt                DateTime                 @default(now()) @map("created_at")
+  updatedAt                DateTime                 @updatedAt @map("updated_at")
+
+  tenant Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  orders StoreOrder[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, externalCode])
+  @@index([tenantId, active])
+  @@map("stores")
+}
+
+model StoreOrder {
+  id                         String                      @id @default(uuid()) @db.Uuid
+  tenantId                   String                      @map("tenant_id") @db.Uuid
+  storeId                    String                      @map("store_id") @db.Uuid
+  externalOrderId            String                      @map("external_order_id")
+  contactId                  String?                     @map("contact_id") @db.Uuid
+  customerName               String?                     @map("customer_name")
+  orderText                  String?                     @map("order_text")
+  items                      Json?
+  totalAmount                Decimal?                    @map("total_amount") @db.Decimal(14, 4)
+  status                     StoreOrderStatus            @default(PENDENTE_SEPARACAO)
+  deliveryConfirmationMode   DeliveryConfirmationMode?   @map("delivery_confirmation_mode")
+  deliveryConfirmationSource DeliveryConfirmationSource? @map("delivery_confirmation_source")
+  enteredRouteAt             DateTime?                   @map("entered_route_at")
+  deliveryDueAt              DateTime?                   @map("delivery_due_at")
+  deliveredAt                DateTime?                   @map("delivered_at")
+  approvedAt                 DateTime                    @map("approved_at")
+  createdAt                  DateTime                    @default(now()) @map("created_at")
+  updatedAt                  DateTime                    @updatedAt @map("updated_at")
+
+  tenant        Tenant                   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  store         Store                    @relation(fields: [tenantId, storeId], references: [tenantId, id], onDelete: Cascade)
+  contact       Contact?                 @relation(fields: [tenantId, contactId], references: [tenantId, id], onDelete: Restrict)
+  statusChanges StoreOrderStatusChange[]
+
+  @@unique([tenantId, id])
+  @@unique([storeId, externalOrderId])
+  @@index([tenantId, storeId, status])
+  @@index([tenantId, status, deliveryDueAt])
+  @@index([tenantId, contactId])
+  @@map("store_orders")
+}
+
+model StoreOrderStatusChange {
+  id                String            @id @default(uuid()) @db.Uuid
+  tenantId          String            @map("tenant_id") @db.Uuid
+  orderId           String            @map("order_id") @db.Uuid
+  previousStatus    StoreOrderStatus? @map("previous_status")
+  status            StoreOrderStatus
+  actorMembershipId String?           @map("actor_membership_id") @db.Uuid
+  origin            String
+  createdAt         DateTime          @default(now()) @map("created_at")
+
+  tenant Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  order  StoreOrder @relation(fields: [tenantId, orderId], references: [tenantId, id], onDelete: Cascade)
+
+  @@index([tenantId, orderId, createdAt])
+  @@map("store_order_status_changes")
 }
 
 model LeadPipeline {

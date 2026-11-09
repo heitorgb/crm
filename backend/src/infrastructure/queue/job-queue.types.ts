@@ -30,4 +30,5 @@ export const JOB_NAMES = {
   BULK_MEDIA_SEND: 'bulk-media.send',
   SCHEDULED_MESSAGE_SCAN: 'scheduled-message.scan',
   SCHEDULED_MESSAGE_SEND: 'scheduled-message.send',
+  STORE_ORDER_DELIVERY_SCAN: 'store-order.delivery.scan',
 } as const;

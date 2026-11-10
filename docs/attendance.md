@@ -773,6 +773,19 @@ Referência do evento: [implementação da Evolution](https://github.com/Evoluti
   incluindo `515 restartRequired`, reconectam sem emitir o evento — por isso a reconciliação
   periódica é necessária. O `payload.date_time` da 2.4 não é usado para ordenar eventos porque é
   gerado com deslocamento de timezone; o header `X-Timestamp` é usado quando presente.
+- **Sessão única por número:** se o mesmo número estiver vinculado a mais de uma instância da
+  Evolution, as sessões se substituem (`Stream Errored (conflict)`, motivo 440) e a Evolution as
+  reconecta em loop — sem emitir `close` (motivo reconectável), então o CRM continua mostrando
+  `CONNECTED` enquanto a instância "fica desconectando". O backend compara o `ownerJid` retornado por
+  `GET /instance/fetchInstances` e faz logout das outras sessões do mesmo número:
+  - ao conectar (conexão explícita ou transição para `CONNECTED`), a instância recém-conectada fica
+    com o número;
+  - na reconciliação periódica, as instâncias são percorridas pela conexão solicitada mais recente
+    (`connection_requested_at desc`), que mantém o número.
+  São encerradas instâncias órfãs da Evolution (sem registro no CRM) e instâncias do **mesmo tenant**,
+  que passam a `DISCONNECTED` com motivo `440`. Sessões de outro tenant nunca são tocadas — apenas
+  logadas (`whatsapp.connection.duplicate_session_foreign_tenant`). Falha nessa verificação nunca
+  impede a atualização do estado da conexão.
 
 ### Observabilidade do envio
 

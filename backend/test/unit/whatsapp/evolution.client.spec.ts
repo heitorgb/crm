@@ -92,3 +92,23 @@ describe('EvolutionClient.sendText link preview', () => {
     expect(sentBody(fetchMock)).not.toHaveProperty('linkPreview');
   });
 });
+
+describe('EvolutionClient.fetchInstances', () => {
+  it('reads the session owner from v2 and v1 payload shapes', async () => {
+    const { client, fetchMock } = createClient();
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => [
+        { name: 'inst-v2', connectionStatus: 'open', ownerJid: '5511999999999@s.whatsapp.net' },
+        { instance: { instanceName: 'inst-v1', status: 'connecting', owner: '5511888888888@s.whatsapp.net' } },
+        { connectionStatus: 'open' },
+      ],
+    });
+
+    await expect(client.fetchInstances()).resolves.toEqual([
+      { name: 'inst-v2', state: 'open', ownerJid: '5511999999999@s.whatsapp.net' },
+      { name: 'inst-v1', state: 'connecting', ownerJid: '5511888888888@s.whatsapp.net' },
+    ]);
+  });
+});

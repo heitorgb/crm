@@ -28,6 +28,12 @@ export interface EvolutionConnectionState {
   state: string;
 }
 
+export interface EvolutionInstanceSummary {
+  name: string;
+  state: string | null;
+  ownerJid: string | null;
+}
+
 export interface EvolutionHistoryMessagesQuery {
   from: Date;
   to: Date;
@@ -187,6 +193,35 @@ export class EvolutionClient {
         isRecord(entry) &&
         (entry.name === instanceName || entry.instanceName === instanceName),
     );
+  }
+
+  /**
+   * Instances known by the provider with their session owner. Evolution v2
+   * returns flat records (`name`, `connectionStatus`, `ownerJid`); v1 wrapped
+   * them in `instance` (`instanceName`, `status`, `owner`).
+   */
+  async fetchInstances(): Promise<EvolutionInstanceSummary[]> {
+    const raw = await this.request('GET', '/instance/fetchInstances');
+    const list = Array.isArray(raw)
+      ? raw
+      : isRecord(raw) && Array.isArray(raw.data)
+        ? raw.data
+        : [];
+
+    return list.filter(isRecord).flatMap((entry) => {
+      const record = isRecord(entry.instance) ? { ...entry, ...entry.instance } : entry;
+      const name = readString(record.name) ?? readString(record.instanceName);
+      if (!name) {
+        return [];
+      }
+      return [
+        {
+          name,
+          state: readString(record.connectionStatus) ?? readString(record.status),
+          ownerJid: readString(record.ownerJid) ?? readString(record.owner),
+        },
+      ];
+    });
   }
 
   async setWebhook(instanceName: string, url: string, events: string[]): Promise<unknown> {

@@ -31,4 +31,5 @@ export const JOB_NAMES = {
   SCHEDULED_MESSAGE_SCAN: 'scheduled-message.scan',
   SCHEDULED_MESSAGE_SEND: 'scheduled-message.send',
   STORE_ORDER_DELIVERY_SCAN: 'store-order.delivery.scan',
+  PUSH_MESSAGE_NOTIFY: 'push.message.notify',
 } as const;

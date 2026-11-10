@@ -36,10 +36,52 @@ mobile/
 | Backup do Android | Desativado (`allowBackup="false"`) para não copiar cookies de sessão. |
 | Depuração remota | Desativada (`webContentsDebuggingEnabled: false`). |
 
-## Limitações conhecidas (Fase 1)
+## Notificações push (Fase 2)
 
-- **Notificações:** a aba toca som e mostra badge apenas com o app aberto. Push com o app fechado
-  depende da Fase 2 (FCM).
+Mensagens recebidas no WhatsApp geram push no celular, inclusive com o app fechado.
+
+Fluxo:
+
+1. O webhook da Evolution grava uma mensagem `INBOUND` nova (não histórico) e enfileira o job
+   `push.message.notify` com `tenantId` e `messageId` (`jobId` por mensagem, sem duplicar).
+2. `MessagePushService` reabre o `TenantContext`, ignora conversas arquivadas/excluídas e envia para
+   todos os dispositivos de memberships **ativas** do tenant (mesmo público do som/badge da web).
+3. `FcmClient` (`src/infrastructure/push/`) chama a API HTTP v1 do FCM assinando a conta de serviço
+   com `node:crypto` (sem `firebase-admin`). Tokens `UNREGISTERED`/`SENDER_ID_MISMATCH` são
+   removidos; falhas temporárias são apenas logadas (sem retry, para não duplicar notificações).
+4. Título: nome do contato (ou `remetente @ grupo`); corpo: prévia de até 120 caracteres ou o tipo de
+   mídia. `tag` = id da conversa, então várias mensagens da mesma conversa se substituem.
+5. Ao tocar, o app abre `/atendimento/conversas?conversation=<id>` (só caminhos internos são aceitos).
+
+Registro do dispositivo:
+
+- `POST /api/push-devices` `{ token, platform: 'android' }` — vincula o token à membership do
+  access token (o `tenantId` nunca vem do cliente). Um token re-registrado passa para a membership
+  que entrou por último no aparelho, inclusive na troca de organização.
+- `DELETE /api/push-devices` `{ token }` — chamado no logout; só remove dispositivos da própria
+  membership.
+- O frontend só usa o plugin quando `Capacitor.isPluginAvailable('PushNotifications')`; no navegador
+  e em builds antigas do app nada muda.
+
+Com o app aberto, o Android não exibe o push (o som/badge via socket continua cuidando disso).
+
+### Configurar o Firebase
+
+1. No [console do Firebase](https://console.firebase.google.com/), crie um projeto e adicione um app
+   Android com o pacote `br.com.orderup.crm`.
+2. Baixe o `google-services.json` e coloque em `mobile/android/app/google-services.json`
+   (ignorado pelo git). Sem ele o app compila, mas não recebe push.
+3. Em **Configurações do projeto → Contas de serviço → Gerar nova chave privada**, baixe o JSON e
+   preencha no `.env` do backend:
+   - `FCM_PROJECT_ID` ← `project_id`
+   - `FCM_CLIENT_EMAIL` ← `client_email`
+   - `FCM_PRIVATE_KEY` ← `private_key` (pode manter os `\n` literais)
+   As três são obrigatórias juntas; sem nenhuma, o backend sobe e apenas não envia push.
+4. Rode a migration (`npm run prisma:deploy`), publique backend e frontend e gere um novo APK
+   (`npm run sync` + Run no Android Studio).
+
+## Limitações conhecidas
+
 - **Download de mídias:** downloads feitos com `blob:` + `<a download>` (ex.: salvar áudio ou
   arquivo no atendimento) não são suportados pelo WebView do Android. Visualizar e reproduzir
   funcionam.
@@ -73,5 +115,4 @@ Depois de mudar `capacitor.config.ts`, `www/` ou plugins, rode `npm run sync` no
 
 ## Próximas fases
 
-1. Push notifications via FCM (`@capacitor/push-notifications`) e registro de tokens por `TenantUser`.
-2. Assinatura de release (keystore fora do repositório), AAB e publicação na Play Store.
+1. Assinatura de release (keystore fora do repositório), AAB e publicação na Play Store.

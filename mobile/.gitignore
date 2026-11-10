@@ -2,3 +2,4 @@ node_modules/
 *.keystore
 *.jks
 keystore.properties
+android/app/google-services.json

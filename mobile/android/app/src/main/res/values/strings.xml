@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">OrderUp CRM</string>
+    <string name="title_activity_main">OrderUp CRM</string>
+    <string name="package_name">br.com.orderup.crm</string>
+    <string name="custom_url_scheme">br.com.orderup.crm</string>
+</resources>

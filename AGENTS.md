@@ -30,6 +30,8 @@ Status atual (ver `docs/architecture.md` para detalhes):
 - **Implementado:** transcrição assíncrona de áudios recebidos no WhatsApp via API externa,
   configuração independente por organização, exibição no atendimento e uso no contexto do Copiloto.
   Ver `docs/ai.md` e `docs/media.md`.
+- **Implementado:** app Android (Capacitor) em `mobile/`, carregando o frontend publicado em um
+  WebView nativo, com tela offline, microfone, upload e botão voltar. Ver `docs/mobile.md`.
 - **Planejado:** autenticação/autorização, módulos de CRM, multi-tenancy com RLS, filas, realtime.
 - **Futuro:** frontend (React + Vite), integrações (WhatsApp/Evolution API), dashboards, relatórios.
 

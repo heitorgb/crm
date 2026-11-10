@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { useSessionSync } from '@/features/auth/queries';
 import { useMessageNotifications } from '@/features/notifications/use-message-notifications';
+import { useNativePush } from '@/features/notifications/use-native-push';
 import { AttendanceMobileOptions } from '@/features/attendance/attendance-mobile-options';
 import { useUiStore } from '@/stores/ui-store';
 import { useNoIndex } from '@/lib/page-metadata';
@@ -21,6 +22,7 @@ export function AppLayout() {
 
   useSessionSync();
   useMessageNotifications();
+  useNativePush();
   useNoIndex();
 
   useEffect(() => {

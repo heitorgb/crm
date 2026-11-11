@@ -912,6 +912,26 @@ export class WebhookService implements OnModuleInit {
       });
     }
 
+    if (
+      direction === MessageDirection.INBOUND &&
+      !options.history &&
+      options.emitRealtime !== false
+    ) {
+      try {
+        await this.queue.enqueue(
+          JOB_NAMES.PUSH_MESSAGE_NOTIFY,
+          { tenantId: instance.tenantId, messageId: persisted.id },
+          { jobId: `push-message-${persisted.id}` },
+        );
+      } catch (error) {
+        this.logger.warn(
+          `Failed to enqueue push for message ${persisted.id}: ${
+            error instanceof Error ? error.message : 'unknown'
+          }`,
+        );
+      }
+    }
+
     this.logger.debug(
       `whatsapp.message.persisted ${JSON.stringify({
         instance: instance.instanceName,

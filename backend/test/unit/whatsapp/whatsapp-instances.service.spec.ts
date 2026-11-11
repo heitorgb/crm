@@ -13,7 +13,10 @@ import {
   WhatsAppConnectionInProgressError,
   WhatsAppInstanceLimitReachedError,
 } from '../../../src/modules/whatsapp/whatsapp.errors.js';
-import { WhatsAppInstancesService } from '../../../src/modules/whatsapp/whatsapp-instances.service.js';
+import {
+  normalizeOwnerNumber,
+  WhatsAppInstancesService,
+} from '../../../src/modules/whatsapp/whatsapp-instances.service.js';
 
 interface EvolutionMock {
   configured: boolean;
@@ -23,6 +26,7 @@ interface EvolutionMock {
   disconnect: ReturnType<typeof vi.fn>;
   deleteInstance: ReturnType<typeof vi.fn>;
   instanceExists: ReturnType<typeof vi.fn>;
+  fetchInstances: ReturnType<typeof vi.fn>;
   getConnectionState: ReturnType<typeof vi.fn>;
 }
 
@@ -96,6 +100,7 @@ function createHarness(env: Record<string, unknown>, evolutionConfigured = true)
     disconnect: vi.fn().mockResolvedValue({}),
     deleteInstance: vi.fn().mockResolvedValue({}),
     instanceExists: vi.fn().mockResolvedValue(false),
+    fetchInstances: vi.fn().mockResolvedValue([]),
     getConnectionState: vi.fn().mockResolvedValue({ instance: 'inst-1', state: 'close' }),
   };
   const config = {
@@ -1150,5 +1155,185 @@ describe('WhatsAppInstancesService connection reconciliation', () => {
     await service.reconcileConnectionStates();
 
     expect(prisma.whatsAppInstance.updateMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('WhatsAppInstancesService duplicate sessions', () => {
+  const disconnectedRow = {
+    id: 'i1',
+    tenantId: 't1',
+    instanceName: 'inst-1',
+    status: 'DISCONNECTED',
+    connectionObservedAt: null,
+    connectionRequestedAt: new Date(),
+  };
+
+  it('normalizes the owner jid to the phone number', () => {
+    expect(normalizeOwnerNumber('5511999999999:12@s.whatsapp.net')).toBe('5511999999999');
+    expect(normalizeOwnerNumber('5511999999999@s.whatsapp.net')).toBe('5511999999999');
+    expect(normalizeOwnerNumber(null)).toBeNull();
+    expect(normalizeOwnerNumber('@s.whatsapp.net')).toBeNull();
+  });
+
+  it('logs out an orphan provider session of the same number when the instance connects', async () => {
+    const { service, prisma, evolution } = createHarness({});
+    prisma.whatsAppInstance.findUnique.mockResolvedValue(disconnectedRow);
+    evolution.fetchInstances.mockResolvedValue([
+      { name: 'inst-1', state: 'open', ownerJid: '5511999999999@s.whatsapp.net' },
+      { name: 'old-inst', state: 'open', ownerJid: '5511999999999:3@s.whatsapp.net' },
+      { name: 'other-number', state: 'open', ownerJid: '5511888888888@s.whatsapp.net' },
+      { name: 'closed-inst', state: 'close', ownerJid: '5511999999999@s.whatsapp.net' },
+    ]);
+
+    await service.applyConnectionObservation('inst-1', 'open', { source: 'webhook' });
+
+    expect(evolution.disconnect).toHaveBeenCalledTimes(1);
+    expect(evolution.disconnect).toHaveBeenCalledWith('old-inst');
+  });
+
+  it('marks a same-tenant duplicate as disconnected with the replaced reason', async () => {
+    const { service, prisma, evolution, realtime } = createHarness({});
+    prisma.whatsAppInstance.findUnique.mockImplementation(
+      ({ where }: { where: { instanceName?: string; id?: string } }) =>
+        Promise.resolve(
+          where.instanceName === 'inst-2'
+            ? { ...disconnectedRow, id: 'i2', instanceName: 'inst-2', status: 'CONNECTED' }
+            : disconnectedRow,
+        ),
+    );
+    prisma.whatsAppInstance.findMany.mockResolvedValue([
+      { id: 'i2', tenantId: 't1', instanceName: 'inst-2' },
+    ]);
+    evolution.fetchInstances.mockResolvedValue([
+      { name: 'inst-1', state: 'open', ownerJid: '5511999999999@s.whatsapp.net' },
+      { name: 'inst-2', state: 'connecting', ownerJid: '5511999999999@s.whatsapp.net' },
+    ]);
+
+    await service.applyConnectionObservation('inst-1', 'open', { source: 'webhook' });
+
+    expect(evolution.disconnect).toHaveBeenCalledWith('inst-2');
+    expect(realtime.emitToTenant).toHaveBeenCalledWith(
+      't1',
+      'whatsapp.instance.updated',
+      expect.objectContaining({ instanceId: 'i2', status: 'DISCONNECTED', reason: 440 }),
+    );
+  });
+
+  it('never logs out a session that belongs to another tenant', async () => {
+    const { service, prisma, evolution } = createHarness({});
+    prisma.whatsAppInstance.findUnique.mockResolvedValue(disconnectedRow);
+    prisma.whatsAppInstance.findMany.mockResolvedValue([
+      { id: 'i9', tenantId: 't2', instanceName: 'foreign' },
+    ]);
+    evolution.fetchInstances.mockResolvedValue([
+      { name: 'inst-1', state: 'open', ownerJid: '5511999999999@s.whatsapp.net' },
+      { name: 'foreign', state: 'open', ownerJid: '5511999999999@s.whatsapp.net' },
+    ]);
+
+    await service.applyConnectionObservation('inst-1', 'open', { source: 'webhook' });
+
+    expect(evolution.disconnect).not.toHaveBeenCalled();
+  });
+
+  it('keeps the connection observation when the duplicate check fails', async () => {
+    const { service, prisma, evolution } = createHarness({});
+    prisma.whatsAppInstance.findUnique.mockResolvedValue(disconnectedRow);
+    evolution.fetchInstances.mockRejectedValue(new Error('evolution down'));
+
+    const result = await service.applyConnectionObservation('inst-1', 'open', {
+      source: 'webhook',
+    });
+
+    expect(result).toMatchObject({ status: 'CONNECTED', changed: true });
+    expect(evolution.disconnect).not.toHaveBeenCalled();
+  });
+});
+
+describe('WhatsAppInstancesService duplicate sessions during reconciliation', () => {
+  it('releases a silently flapping duplicate while the instance stays connected', async () => {
+    const { service, prisma, evolution } = createHarness({});
+    prisma.whatsAppInstance.findMany
+      .mockResolvedValueOnce([{ id: 'i1', tenantId: 't1', instanceName: 'inst-1' }])
+      .mockResolvedValueOnce([]);
+    evolution.getConnectionState.mockResolvedValue({ instance: 'inst-1', state: 'open' });
+    prisma.whatsAppInstance.findUnique.mockResolvedValue({
+      id: 'i1',
+      tenantId: 't1',
+      instanceName: 'inst-1',
+      status: 'CONNECTED',
+      connectionObservedAt: null,
+      connectionRequestedAt: new Date(),
+    });
+    evolution.fetchInstances.mockResolvedValue([
+      { name: 'inst-1', state: 'open', ownerJid: '5511999999999@s.whatsapp.net' },
+      { name: 'leftover', state: 'connecting', ownerJid: '5511999999999@s.whatsapp.net' },
+    ]);
+
+    await service.reconcileConnectionStates();
+
+    expect(prisma.whatsAppInstance.findMany).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        orderBy: { connectionRequestedAt: { sort: 'desc', nulls: 'last' } },
+      }),
+    );
+    expect(evolution.fetchInstances).toHaveBeenCalledTimes(1);
+    expect(evolution.disconnect).toHaveBeenCalledWith('leftover');
+  });
+
+  it('keeps the first scanned instance when two connected instances share the number', async () => {
+    const { service, prisma, evolution } = createHarness({});
+    prisma.whatsAppInstance.findMany.mockImplementation(
+      (args: { where: { instanceName?: unknown } }) =>
+        Promise.resolve(
+          args.where.instanceName
+            ? [{ id: 'i2', tenantId: 't1', instanceName: 'inst-2' }]
+            : [
+                { id: 'i1', tenantId: 't1', instanceName: 'inst-1' },
+                { id: 'i2', tenantId: 't1', instanceName: 'inst-2' },
+              ],
+        ),
+    );
+    const rows: Record<string, { status: string }> = {
+      'inst-1': { status: 'CONNECTED' },
+      'inst-2': { status: 'CONNECTED' },
+    };
+    prisma.whatsAppInstance.findUnique.mockImplementation(
+      ({ where }: { where: { instanceName?: string; id?: string } }) => {
+        const name = where.instanceName ?? (where.id === 'i2' ? 'inst-2' : 'inst-1');
+        return Promise.resolve({
+          id: name === 'inst-2' ? 'i2' : 'i1',
+          tenantId: 't1',
+          instanceName: name,
+          status: rows[name]?.status,
+          connectionObservedAt: null,
+          connectionRequestedAt: null,
+        });
+      },
+    );
+    prisma.whatsAppInstance.updateMany.mockImplementation(
+      ({ where, data }: { where: { id: string }; data: { status?: string } }) => {
+        const name = where.id === 'i2' ? 'inst-2' : 'inst-1';
+        if (data.status) rows[name] = { status: data.status };
+        return Promise.resolve({ count: 1 });
+      },
+    );
+    evolution.fetchInstances.mockResolvedValue([
+      { name: 'inst-1', state: 'open', ownerJid: '5511999999999@s.whatsapp.net' },
+      { name: 'inst-2', state: 'open', ownerJid: '5511999999999@s.whatsapp.net' },
+    ]);
+    evolution.getConnectionState.mockImplementation((name: string) =>
+      Promise.resolve({
+        instance: name,
+        state: name === 'inst-2' && evolution.disconnect.mock.calls.length > 0 ? 'close' : 'open',
+      }),
+    );
+
+    await service.reconcileConnectionStates();
+
+    expect(evolution.disconnect).toHaveBeenCalledTimes(1);
+    expect(evolution.disconnect).toHaveBeenCalledWith('inst-2');
+    expect(rows['inst-1']?.status).toBe('CONNECTED');
+    expect(rows['inst-2']?.status).toBe('DISCONNECTED');
   });
 });

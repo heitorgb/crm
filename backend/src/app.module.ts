@@ -14,6 +14,7 @@ import { PrismaModule } from './infrastructure/prisma/prisma.module.js';
 import { RedisModule } from './infrastructure/redis/redis.module.js';
 import { CryptoModule } from './infrastructure/crypto/crypto.module.js';
 import { EmailModule } from './infrastructure/email/email.module.js';
+import { PushModule } from './infrastructure/push/push.module.js';
 import { MediaModule } from './infrastructure/media/media.module.js';
 import { StorageModule } from './infrastructure/storage/storage.module.js';
 import { QueueModule } from './infrastructure/queue/queue.module.js';
@@ -27,6 +28,7 @@ import { TenantsModule } from './modules/tenants/tenants.module.js';
 import { CustomersModule } from './modules/customers/customers.module.js';
 import { ContactsModule } from './modules/contacts/contacts.module.js';
 import { TagsModule } from './modules/tags/tags.module.js';
+import { PushNotificationsModule } from './modules/push-notifications/push-notifications.module.js';
 import { QuickRepliesModule } from './modules/quick-replies/quick-replies.module.js';
 import { WhatsAppModule } from './modules/whatsapp/whatsapp.module.js';
 import { ConversationsModule } from './modules/conversations/conversations.module.js';
@@ -65,6 +67,7 @@ import { StoreOrdersModule } from './modules/store-orders/store-orders.module.js
     RedisModule,
     CryptoModule,
     EmailModule,
+    PushModule,
     StorageModule,
     MediaModule,
     QueueModule,
@@ -93,6 +96,7 @@ import { StoreOrdersModule } from './modules/store-orders/store-orders.module.js
     AiModule,
     TranscriptionModule,
     StoreOrdersModule,
+    PushNotificationsModule,
   ],
   providers: [{ provide: APP_FILTER, useClass: AllExceptionsFilter }],
 })

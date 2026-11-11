@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { REFRESH_SKEW_MS, refreshSession, toSession } from '@/lib/session-refresh';
+import { unregisterPushDevice } from '@/features/notifications/native-push';
 import { useAuthStore } from '@/stores/auth-store';
 import { authService } from './services/auth-service';
 import type {
@@ -49,7 +50,10 @@ export function useLogout() {
   const navigate = useNavigate();
 
   return useMutation({
-    mutationFn: () => authService.logout(),
+    mutationFn: async () => {
+      await unregisterPushDevice();
+      await authService.logout();
+    },
     onSettled: () => {
       clearSession();
       queryClient.clear();

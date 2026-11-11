@@ -69,6 +69,13 @@ const emailEnvSchema = z.object({
   APP_URL: optionalEnv(z.url()),
 });
 
+// PUSH NOTIFICATIONS (Firebase Cloud Messaging HTTP v1, service account)
+const pushEnvSchema = z.object({
+  FCM_PROJECT_ID: optionalEnv(z.string().min(1)),
+  FCM_CLIENT_EMAIL: optionalEnv(z.email()),
+  FCM_PRIVATE_KEY: optionalEnv(z.string().min(1)),
+});
+
 // LOGGING
 const loggingEnvSchema = z.object({
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
@@ -147,6 +154,7 @@ export const envSchema = appEnvSchema
   .merge(redisEnvSchema)
   .merge(authEnvSchema)
   .merge(emailEnvSchema)
+  .merge(pushEnvSchema)
   .merge(adminEnvSchema)
   .merge(loggingEnvSchema)
   .merge(aiEnvSchema)
@@ -165,6 +173,16 @@ export const envSchema = appEnvSchema
         code: 'custom',
         path: ['AUTH_COOKIE_SAMESITE'],
         message: 'AUTH_COOKIE_SECURE must be true when AUTH_COOKIE_SAMESITE is "none"',
+      });
+    }
+
+    const fcmKeys = ['FCM_PROJECT_ID', 'FCM_CLIENT_EMAIL', 'FCM_PRIVATE_KEY'] as const;
+    const missingFcm = fcmKeys.filter((key) => !env[key]);
+    if (missingFcm.length > 0 && missingFcm.length < fcmKeys.length) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['FCM_PROJECT_ID'],
+        message: `Missing push configuration: ${missingFcm.join(', ')}`,
       });
     }
 

@@ -11,7 +11,11 @@ import type { Env } from '../../config/env.validation.js';
 import { EncryptionService } from '../../infrastructure/crypto/encryption.service.js';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service.js';
 import { RealtimeService } from '../../infrastructure/realtime/realtime.service.js';
-import { EvolutionClient, EvolutionRequestError } from './evolution/evolution.client.js';
+import {
+  EvolutionClient,
+  EvolutionRequestError,
+  type EvolutionInstanceSummary,
+} from './evolution/evolution.client.js';
 import { WhatsAppContactSyncService } from './whatsapp-contact-sync.service.js';
 import type {
   CreateWhatsAppInstanceDto,
@@ -157,6 +161,7 @@ const CONNECT_TICKET_ATTEMPTS = 2;
 const SYSTEM_USER_ID = '00000000-0000-4000-8000-000000000001';
 const SYSTEM_MEMBERSHIP_ID = '00000000-0000-4000-8000-000000000002';
 const TERMINAL_DISCONNECT_REASONS = new Set([401, 403]);
+const SESSION_REPLACED_REASON = 440;
 
 @Injectable()
 export class WhatsAppInstancesService implements OnModuleInit {
@@ -434,6 +439,7 @@ export class WhatsAppInstancesService implements OnModuleInit {
           attemptId,
         });
         this.clearConnectionQr(instance.id);
+        await this.releaseDuplicateSessions(instance);
         if (instance.status !== WhatsAppInstanceStatus.CONNECTED) {
           await this.syncContactsOnConnect(instance);
         }
@@ -748,6 +754,7 @@ export class WhatsAppInstancesService implements OnModuleInit {
       });
 
       if (status === WhatsAppInstanceStatus.CONNECTED) {
+        await this.releaseDuplicateSessions(instance);
         await this.syncContactsOnConnect(instance);
       }
     }
@@ -816,6 +823,7 @@ export class WhatsAppInstancesService implements OnModuleInit {
           },
         },
         select: { id: true, tenantId: true, instanceName: true },
+        orderBy: { connectionRequestedAt: { sort: 'desc', nulls: 'last' } },
       });
     } catch (error) {
       this.logger.warn(
@@ -828,6 +836,7 @@ export class WhatsAppInstancesService implements OnModuleInit {
 
     let changed = 0;
     let failed = 0;
+    const snapshot = await this.loadProviderSnapshot();
 
     for (const instance of instances) {
       await this.runAsTenant(instance.tenantId, async () => {
@@ -857,6 +866,17 @@ export class WhatsAppInstancesService implements OnModuleInit {
           if (result?.changed) {
             changed += 1;
           }
+          // Reconnectable closes such as the 440 conflict are not reported by
+          // webhook, so a duplicated number can flap while the CRM still shows
+          // CONNECTED. Instances are scanned from the most recent connection
+          // request, which therefore keeps the number.
+          if (
+            snapshot &&
+            result?.status === WhatsAppInstanceStatus.CONNECTED &&
+            !result.changed
+          ) {
+            await this.releaseDuplicateSessions(instance, snapshot);
+          }
         } catch (error) {
           failed += 1;
           this.logger.warn(
@@ -873,6 +893,19 @@ export class WhatsAppInstancesService implements OnModuleInit {
       changed,
       failed,
     });
+  }
+
+  private async loadProviderSnapshot(): Promise<EvolutionInstanceSummary[] | null> {
+    try {
+      return await this.evolution.fetchInstances();
+    } catch (error) {
+      this.logger.warn(
+        `Could not load provider instances for duplicate check: ${
+          error instanceof Error ? error.message : 'unknown'
+        }`,
+      );
+      return null;
+    }
   }
 
   /**
@@ -1168,6 +1201,97 @@ export class WhatsAppInstancesService implements OnModuleInit {
         completedAt: history.completedAt,
         error: history.error,
       });
+    }
+  }
+
+  /**
+   * WhatsApp keeps one live session per device credential. When the same number
+   * is also linked to another Evolution instance, the sessions keep replacing
+   * each other (stream conflict 440) and the provider reconnects them in a loop,
+   * so the number "keeps disconnecting". The instance that has just connected is
+   * the one the operator wants: the other sessions of the same number are logged
+   * out, either orphan provider instances or instances of the same tenant.
+   * Another tenant's session is never touched, only reported. The periodic
+   * reconciliation passes a provider snapshot it already loaded.
+   */
+  private async releaseDuplicateSessions(
+    instance: { id: string; tenantId: string; instanceName: string },
+    snapshot?: EvolutionInstanceSummary[],
+  ): Promise<void> {
+    try {
+      await this.releaseDuplicateSessionsUnchecked(instance, snapshot);
+    } catch (error) {
+      this.logger.warn(
+        `Could not release duplicate sessions for instance ${instance.id}: ${
+          error instanceof Error ? error.message : 'unknown'
+        }`,
+      );
+    }
+  }
+
+  private async releaseDuplicateSessionsUnchecked(
+    instance: { id: string; tenantId: string; instanceName: string },
+    snapshot?: EvolutionInstanceSummary[],
+  ): Promise<void> {
+    const providerInstances = snapshot ?? (await this.evolution.fetchInstances());
+
+    const current = providerInstances.find((entry) => entry.name === instance.instanceName);
+    const ownerNumber = normalizeOwnerNumber(current?.ownerJid ?? null);
+    if (!ownerNumber) {
+      return;
+    }
+
+    const duplicates = providerInstances.filter(
+      (entry) =>
+        entry.name !== instance.instanceName &&
+        entry.state?.toLowerCase() !== 'close' &&
+        normalizeOwnerNumber(entry.ownerJid) === ownerNumber,
+    );
+    if (duplicates.length === 0) {
+      return;
+    }
+
+    const known = await this.prisma.whatsAppInstance.findMany({
+      where: { instanceName: { in: duplicates.map((entry) => entry.name) } },
+      select: { id: true, tenantId: true, instanceName: true },
+    });
+    const knownByName = new Map(known.map((entry) => [entry.instanceName, entry]));
+
+    for (const duplicate of duplicates) {
+      const owned = knownByName.get(duplicate.name);
+      const payload = {
+        instanceId: instance.id,
+        tenantId: instance.tenantId,
+        instanceName: instance.instanceName,
+        duplicateInstanceName: duplicate.name,
+        duplicateInstanceId: owned?.id ?? null,
+        duplicateState: duplicate.state,
+      };
+
+      if (owned && owned.tenantId !== instance.tenantId) {
+        this.logConnection('duplicate_session_foreign_tenant', payload);
+        continue;
+      }
+
+      try {
+        await this.evolution.disconnect(duplicate.name);
+      } catch (error) {
+        this.logConnection('duplicate_session_release_failed', {
+          ...payload,
+          error: error instanceof Error ? error.message : 'unknown',
+        });
+        continue;
+      }
+
+      duplicate.state = 'close';
+      this.logConnection('duplicate_session_released', payload);
+      if (owned) {
+        await this.applyConnectionObservation(duplicate.name, 'close', {
+          observedAt: new Date(),
+          source: 'disconnect',
+          reason: SESSION_REPLACED_REASON,
+        });
+      }
     }
   }
 
@@ -1628,6 +1752,16 @@ export function mapEvolutionState(state: string | null): WhatsAppInstanceStatus 
     default:
       return null;
   }
+}
+
+/** `5511999999999:12@s.whatsapp.net` -> `5511999999999` (device suffix removed). */
+export function normalizeOwnerNumber(ownerJid: string | null): string | null {
+  if (!ownerJid) {
+    return null;
+  }
+  const user = ownerJid.split('@')[0]?.split(':')[0] ?? '';
+  const digits = user.replace(/\D/g, '');
+  return digits.length > 0 ? digits : null;
 }
 
 function isEvolutionAlreadyExists(error: unknown): boolean {

@@ -73,19 +73,25 @@ export function MediaPreviewDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
+      <DialogContent className="max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] min-w-0 grid-cols-1 overflow-y-auto p-4 sm:max-w-md sm:p-5">
+        <DialogHeader className="min-w-0">
           <DialogTitle>Enviar {KIND_LABEL[kind]}</DialogTitle>
-          <DialogDescription className="truncate">{file.name}</DialogDescription>
+          <DialogDescription className="min-w-0 truncate">{file.name}</DialogDescription>
         </DialogHeader>
 
-        <div className="flex max-h-[45vh] items-center justify-center overflow-hidden rounded-md bg-slate-950/60">
+        <div className="flex min-h-0 min-w-0 w-full max-h-[45dvh] items-center justify-center overflow-hidden rounded-md bg-slate-950/60">
           {kind === 'image' && previewUrl ? (
-            <img src={previewUrl} alt={file.name} className="max-h-[45vh] w-full object-contain" />
+            <img src={previewUrl} alt={file.name} className="max-h-[45dvh] max-w-full object-contain" />
           ) : kind === 'video' && previewUrl ? (
-            <video src={previewUrl} controls playsInline preload="metadata" className="max-h-[45vh] w-full" />
+            <video
+              src={previewUrl}
+              controls
+              playsInline
+              preload="metadata"
+              className="block max-h-[45dvh] min-w-0 w-full max-w-full object-contain"
+            />
           ) : kind === 'audio' && previewUrl ? (
-            <audio src={previewUrl} controls className="w-full p-4" />
+            <audio src={previewUrl} controls className="min-w-0 max-w-full p-4" />
           ) : (
             <div className="flex flex-col items-center gap-2 p-8 text-center text-muted-foreground">
               <FileText className="size-8" />

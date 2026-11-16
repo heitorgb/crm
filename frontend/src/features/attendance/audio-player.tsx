@@ -1,17 +1,92 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Download, Pause, Play } from "lucide-react";
+
+let mediaSessionOwner: HTMLAudioElement | null = null;
 
 function audioTime(value: number): string {
   const seconds = Math.max(0, Math.floor(value));
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
+function getMediaSession(): MediaSession | null {
+  if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) {
+    return null;
+  }
+  return navigator.mediaSession;
+}
+
+function setMediaAction(
+  session: MediaSession,
+  action: MediaSessionAction,
+  handler: MediaSessionActionHandler | null,
+): void {
+  try {
+    session.setActionHandler(action, handler);
+  } catch {
+    return;
+  }
+}
+
+function clearMediaSession(audio: HTMLAudioElement): void {
+  if (mediaSessionOwner !== audio) {
+    return;
+  }
+
+  const session = getMediaSession();
+  if (session) {
+    for (const action of ['play', 'pause', 'seekbackward', 'seekforward', 'seekto'] as const) {
+      setMediaAction(session, action, null);
+    }
+    session.metadata = null;
+    session.playbackState = 'none';
+  }
+  mediaSessionOwner = null;
+}
+
+function configureMediaSession(audio: HTMLAudioElement, title: string): void {
+  const session = getMediaSession();
+  if (!session) {
+    return;
+  }
+
+  mediaSessionOwner = audio;
+  if (typeof MediaMetadata !== 'undefined') {
+    session.metadata = new MediaMetadata({
+      title,
+      artist: 'OrderUp CRM',
+      artwork: [{ src: '/images/logo-orderup.png', sizes: '512x512', type: 'image/png' }],
+    });
+  }
+
+  setMediaAction(session, 'play', () => {
+    void audio.play().catch(() => undefined);
+  });
+  setMediaAction(session, 'pause', () => audio.pause());
+  setMediaAction(session, 'seekbackward', (details) => {
+    audio.currentTime = Math.max(0, audio.currentTime - (details.seekOffset ?? 10));
+  });
+  setMediaAction(session, 'seekforward', (details) => {
+    audio.currentTime = Math.min(
+      Number.isFinite(audio.duration) ? audio.duration : audio.currentTime + 10,
+      audio.currentTime + (details.seekOffset ?? 10),
+    );
+  });
+  setMediaAction(session, 'seekto', (details) => {
+    if (details.seekTime !== undefined) {
+      audio.currentTime = details.seekTime;
+    }
+  });
+  session.playbackState = 'playing';
+}
+
 export function AudioPlayer({
   src,
   fileName,
+  title = 'Áudio do WhatsApp',
 }: {
   src: string;
   fileName: string;
+  title?: string;
 }) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const [playing, setPlaying] = useState(false);
@@ -19,6 +94,13 @@ export function AudioPlayer({
   const [duration, setDuration] = useState(0);
   const [rate, setRate] = useState(1);
   const [error, setError] = useState(false);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    return () => {
+      if (audio) clearMediaSession(audio);
+    };
+  }, []);
 
   const toggle = async () => {
     const audio = audioRef.current;
@@ -41,21 +123,32 @@ export function AudioPlayer({
         ref={audioRef}
         src={src}
         preload="metadata"
-        onPlay={() => setPlaying(true)}
-        onPause={() => setPlaying(false)}
+        onPlay={(event) => {
+          setPlaying(true);
+          configureMediaSession(event.currentTarget, title);
+        }}
+        onPause={(event) => {
+          setPlaying(false);
+          if (mediaSessionOwner === event.currentTarget) {
+            const session = getMediaSession();
+            if (session) session.playbackState = 'paused';
+          }
+        }}
         onEnded={(event) => {
           setPlaying(false);
           if (Number.isFinite(event.currentTarget.duration))
             setTime(event.currentTarget.duration);
+          clearMediaSession(event.currentTarget);
         }}
         onTimeUpdate={(event) => setTime(event.currentTarget.currentTime)}
         onDurationChange={(event) => {
           if (Number.isFinite(event.currentTarget.duration))
             setDuration(event.currentTarget.duration);
         }}
-        onError={() => {
+        onError={(event) => {
           setError(true);
           setPlaying(false);
+          clearMediaSession(event.currentTarget);
         }}
       />
       <div className="grid min-w-0 grid-cols-[2.5rem_minmax(0,1fr)] items-center gap-x-3 gap-y-1">

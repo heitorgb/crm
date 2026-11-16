@@ -127,7 +127,19 @@ describe('ConversationList inbox tabs', () => {
     fireEvent.change(searchInput, { target: { value: 'cliente' } });
     expect(onSearchChange).toHaveBeenCalledWith('cliente');
 
-    fireEvent.click(screen.getByText('Ana'));
+    fireEvent.click(screen.getByRole('button', { name: 'Limpar busca' }));
+    expect(onSearchChange).toHaveBeenLastCalledWith('');
+
+    const conversationName = screen.getByText('Ana');
+    fireEvent.touchStart(conversationName, {
+      touches: [{ identifier: 1, clientX: 120, clientY: 140 }],
+    });
+    fireEvent.touchEnd(conversationName, {
+      changedTouches: [{ identifier: 1, clientX: 120, clientY: 140 }],
+      touches: [],
+    });
+    fireEvent.click(conversationName);
     expect(onSelect).toHaveBeenCalledWith(conversation.id);
+    expect(onSelect).toHaveBeenCalledTimes(1);
   });
 });

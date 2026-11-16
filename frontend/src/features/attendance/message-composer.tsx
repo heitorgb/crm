@@ -6,8 +6,28 @@ import {
   type ChangeEvent,
   type KeyboardEvent,
 } from 'react';
-import { Loader2, Mic, Paperclip, RotateCcw, Send, Sparkles, Trash2, X } from 'lucide-react';
+import {
+  Camera,
+  Image as ImageIcon,
+  Loader2,
+  Mic,
+  Paperclip,
+  RotateCcw,
+  Send,
+  Sparkles,
+  Trash2,
+  Video,
+  X,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useAiSettings, useFormalizeMessage } from '@/features/ai/queries';
@@ -85,10 +105,15 @@ export function MessageComposer({
   const [aiBusy, setAiBusy] = useState(false);
   const [undoText, setUndoText] = useState<string | null>(null);
   const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [cameraMode, setCameraMode] = useState<'photo' | 'video'>('photo');
   const [pendingInsertion, setPendingInsertion] = useState<string | null>(null);
   const [activeQuickReplyIndex, setActiveQuickReplyIndex] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const photoCameraInputRef = useRef<HTMLInputElement>(null);
+  const videoCameraInputRef = useRef<HTMLInputElement>(null);
+  const cameraGalleryInputRef = useRef<HTMLInputElement>(null);
   const selectionRef = useRef({ start: 0, end: 0 });
   const pendingCaretRef = useRef<number | null>(null);
   const draftRef = useRef('');
@@ -374,6 +399,7 @@ export function MessageComposer({
       return;
     }
     setError(null);
+    setCameraOpen(false);
     setPendingFile(file);
   };
 
@@ -442,6 +468,32 @@ export function MessageComposer({
         type="file"
         accept="image/*,video/*,audio/*,application/pdf"
         className="hidden"
+        onChange={handleFileSelected}
+      />
+      <input
+        ref={photoCameraInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="hidden"
+        aria-label="Capturar foto"
+        onChange={handleFileSelected}
+      />
+      <input
+        ref={videoCameraInputRef}
+        type="file"
+        accept="video/*"
+        capture="environment"
+        className="hidden"
+        aria-label="Entrada de vídeo da câmera"
+        onChange={handleFileSelected}
+      />
+      <input
+        ref={cameraGalleryInputRef}
+        type="file"
+        accept={cameraMode === 'photo' ? 'image/*' : 'video/*'}
+        className="hidden"
+        aria-label={cameraMode === 'photo' ? 'Escolher foto da galeria' : 'Escolher vídeo da galeria'}
         onChange={handleFileSelected}
       />
       {!pendingFile && (error || recorder.error || aiError) ? (
@@ -568,6 +620,17 @@ export function MessageComposer({
       ) : (
         <div className="flex items-end gap-0.5 rounded-2xl border border-border bg-surface px-1 py-1 transition-colors focus-within:border-ring/50 focus-within:ring-2 focus-within:ring-ring/25 sm:gap-1 sm:px-1.5">
           <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-9 shrink-0 rounded-full text-muted-foreground"
+            onClick={() => setCameraOpen(true)}
+            disabled={busy}
+            aria-label="Abrir câmera"
+          >
+            <Camera />
+          </Button>
+          <Button
             variant="ghost"
             size="icon"
             className="size-9 shrink-0 rounded-full text-muted-foreground"
@@ -651,6 +714,53 @@ export function MessageComposer({
           {draft.length === 0 ? 'Digite / para usar respostas rápidas.' : ''}
         </p>
       ) : null}
+      <Dialog open={cameraOpen} onOpenChange={setCameraOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Câmera da conversa</DialogTitle>
+            <DialogDescription>Escolha o modo para capturar e enviar nesta conversa.</DialogDescription>
+          </DialogHeader>
+          <div className="grid grid-cols-2 gap-2" role="group" aria-label="Modo da câmera">
+            <Button
+              type="button"
+              variant={cameraMode === 'photo' ? 'secondary' : 'outline'}
+              aria-pressed={cameraMode === 'photo'}
+              onClick={() => setCameraMode('photo')}
+            >
+              <ImageIcon />
+              Foto
+            </Button>
+            <Button
+              type="button"
+              variant={cameraMode === 'video' ? 'secondary' : 'outline'}
+              aria-pressed={cameraMode === 'video'}
+              onClick={() => setCameraMode('video')}
+            >
+              <Video />
+              Vídeo
+            </Button>
+          </div>
+          <DialogFooter className="sm:flex-row">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => cameraGalleryInputRef.current?.click()}
+            >
+              <ImageIcon />
+              Galeria
+            </Button>
+            <Button
+              type="button"
+              onClick={() =>
+                (cameraMode === 'photo' ? photoCameraInputRef : videoCameraInputRef).current?.click()
+              }
+            >
+              {cameraMode === 'photo' ? <Camera /> : <Video />}
+              {cameraMode === 'photo' ? 'Abrir câmera' : 'Gravar vídeo'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <MediaPreviewDialog
         key={
           pendingFile

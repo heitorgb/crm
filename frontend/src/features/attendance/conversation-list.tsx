@@ -200,13 +200,13 @@ export function ConversationList({
             return (
               <div
                 key={item.id}
-                className="group relative border-b border-border/70"
+                className="conversation-row group relative border-b border-border/70"
               >
                 <button
                   type="button"
                   onClick={() => onSelect(item.id)}
                   className={cn(
-                    'flex w-full gap-3 px-3 py-3 text-left transition-colors',
+                    'flex w-full gap-3 px-3 py-3 pr-12 text-left transition-colors md:pr-3',
                     active ? 'bg-primary/10' : 'hover:bg-surface-hover',
                   )}
                 >
@@ -268,18 +268,14 @@ export function ConversationList({
                   </div>
                 </button>
                 <div
-                  className={cn(
-                    'absolute right-2 top-2 opacity-0 transition-opacity',
-                    'pointer-events-none group-hover:pointer-events-auto group-hover:opacity-100',
-                    'focus-within:pointer-events-auto focus-within:opacity-100',
-                  )}
+                  className="conversation-row-actions absolute right-1 top-1 z-10"
                 >
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="size-7 bg-card/90 text-muted-foreground"
+                        className="size-9 bg-card/90 text-muted-foreground"
                         disabled={pinPending || archivePending || deletePending}
                         aria-label="Ações da conversa"
                       >

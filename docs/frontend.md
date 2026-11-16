@@ -172,6 +172,8 @@ frontend/
 
 - Layout testado para `1366x768` e menores (sidebar recolhível de `68px`, drawer no mobile com
   posição esquerda/direita configurável).
+- Em telas mobile, inputs, textareas e selects usam no mínimo `16px` para evitar o zoom automático
+  do Safari no iPhone sem desativar o zoom por pinça.
 - Estados de loading (skeletons), empty states, feedback de erro, foco visível e `aria-*` básicos.
 - Sem gradientes/sombras exagerados, cards gigantes ou telas poluídas.
 

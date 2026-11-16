@@ -113,6 +113,14 @@
     text-rendering: optimizeLegibility;
   }
 
+  @media (hover: none) and (pointer: coarse) {
+    input,
+    textarea,
+    select {
+      font-size: 16px !important;
+    }
+  }
+
   ::selection {
     background-color: hsl(var(--primary) / 0.25);
   }
@@ -126,6 +134,25 @@
       hsl(var(--accent)) 60%,
       #a855f7 100%
     );
+  }
+
+  .conversation-row-actions {
+    opacity: 1;
+    pointer-events: auto;
+    transition: opacity 150ms ease;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .conversation-row-actions {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .conversation-row:hover .conversation-row-actions,
+    .conversation-row:focus-within .conversation-row-actions {
+      opacity: 1;
+      pointer-events: auto;
+    }
   }
 
   .brand-gradient-text {

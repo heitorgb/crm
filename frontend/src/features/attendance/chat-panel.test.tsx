@@ -70,7 +70,10 @@ const conversation: Conversation = {
   updatedAt: '2026-10-20T12:00:00.000Z',
 };
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 let messageSequence = 0;
 
@@ -102,6 +105,7 @@ function renderChat(
     hasOlderMessages?: boolean;
     loadingOlderMessages?: boolean;
     onLoadOlderMessages?: () => void;
+    onBack?: () => void;
   } = {},
 ) {
   return render(
@@ -115,6 +119,7 @@ function renderChat(
         hasOlderMessages={options.hasOlderMessages ?? false}
         loadingOlderMessages={options.loadingOlderMessages ?? false}
         onLoadOlderMessages={options.onLoadOlderMessages ?? vi.fn()}
+        onBack={options.onBack}
         closePending={false}
         onClose={vi.fn()}
         reopenPending={false}
@@ -162,6 +167,60 @@ describe('ChatPanel layout', () => {
     expect(messages.className.split(/\s+/)).toContain('overflow-y-auto');
     expect(messages.contains(composer)).toBe(false);
     expect(composer.parentElement).toBe(panel);
+  });
+
+  it('returns to conversations with one tap on a 44px back button', () => {
+    const onBack = vi.fn();
+    renderChat(conversation, [], { onBack });
+
+    const button = screen.getByRole('button', { name: 'Voltar para conversas' });
+    expect(button.className.split(/\s+/)).toContain('size-11');
+
+    fireEvent.click(button);
+
+    expect(onBack).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns to conversations after a right swipe starting at the left edge', () => {
+    const onBack = vi.fn();
+    renderChat(conversation, [], { onBack });
+    vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: true }));
+    const panel = screen.getByTestId('chat-panel');
+
+    fireEvent.touchStart(panel, {
+      touches: [{ identifier: 1, clientX: 8, clientY: 100 }],
+    });
+    fireEvent.touchEnd(panel, {
+      changedTouches: [{ identifier: 1, clientX: 120, clientY: 108 }],
+      touches: [],
+    });
+
+    expect(onBack).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not navigate back for a vertical gesture or a swipe away from the edge', () => {
+    const onBack = vi.fn();
+    renderChat(conversation, [], { onBack });
+    vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: true }));
+    const panel = screen.getByTestId('chat-panel');
+
+    fireEvent.touchStart(panel, {
+      touches: [{ identifier: 1, clientX: 8, clientY: 100 }],
+    });
+    fireEvent.touchEnd(panel, {
+      changedTouches: [{ identifier: 1, clientX: 50, clientY: 220 }],
+      touches: [],
+    });
+
+    fireEvent.touchStart(panel, {
+      touches: [{ identifier: 2, clientX: 60, clientY: 100 }],
+    });
+    fireEvent.touchEnd(panel, {
+      changedTouches: [{ identifier: 2, clientX: 180, clientY: 100 }],
+      touches: [],
+    });
+
+    expect(onBack).not.toHaveBeenCalled();
   });
 });
 

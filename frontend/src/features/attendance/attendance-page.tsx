@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
 import { MessageSquare, RefreshCw } from 'lucide-react';
 import { ConfirmDialog } from '@/components/common/confirm-dialog';
 import { EmptyState } from '@/components/common/empty-state';
@@ -32,6 +31,7 @@ import {
   useTakeoverConversation,
 } from './queries';
 import { useAttendanceRealtime } from './use-realtime';
+import { useConversationNavigation } from './use-conversation-navigation';
 
 function useMinWidth(query: string): boolean {
   const [matches, setMatches] = useState(() =>
@@ -50,7 +50,8 @@ function useMinWidth(query: string): boolean {
 }
 
 export function AttendancePage() {
-  const [searchParams, setSearchParams] = useSearchParams();
+  const { selectedConversationId, selectConversation, deselectConversation } =
+    useConversationNavigation();
   const isDesktop = useMinWidth('(min-width: 1280px)');
 
   const search = useAttendanceViewStore((state) => state.search);
@@ -70,7 +71,7 @@ export function AttendancePage() {
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [tagConversation, setTagConversation] = useState<Conversation | null>(null);
 
-  const selectedId = searchParams.get('conversation');
+  const selectedId = selectedConversationId;
   const { connected } = useAttendanceRealtime(selectedId);
 
   // Socket events are the primary update path; this fallback catches a missed
@@ -126,10 +127,10 @@ export function AttendancePage() {
   };
 
   const handleSelect = (id: string): void => {
-    setSearchParams({ conversation: id }, { replace: true });
+    selectConversation(id);
   };
   const handleDeselect = (): void => {
-    setSearchParams({}, { replace: true });
+    deselectConversation();
   };
 
   const filterSignature = `${status}|${instanceId}|${archivedView}`;
@@ -140,8 +141,8 @@ export function AttendancePage() {
       return;
     }
     previousFiltersRef.current = filterSignature;
-    setSearchParams({}, { replace: true });
-  }, [filterSignature, setSearchParams]);
+    deselectConversation();
+  }, [filterSignature, deselectConversation]);
 
   const handleArchivedChange = (value: boolean): void => {
     setArchivedView(value);
@@ -193,13 +194,13 @@ export function AttendancePage() {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape' && !event.defaultPrevented && searchParams.get('conversation')) {
-        setSearchParams({}, { replace: true });
+      if (event.key === 'Escape' && !event.defaultPrevented && selectedConversationId) {
+        deselectConversation();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [searchParams, setSearchParams]);
+  }, [selectedConversationId, deselectConversation]);
 
   useEffect(() => {
     if (!activeId || unreadCount <= 0) {

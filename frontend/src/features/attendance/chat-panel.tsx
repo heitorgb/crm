@@ -1,4 +1,11 @@
-import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import {
+  Fragment,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type TouchEvent as ReactTouchEvent,
+} from 'react';
 import { Link } from 'react-router-dom';
 import {
   ArrowDown,
@@ -44,6 +51,9 @@ import { SenderAvatar } from './sender-avatar';
 
 const SCROLL_BOTTOM_THRESHOLD = 96;
 const LOAD_OLDER_THRESHOLD = 300;
+const BACK_SWIPE_EDGE = 32;
+const BACK_SWIPE_DISTANCE = 80;
+const BACK_SWIPE_VERTICAL_TOLERANCE = 72;
 
 interface ChatPanelProps {
   conversation: Conversation;
@@ -105,6 +115,45 @@ export function ChatPanel({
   const [notice, setNotice] = useState<string | null>(null);
   const highlightTimerRef = useRef<number | null>(null);
   const noticeTimerRef = useRef<number | null>(null);
+  const backSwipeStartRef = useRef<{ x: number; y: number } | null>(null);
+
+  const handleTouchStart = (event: ReactTouchEvent<HTMLDivElement>): void => {
+    if (
+      !onBack ||
+      !window.matchMedia('(max-width: 767px)').matches ||
+      event.touches.length !== 1
+    ) {
+      backSwipeStartRef.current = null;
+      return;
+    }
+
+    const touch = event.touches[0];
+    backSwipeStartRef.current =
+      touch.clientX <= BACK_SWIPE_EDGE ? { x: touch.clientX, y: touch.clientY } : null;
+  };
+
+  const handleTouchEnd = (event: ReactTouchEvent<HTMLDivElement>): void => {
+    const start = backSwipeStartRef.current;
+    backSwipeStartRef.current = null;
+    if (!start || !onBack) {
+      return;
+    }
+
+    const touch = event.changedTouches[0];
+    if (!touch) {
+      return;
+    }
+
+    const deltaX = touch.clientX - start.x;
+    const deltaY = Math.abs(touch.clientY - start.y);
+    if (
+      deltaX >= BACK_SWIPE_DISTANCE &&
+      deltaY <= BACK_SWIPE_VERTICAL_TOLERANCE &&
+      deltaX > deltaY * 1.2
+    ) {
+      onBack();
+    }
+  };
 
   useLayoutEffect(() => {
     if (conversationIdRef.current === conversation.id) {
@@ -297,14 +346,20 @@ export function ChatPanel({
   return (
     <div
       data-testid="chat-panel"
-      className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+      className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden touch-pan-y"
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
+      onTouchCancel={() => {
+        backSwipeStartRef.current = null;
+      }}
     >
       <div className="flex items-center gap-2 border-b border-border bg-card px-2 py-2 sm:px-4 sm:py-3">
         {onBack ? (
           <Button
             variant="ghost"
             size="icon"
-            className="md:hidden"
+            className="size-11 shrink-0 rounded-full md:hidden"
+            type="button"
             onClick={onBack}
             aria-label="Voltar para conversas"
           >

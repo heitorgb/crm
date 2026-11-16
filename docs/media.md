@@ -130,7 +130,18 @@ AVATAR_DIMENSION=512
 - `POST /message/sendMedia/{instance}` — envio (base64).
 - `POST /chat/getBase64FromMediaMessage/{instance}` — busca da mídia recebida.
 
-## Envio de foto pela câmera (em massa)
+## Captura de foto/vídeo no compositor
+
+No atendimento individual, o botão de câmera abre a seleção **Foto/Vídeo**. No iPhone, a captura
+usa o seletor de câmera do Safari com `capture="environment"`, mantendo os controles de lente/zoom
+oferecidos pelo aparelho. O arquivo capturado é pré-visualizado em `MediaPreviewDialog` e enviado
+pela rota autenticada `POST /api/conversations/:id/messages/media`; vídeos são enviados à Evolution
+como `mediatype: video`.
+
+O tipo de vídeo e o codec disponíveis dependem do iPhone/Safari. O CRM preserva o arquivo produzido
+pelo aparelho, sem transcodificação no navegador.
+
+## Envio de foto pela câmera em massa
 
 O cabeçalho do atendimento no mobile expõe um botão de câmera. O fluxo usa
 `<input type="file" accept="image/*" capture="environment">` (com fallback para a galeria), comprime
@@ -152,7 +163,6 @@ seguida o operador seleciona conversas (contatos/grupos) e dispara o batch.
 
 - Backends `s3`/`minio` (a interface `StorageService` já prevê).
 - Retenção/expurgo de mídia (a rotina de LGPD saiu com o módulo de Compliance).
-- Upload de vídeo/documento pela UI (hoje a UI envia imagens e áudio; documentos/vídeos continuam
-  recebidos e baixáveis).
+- Envio em massa de vídeo/documento pela UI (a captura de vídeo disponível hoje é por conversa).
 - Geração de thumbnail/poster de vídeo no backend e rota de mídia com suporte a `Range` para
   reprodução progressiva.

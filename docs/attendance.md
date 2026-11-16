@@ -1,5 +1,19 @@
 # Atendimento, WhatsApp e digest — OrderUp CRM
 
+## Ações por mensagem
+
+- **Encaminhar:** o atendente escolhe até 20 conversas do mesmo tenant. Texto e mídias já armazenadas
+  são reenviados pela instância da conversa de destino. Mensagens de visualização única ou mídias
+  indisponíveis não podem ser encaminhadas. O envio passa pelo fluxo normal de mensagens.
+- **Apagar para mim:** oculta a mensagem apenas para o usuário atual no CRM; o WhatsApp e os outros
+  atendentes continuam com a mensagem. A preferência é persistida em `message_hidden_for_users` e
+  aplicada ao histórico, prévia e contadores do usuário.
+- **Apagar para todos:** disponível para mensagens enviadas e confirmadas. O backend solicita a revogação
+  pela Evolution (`DELETE /chat/deleteMessageForEveryone/{instance}`) antes de limpar o conteúdo,
+  anexos e transcrição locais. Uma mensagem de confirmação substitui o conteúdo no histórico.
+
+Mensagens sem arquivo ainda em processamento permanecem visíveis com estado de carregamento.
+
 > Status: **Implementado** (Prompt 07). Instâncias WhatsApp, webhook da Evolution, conversas,
 > mensagens, tickets, realtime e digest agendado. O motor de qualificação do Prompt 06 é reutilizado
 > sem duplicar lógica.

@@ -40,6 +40,7 @@ class FakeEvolution {
   readonly sentMedia: SentMedia[] = [];
   readonly sentAudio: { instance: string; number: string; audio: string }[] = [];
   readonly updated: UpdatedMessage[] = [];
+  readonly deletedMessages: Array<{ instance: string; id: string; remoteJid: string; fromMe: boolean }> = [];
   readonly created: string[] = [];
   readonly deleted: string[] = [];
   readonly instances = new Map<string, string>();
@@ -156,6 +157,10 @@ class FakeEvolution {
     return { key: input.key, status: 'EDITED' };
   }
 
+  async deleteMessageForEveryone(instance: string, key: { id: string; remoteJid: string; fromMe: boolean }) {
+    this.deletedMessages.push({ instance, ...key });
+  }
+
   async getBase64FromMediaMessage() {
     if (this.mediaError) {
       throw new EvolutionRequestError('media unavailable', this.mediaError.status);
@@ -228,6 +233,7 @@ describe('WhatsApp attendance (integration)', () => {
     evolution.sentMedia.length = 0;
     evolution.sentAudio.length = 0;
     evolution.updated.length = 0;
+    evolution.deletedMessages.length = 0;
     evolution.created.length = 0;
     evolution.deleted.length = 0;
     evolution.instances.clear();
@@ -4535,6 +4541,77 @@ describe('WhatsApp attendance (integration)', () => {
         contactId: conversation.contactId as string,
       };
     }
+
+    it('forwards only within the tenant and hides a message only for its requester', async () => {
+      const { conversationId, instanceName } = await seedConversation();
+      await postWebhook(evolutionPayload(
+        instanceName, randomUUID(), 'Outro contato', '5511888888888@s.whatsapp.net',
+      ));
+      const target = await prisma.conversation.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId, externalContactId: '5511888888888@s.whatsapp.net' },
+      });
+      const source = await prisma.message.findFirstOrThrow({ where: { conversationId } });
+
+      const foreign = await app.inject({
+        method: 'POST', url: `/api/conversations/${conversationId}/messages/${source.id}/forward`,
+        headers: authHeaders(ownerB), payload: { conversationIds: [target.id] },
+      });
+      expect(foreign.statusCode).toBe(404);
+
+      const forwarded = await app.inject({
+        method: 'POST', url: `/api/conversations/${conversationId}/messages/${source.id}/forward`,
+        headers: authHeaders(ownerA), payload: { conversationIds: [target.id] },
+      });
+      expect(forwarded.statusCode).toBe(200);
+      expect(evolution.sent.at(-1)?.text).toBe('Olá');
+
+      const hidden = await app.inject({
+        method: 'DELETE', url: `/api/conversations/${conversationId}/messages/${source.id}/for-me`,
+        headers: authHeaders(ownerA),
+      });
+      expect(hidden.statusCode).toBe(204);
+
+      const ownerMessages = await app.inject({
+        method: 'GET', url: `/api/conversations/${conversationId}/messages`, headers: authHeaders(ownerA),
+      });
+      const teammateMessages = await app.inject({
+        method: 'GET', url: `/api/conversations/${conversationId}/messages`, headers: authHeaders(userA),
+      });
+      expect(ownerMessages.json().data).toHaveLength(0);
+      expect(teammateMessages.json().data).toHaveLength(1);
+      const ownerPreview = await app.inject({
+        method: 'GET', url: `/api/conversations/${conversationId}`, headers: authHeaders(ownerA),
+      });
+      const teammatePreview = await app.inject({
+        method: 'GET', url: `/api/conversations/${conversationId}`, headers: authHeaders(userA),
+      });
+      expect(ownerPreview.json().lastMessage).toBeNull();
+      expect(teammatePreview.json().lastMessage.content).toBe('Olá');
+    });
+
+    it('revokes only an outbound message and removes its content after provider confirmation', async () => {
+      const { conversationId, instanceName } = await seedConversation();
+      const sent = await app.inject({
+        method: 'POST', url: `/api/conversations/${conversationId}/messages`,
+        headers: authHeaders(ownerA), payload: { content: 'Apagar depois' },
+      });
+      expect(sent.statusCode).toBe(201);
+      const outbound = await prisma.message.findFirstOrThrow({
+        where: { conversationId, direction: 'OUTBOUND' },
+      });
+      const deleted = await app.inject({
+        method: 'DELETE', url: `/api/conversations/${conversationId}/messages/${outbound.id}/for-everyone`,
+        headers: authHeaders(ownerA),
+      });
+      expect(deleted.statusCode).toBe(204);
+      expect(evolution.deletedMessages).toEqual([{
+        instance: instanceName, id: outbound.externalMessageId,
+        remoteJid: '5511999999999@s.whatsapp.net', fromMe: true,
+      }]);
+      const stored = await prisma.message.findUniqueOrThrow({ where: { id: outbound.id } });
+      expect(stored.content).toBeNull();
+      expect(stored.metadata).toEqual({ deletedForEveryone: true });
+    });
 
     it('lists conversations and messages, and sends without takeover', async () => {
       const { conversationId } = await seedConversation();

@@ -51,6 +51,9 @@ Não-imagens (áudio/vídeo/documento) são armazenadas como recebidas, respeita
 - **Receber/enviar:** mensagens `videoMessage` são armazenadas como recebidas e renderizadas com um
   player integrado ao balão. Documentos cujo MIME seja `video/*` também usam o player; os demais
   documentos continuam com o cartão de download atual.
+- **Compatibilidade no envio:** vídeos enviados pelo operador são convertidos no backend com `ffmpeg`
+  para MP4 (H.264/AAC, `yuv420p`) antes de serem armazenados e enviados à Evolution. O limite
+  `MEDIA_MAX_BYTES` também é verificado no arquivo convertido. Falhas de conversão retornam 422.
 - **Reprodução:** o player usa `<video>` nativo (`controls`, `playsInline`) com proporção reservada
   em 16:9 para não deslocar o scroll ao abrir. A reprodução só começa após o operador clicar no
   botão de play; não há autoplay ao abrir a conversa.
@@ -142,8 +145,9 @@ oferecidos pelo aparelho. O arquivo capturado é pré-visualizado em `MediaPrevi
 pela rota autenticada `POST /api/conversations/:id/messages/media`; vídeos são enviados à Evolution
 como `mediatype: video`.
 
-O tipo de vídeo e o codec disponíveis dependem do iPhone/Safari. O CRM preserva o arquivo produzido
-pelo aparelho, sem transcodificação no navegador.
+O tipo de vídeo e o codec disponíveis dependem do iPhone/Safari. O navegador envia o arquivo original
+ao backend, que faz a conversão antes do envio ao WhatsApp. O ambiente de desenvolvimento também
+precisa de `ffmpeg` instalado; a imagem Docker do backend já o inclui.
 
 ## Envio de foto pela câmera em massa
 

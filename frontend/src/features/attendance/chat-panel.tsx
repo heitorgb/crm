@@ -20,6 +20,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { EmptyState } from '@/components/common/empty-state';
+import { ConfirmDialog } from '@/components/common/confirm-dialog';
 import { StatusBadge } from '@/components/common/status-badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -47,6 +48,8 @@ import { ConversationPresenceIndicator } from './conversation-presence';
 import { MessageBubble } from './message-bubble';
 import { MessageComposer, type ComposerInsertion } from './message-composer';
 import { MessageEditor } from './message-editor';
+import { ForwardMessageDialog } from './forward-message-dialog';
+import { useDeleteMessageForEveryone, useDeleteMessageForMe } from './queries';
 import { SenderAvatar } from './sender-avatar';
 
 const SCROLL_BOTTOM_THRESHOLD = 96;
@@ -110,6 +113,10 @@ export function ChatPanel({
   const hasMessages = messages.length > 0;
   const [replyTo, setReplyTo] = useState<ConversationMessage | null>(null);
   const [editing, setEditing] = useState<ConversationMessage | null>(null);
+  const [forwarding, setForwarding] = useState<ConversationMessage | null>(null);
+  const [deleting, setDeleting] = useState<{ message: ConversationMessage; scope: 'me' | 'everyone' } | null>(null);
+  const deleteMessage = useDeleteMessageForEveryone();
+  const deleteForMe = useDeleteMessageForMe();
   const [showJumpToBottom, setShowJumpToBottom] = useState(false);
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -503,6 +510,9 @@ export function ChatPanel({
                     quoteTarget={quoteTarget}
                     onReply={handleStartReply}
                     onEdit={handleStartEdit}
+                    onForward={setForwarding}
+                    onDelete={(target) => setDeleting({ message: target, scope: 'everyone' })}
+                    onDeleteForMe={(target) => setDeleting({ message: target, scope: 'me' })}
                     onNavigateToQuote={handleNavigateToQuote}
                   />
                 </Fragment>
@@ -525,6 +535,19 @@ export function ChatPanel({
           </div>
         ) : null}
       </div>
+
+      {forwarding ? (
+        <ForwardMessageDialog sourceConversationId={conversation.id} messageId={forwarding.id}
+          onClose={() => setForwarding(null)} />
+      ) : null}
+      <ConfirmDialog open={deleting !== null} onOpenChange={(open) => { if (!open) setDeleting(null); }}
+        title={deleting?.scope === 'me' ? 'Apagar mensagem para mim?' : 'Apagar mensagem para todos?'}
+        description={deleting?.scope === 'me' ? 'A mensagem desaparecerá apenas para você no CRM.' : 'A mensagem será apagada no WhatsApp para todos os participantes.'}
+        confirmLabel={deleting?.scope === 'me' ? 'Apagar para mim' : 'Apagar para todos'} destructive
+        loading={deleteMessage.isPending || deleteForMe.isPending}
+        onConfirm={() => { if (deleting) void (deleting.scope === 'me' ? deleteForMe : deleteMessage)
+          .mutateAsync({ id: conversation.id, messageId: deleting.message.id })
+          .then(() => setDeleting(null)).catch(() => showNotice('Não foi possível apagar a mensagem.')); }} />
 
       {editing ? (
         <MessageEditor

@@ -230,11 +230,19 @@ export class ConversationProcessingService implements OnModuleInit {
 
     const isImage = await this.media.isImage(input.buffer);
     const type = isImage ? MessageType.IMAGE : messageTypeForMime(input.mimeType);
+    const prepared = type === MessageType.VIDEO
+      ? {
+          ...input,
+          buffer: await this.media.normalizeVideo(input.buffer),
+          mimeType: 'video/mp4',
+          fileName: input.fileName.replace(/\.[^.]+$/, '') + '.mp4',
+        }
+      : input;
     const caption = type === MessageType.AUDIO ? null : input.caption?.trim() || null;
 
     const stored = isImage
-      ? await this.storeImage(tenantId, 'outbound', input.buffer, input.fileName)
-      : await this.storeFile(tenantId, 'outbound', input.buffer, input.fileName, input.mimeType);
+      ? await this.storeImage(tenantId, 'outbound', prepared.buffer, prepared.fileName)
+      : await this.storeFile(tenantId, 'outbound', prepared.buffer, prepared.fileName, prepared.mimeType);
 
     const outbound = await this.messages.persistOutbound({
       tenantId,

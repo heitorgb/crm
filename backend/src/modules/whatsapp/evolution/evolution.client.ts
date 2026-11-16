@@ -288,6 +288,17 @@ export class EvolutionClient {
     });
   }
 
+  async deleteMessageForEveryone(
+    instanceName: string,
+    key: { id: string; remoteJid: string; fromMe: boolean },
+  ): Promise<void> {
+    await this.request(
+      'DELETE',
+      `/chat/deleteMessageForEveryone/${encodeURIComponent(instanceName)}`,
+      key,
+    );
+  }
+
   async sendMedia(
     instanceName: string,
     input: EvolutionSendMediaInput,

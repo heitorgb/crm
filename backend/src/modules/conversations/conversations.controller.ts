@@ -26,6 +26,7 @@ import { MODULE_KEYS } from '../modules/modules.constants.js';
 import {
   CreateConversationDto,
   EditConversationMessageDto,
+  ForwardConversationMessageDto,
   ListConversationsQueryDto,
   SendConversationMessageDto,
   StartConversationDto,
@@ -169,6 +170,35 @@ export class ConversationsController {
     @Body() dto: EditConversationMessageDto,
   ) {
     return this.conversations.editHumanMessage(id, messageId, dto.content);
+  }
+
+  @Post(':id/messages/:messageId/forward')
+  @HttpCode(200)
+  async forwardMessage(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('messageId', ParseUUIDPipe) messageId: string,
+    @Body() dto: ForwardConversationMessageDto,
+  ): Promise<{ ok: true }> {
+    await this.conversations.forwardMessage(id, messageId, dto.conversationIds);
+    return { ok: true };
+  }
+
+  @Delete(':id/messages/:messageId/for-everyone')
+  @HttpCode(204)
+  async deleteMessageForEveryone(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('messageId', ParseUUIDPipe) messageId: string,
+  ): Promise<void> {
+    await this.conversations.deleteMessageForEveryone(id, messageId);
+  }
+
+  @Delete(':id/messages/:messageId/for-me')
+  @HttpCode(204)
+  async deleteMessageForMe(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('messageId', ParseUUIDPipe) messageId: string,
+  ): Promise<void> {
+    await this.conversations.deleteMessageForMe(id, messageId);
   }
 
   @Post(':id/messages/media')

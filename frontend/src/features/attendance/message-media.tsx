@@ -66,7 +66,7 @@ export function MessageMedia({ conversationId, message }: MediaProps) {
   }
 
   if (!attachment) {
-    return null;
+    return <p className="text-xs italic opacity-80">Preparando mídia…</p>;
   }
 
   switch (message.type) {

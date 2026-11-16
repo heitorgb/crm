@@ -2,6 +2,7 @@ import { ConversationStatus } from '@prisma/client';
 import { Transform } from 'class-transformer';
 import {
   ArrayMaxSize,
+  ArrayMinSize,
   IsArray,
   IsBoolean,
   IsEnum,
@@ -105,6 +106,14 @@ export class SendConversationMessageDto {
   @IsOptional()
   @IsUUID()
   quotedMessageId?: string;
+}
+
+export class ForwardConversationMessageDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(20)
+  @IsUUID(undefined, { each: true })
+  conversationIds!: string[];
 }
 
 export class StartConversationDto {

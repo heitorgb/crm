@@ -314,7 +314,10 @@ CRM (sem dependências novas). A tela é **full-bleed**: `MainContent` deixa de 
   `attendance-view-store`. A configuração de tema não é exibida no menu lateral mobile; o seletor
   permanece no cabeçalho e em **Configurações → Aparência**, preservando a preferência salva. No
   desktop o layout e os filtros permanecem como antes.
-- **Foto pela câmera**: o botão de câmera abre um `<input type="file" accept="image/*"
+- **Voltar no mobile**: abrir uma conversa registra uma entrada no histórico do navegador. O gesto
+  nativo de voltar do Android retorna à lista, sem sair da rota de atendimento; o botão de voltar da
+  conversa limpa a seleção na mesma entrada.
+- **Foto pela câmera em massa**: o botão de câmera do cabeçalho abre um `<input type="file" accept="image/*"
   capture="environment">` (com fallback para a galeria). A imagem é comprimida no navegador (até
   1600 px, JPEG) e o backend revalida/otimiza com `sharp`. Depois da prévia com legenda, o operador
   seleciona uma ou mais conversas (busca, checkbox e contador) e dispara um batch assíncrono
@@ -322,6 +325,10 @@ CRM (sem dependências novas). A tela é **full-bleed**: `MainContent` deixa de 
   (`bulk-media.send`), envia com intervalo (`BULK_MEDIA_INTERVAL_MS`, padrão 1,5 s) e registra
   status por destinatário; a tela acompanha por polling, permite reenviar falhas e usa
   `idempotencyKey` para evitar duplicidade. Detalhes em [`media.md`](./media.md).
+- **Captura no atendimento individual**: o botão de câmera do compositor alterna entre **Foto** e
+  **Vídeo**, abre a câmera traseira do aparelho, permite pré-visualizar o arquivo capturado e enviar
+  para a conversa atual. No iPhone/Safari, o seletor nativo mantém os controles de zoom/lente do
+  dispositivo. O envio usa `POST /api/conversations/:id/messages/media`.
 - **Fixar conversas**: cada item expõe um menu de ações que **fixa** ou **desafixa** a conversa
   (exclusivo do CRM — nada é enviado à Evolution). O estado persiste em
   `Conversation.isPinned` (`POST /api/conversations/:id/pin` e `/unpin`, idempotentes e escopados
@@ -478,7 +485,9 @@ CRM (sem dependências novas). A tela é **full-bleed**: `MainContent` deixa de 
   `externalMessageId` da Evolution, então um webhook posterior do mesmo envio é reconciliado sem
   duplicar a bolha. Detalhes em [`billing.md`](./billing.md).
 - **Painel de contato (direita)**: dados do contato/grupo, cliente, assunto e ações. Em telas menores
-  vira um `Sheet`; no mobile a lista e o chat se alternam (botão voltar no cabeçalho do chat).
+  vira um `Sheet`; no mobile a lista e o chat se alternam. O botão de voltar no cabeçalho tem área
+  de toque de 44 px e também é possível voltar com swipe da borda esquerda para a direita. Os menus
+  de ação da lista não dependem de `:hover` em dispositivos touch.
 - **Tempo real**: os eventos Socket.IO são aplicados de forma direcionada pelo `conversationId`
   do payload. `message.created`/`message.updated` sempre atualizam a lista de conversas, mas só
   invalidam a conversa e as mensagens quando pertencem à conversa aberta. `conversation.updated`

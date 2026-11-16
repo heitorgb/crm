@@ -70,11 +70,13 @@ const PREVIEW = {
 };
 
 let sendMessageMutate: ReturnType<typeof vi.fn>;
+let sendMediaMutate: ReturnType<typeof vi.fn>;
 let formalizeMutate: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   vi.useFakeTimers();
   sendMessageMutate = vi.fn().mockResolvedValue(undefined);
+  sendMediaMutate = vi.fn().mockResolvedValue(undefined);
   formalizeMutate = vi.fn().mockResolvedValue({ text: 'Texto reformulado.' });
   vi.mocked(useAiSettings).mockReturnValue({
     data: { available: false },
@@ -95,7 +97,7 @@ beforeEach(() => {
   } as never);
   vi.mocked(useSendConversationMedia).mockReturnValue({
     isPending: false,
-    mutateAsync: vi.fn(),
+    mutateAsync: sendMediaMutate,
   } as never);
 });
 
@@ -209,6 +211,54 @@ describe('MessageComposer quick replies', () => {
       'Atendemos de segunda a sexta, das 8h às 18h.',
     );
     expect(sendMessageMutate).not.toHaveBeenCalled();
+  });
+});
+
+describe('MessageComposer camera capture', () => {
+  it('switches between photo and video capture before opening the native camera', () => {
+    renderComposer();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Abrir câmera' }));
+
+    const photoMode = screen.getByRole('button', { name: 'Foto' });
+    const videoMode = screen.getByRole('button', { name: 'Vídeo' });
+    expect(photoMode.getAttribute('aria-pressed')).toBe('true');
+
+    fireEvent.click(videoMode);
+    expect(videoMode.getAttribute('aria-pressed')).toBe('true');
+    expect(photoMode.getAttribute('aria-pressed')).toBe('false');
+    expect(screen.getByRole('button', { name: 'Gravar vídeo' })).toBeTruthy();
+
+    const videoInput = screen.getByLabelText('Entrada de vídeo da câmera') as HTMLInputElement;
+    expect(videoInput.accept).toBe('video/*');
+    expect(videoInput.getAttribute('capture')).toBe('environment');
+  });
+
+  it('previews a captured video and sends it to the active conversation', async () => {
+    const createObjectUrl = vi.fn(() => 'blob:recorded-video');
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectUrl });
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() });
+
+    renderComposer();
+    fireEvent.click(screen.getByRole('button', { name: 'Abrir câmera' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Vídeo' }));
+    fireEvent.change(screen.getByLabelText('Entrada de vídeo da câmera'), {
+      target: { files: [new File(['video'], 'captura.mp4', { type: 'video/mp4' })] },
+    });
+
+    expect(screen.getByRole('heading', { name: 'Enviar vídeo' })).toBeTruthy();
+    expect(document.querySelector('video')?.getAttribute('src')).toBe('blob:recorded-video');
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Enviar' }));
+    });
+
+    expect(sendMediaMutate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'conversation-1',
+        file: expect.objectContaining({ type: 'video/mp4', name: 'captura.mp4' }),
+      }),
+    );
   });
 });
 

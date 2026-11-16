@@ -83,7 +83,7 @@ export function MediaPreviewDialog({
           {kind === 'image' && previewUrl ? (
             <img src={previewUrl} alt={file.name} className="max-h-[45vh] w-full object-contain" />
           ) : kind === 'video' && previewUrl ? (
-            <video src={previewUrl} controls className="max-h-[45vh] w-full" />
+            <video src={previewUrl} controls playsInline preload="metadata" className="max-h-[45vh] w-full" />
           ) : kind === 'audio' && previewUrl ? (
             <audio src={previewUrl} controls className="w-full p-4" />
           ) : (

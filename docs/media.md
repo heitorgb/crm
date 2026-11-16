@@ -28,6 +28,10 @@ Não-imagens (áudio/vídeo/documento) são armazenadas como recebidas, respeita
 - **Receber:** `audioMessage` (notas de voz PTT em OGG/Opus) é armazenado como está e exibido com um
   player próprio dentro do balão, com reproduzir/pausar, posição, tempo e velocidades 1×/1,5×/2×.
   O elemento `<audio>` fornece a reprodução; os controles são responsivos e acessíveis por teclado.
+  No Safari, o áudio iniciado pelo usuário pode continuar ao minimizar o navegador; a Media Session
+  API publica nome e ações de reproduzir, pausar e buscar na tela bloqueada/controles do sistema,
+  quando suportados. A continuidade depende do navegador e do iOS, e pode ser interrompida pelo
+  sistema ou por outra reprodução.
 - **Transcrição:** após o `media.process`, o job `transcription.process` transcreve áudios recebidos
   por uma API externa configurada em Configurações → IA. O texto aparece abaixo do player,
   claramente identificado como derivado do áudio, com estados de espera/processamento/falha e nova

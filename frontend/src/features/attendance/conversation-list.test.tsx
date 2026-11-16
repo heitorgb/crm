@@ -75,13 +75,18 @@ function renderList(overrides: Partial<ComponentProps<typeof ConversationList>> 
 afterEach(cleanup);
 
 describe('ConversationList inbox tabs', () => {
-  it('keeps the inbox and archived tabs visible next to the search on all viewports', () => {
+  it('keeps the search fixed while inbox and archived tabs scroll with the list', () => {
     renderList();
 
     const tablist = screen.getByRole('tablist');
+    const search = screen.getByRole('textbox', { name: 'Buscar conversa' });
+    const scrollArea = tablist.parentElement?.parentElement?.parentElement;
     expect(tablist.classList.contains('hidden')).toBe(false);
     expect(tablist.parentElement?.classList.contains('hidden')).toBe(false);
-    expect(screen.getByRole('textbox', { name: 'Buscar conversa' })).toBeTruthy();
+    expect(search).toBeTruthy();
+    expect(scrollArea?.classList.contains('overflow-y-auto')).toBe(true);
+    expect(scrollArea?.contains(tablist)).toBe(true);
+    expect(scrollArea?.contains(search)).toBe(false);
     expect(screen.getByRole('tab', { name: 'Caixa de entrada' }).getAttribute('aria-selected')).toBe(
       'true',
     );
@@ -141,5 +146,15 @@ describe('ConversationList inbox tabs', () => {
     fireEvent.click(conversationName);
     expect(onSelect).toHaveBeenCalledWith(conversation.id);
     expect(onSelect).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens a conversation on the first click without requiring a prior touch', () => {
+    const onSelect = vi.fn();
+    renderList({ conversations: [conversation], onSelect });
+
+    fireEvent.click(screen.getByText('Ana'));
+
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(onSelect).toHaveBeenCalledWith(conversation.id);
   });
 });

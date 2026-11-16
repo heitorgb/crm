@@ -186,7 +186,12 @@ function MessageAudio({ conversationId, message }: MediaProps) {
 
   return (
     <div className="min-w-0">
-      <AudioPlayer key={url} src={url} fileName={attachment.fileName} />
+      <AudioPlayer
+        key={url}
+        src={url}
+        fileName={attachment.fileName}
+        title={message.senderName ?? 'Áudio do WhatsApp'}
+      />
       <MessageTranscription message={message} />
     </div>
   );

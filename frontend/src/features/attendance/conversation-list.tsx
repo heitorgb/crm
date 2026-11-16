@@ -107,8 +107,12 @@ export function ConversationList({
         </div>
       </div>
 
-      <div className="space-y-2 border-b border-border p-2.5 sm:p-3">
+      <div className="shrink-0 border-b border-border p-2.5 sm:p-3">
         <SearchInput value={search} onChange={onSearchChange} placeholder="Buscar conversa" />
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto scrollbar-thin">
+        <div className="space-y-2 border-b border-border p-2.5 sm:p-3">
         <Tabs
           value={archived ? 'archived' : 'inbox'}
           onValueChange={(value) => onArchivedChange(value === 'archived')}
@@ -150,9 +154,7 @@ export function ConversationList({
             </SelectContent>
           </Select>
         </div>
-      </div>
-
-      <div className="flex-1 overflow-y-auto scrollbar-thin">
+        </div>
         {isPending ? (
           <div className="space-y-1 p-2">
             {Array.from({ length: 8 }).map((_, index) => (

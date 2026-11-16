@@ -642,6 +642,19 @@ export class WhatsAppInstancesService implements OnModuleInit {
       !instance.connectionRequestedAt &&
       !liveSnapshot
     ) {
+      // The provider reconnects by itself after a transient close. Before
+      // discarding the event, a live read tells a real recovery apart from a
+      // delayed event of the session that was deliberately ended.
+      if (
+        status === WhatsAppInstanceStatus.CONNECTED &&
+        (await this.isProviderSessionOpen(instanceName))
+      ) {
+        return this.applyConnectionObservation(instanceName, 'open', {
+          observedAt: new Date(),
+          source: 'poll',
+        });
+      }
+
       this.logConnection('ignored_after_disconnect', {
         instanceId: instance.id,
         tenantId: instance.tenantId,
@@ -809,20 +822,16 @@ export class WhatsAppInstancesService implements OnModuleInit {
   }
 
   private async runConnectionReconciliation(): Promise<void> {
-    let instances: Array<{ id: string; tenantId: string; instanceName: string }>;
+    let instances: Array<{
+      id: string;
+      tenantId: string;
+      instanceName: string;
+      status: WhatsAppInstanceStatus;
+    }>;
     try {
       instances = await this.prisma.whatsAppInstance.findMany({
-        where: {
-          active: true,
-          status: {
-            in: [
-              WhatsAppInstanceStatus.CONNECTED,
-              WhatsAppInstanceStatus.CONNECTING,
-              WhatsAppInstanceStatus.ERROR,
-            ],
-          },
-        },
-        select: { id: true, tenantId: true, instanceName: true },
+        where: { active: true },
+        select: { id: true, tenantId: true, instanceName: true, status: true },
         orderBy: { connectionRequestedAt: { sort: 'desc', nulls: 'last' } },
       });
     } catch (error) {
@@ -843,6 +852,15 @@ export class WhatsAppInstancesService implements OnModuleInit {
         const observedAt = new Date();
         try {
           const state = await this.evolution.getConnectionState(instance.instanceName);
+
+          // A disconnected instance is only read to recover a session the
+          // provider reopened by itself; any other state keeps it as it is.
+          if (
+            instance.status === WhatsAppInstanceStatus.DISCONNECTED &&
+            mapEvolutionState(state.state) !== WhatsAppInstanceStatus.CONNECTED
+          ) {
+            return;
+          }
 
           if (state.state.toLowerCase() === 'unknown') {
             if (await this.evolution.instanceExists(instance.instanceName)) {
@@ -893,6 +911,15 @@ export class WhatsAppInstancesService implements OnModuleInit {
       changed,
       failed,
     });
+  }
+
+  private async isProviderSessionOpen(instanceName: string): Promise<boolean> {
+    try {
+      const state = await this.evolution.getConnectionState(instanceName);
+      return mapEvolutionState(state.state) === WhatsAppInstanceStatus.CONNECTED;
+    } catch {
+      return false;
+    }
   }
 
   private async loadProviderSnapshot(): Promise<EvolutionInstanceSummary[] | null> {

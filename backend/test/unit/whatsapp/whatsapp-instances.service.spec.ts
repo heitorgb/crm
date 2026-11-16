@@ -1337,3 +1337,66 @@ describe('WhatsAppInstancesService duplicate sessions during reconciliation', ()
     expect(rows['inst-2']?.status).toBe('DISCONNECTED');
   });
 });
+
+describe('WhatsAppInstancesService recovery after a provider reconnect', () => {
+  const disconnected = {
+    id: 'i1',
+    tenantId: 't1',
+    instanceName: 'inst-1',
+    status: 'DISCONNECTED',
+    connectionObservedAt: null,
+    connectionRequestedAt: null,
+  };
+
+  it('restores the instance when an open webhook is confirmed by a live read', async () => {
+    const { service, prisma, evolution } = createHarness({});
+    prisma.whatsAppInstance.findUnique.mockResolvedValue(disconnected);
+    evolution.getConnectionState.mockResolvedValue({ instance: 'inst-1', state: 'open' });
+
+    const result = await service.applyConnectionObservation('inst-1', 'open', {
+      source: 'webhook',
+    });
+
+    expect(result).toMatchObject({ status: 'CONNECTED', changed: true });
+  });
+
+  it('still ignores a delayed open webhook when the provider session is closed', async () => {
+    const { service, prisma, evolution } = createHarness({});
+    prisma.whatsAppInstance.findUnique.mockResolvedValue(disconnected);
+    evolution.getConnectionState.mockResolvedValue({ instance: 'inst-1', state: 'close' });
+
+    const result = await service.applyConnectionObservation('inst-1', 'open', {
+      source: 'webhook',
+    });
+
+    expect(result).toMatchObject({ status: 'DISCONNECTED', changed: false });
+    expect(prisma.whatsAppInstance.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('reconciliation restores a disconnected instance the provider reopened', async () => {
+    const { service, prisma, evolution } = createHarness({});
+    prisma.whatsAppInstance.findMany.mockResolvedValue([
+      { id: 'i1', tenantId: 't1', instanceName: 'inst-1', status: 'DISCONNECTED' },
+    ]);
+    prisma.whatsAppInstance.findUnique.mockResolvedValue(disconnected);
+    evolution.getConnectionState.mockResolvedValue({ instance: 'inst-1', state: 'open' });
+
+    await service.reconcileConnectionStates();
+
+    expect(prisma.whatsAppInstance.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: 'CONNECTED' }) }),
+    );
+  });
+
+  it('reconciliation leaves a disconnected instance alone while the provider is not open', async () => {
+    const { service, prisma, evolution } = createHarness({});
+    prisma.whatsAppInstance.findMany.mockResolvedValue([
+      { id: 'i1', tenantId: 't1', instanceName: 'inst-1', status: 'DISCONNECTED' },
+    ]);
+    evolution.getConnectionState.mockResolvedValue({ instance: 'inst-1', state: 'connecting' });
+
+    await service.reconcileConnectionStates();
+
+    expect(prisma.whatsAppInstance.updateMany).not.toHaveBeenCalled();
+  });
+});

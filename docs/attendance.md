@@ -767,12 +767,17 @@ Referência do evento: [implementação da Evolution](https://github.com/Evoluti
 - Uma conexão explícita grava `connection_requested_at`; uma desconexão confirmada zera esse campo.
   Eventos assíncronos atrasados não reativam uma instância desconectada, mas uma leitura ao vivo da
   Evolution (`connectionState: open`) continua sendo autoritativa.
+- **Recuperação automática:** a Evolution reconecta sozinha após um `close` transitório. Um `open`
+  recebido por webhook em uma instância `DISCONNECTED` é confirmado por leitura ao vivo
+  (`connectionState`) e, se confirmado, restaura `CONNECTED`; se a sessão estiver fechada, o evento
+  é tratado como atrasado e ignorado (`ignored_after_disconnect`).
 - Durante uma tentativa de conexão há uma janela de tolerância
   (`WHATSAPP_CONNECT_FLOW_GRACE_MS`, padrão 20 s) na qual um `close` transitório não derruba o
   `CONNECTING`.
 - **Reconciliação periódica**: a cada 60 s
   (`WHATSAPP_INSTANCE_RECONCILE_INTERVAL_MS`) o backend relê `GET /instance/connectionState` das
-  instâncias ativas em `CONNECTED`/`CONNECTING`/`ERROR`, dentro do contexto do tenant, e corrige
+  instâncias ativas, dentro do contexto do tenant (uma instância `DISCONNECTED` só é alterada quando
+  a Evolution reporta `open`, recuperando a sessão que reconectou sozinha), e corrige
   webhooks perdidos (backend fora do ar, URL alterada, `close` silencioso). Uma execução inicial
   ocorre ~10 s após o boot. Falha de comunicação com a Evolution **não** rebaixa o estado.
 - A tela **Configurações → WhatsApp** reage a `whatsapp.instance.updated` invalidando a listagem.

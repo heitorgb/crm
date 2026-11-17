@@ -256,6 +256,39 @@ export function useEditConversationMessage() {
   });
 }
 
+export function useForwardConversationMessage() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, messageId, conversationIds }: { id: string; messageId: string; conversationIds: string[] }) =>
+      attendanceService.forwardMessage(id, messageId, conversationIds),
+    onSuccess: () => { void queryClient.invalidateQueries({ queryKey: attendanceKeys.all }); },
+  });
+}
+
+export function useDeleteMessageForEveryone() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, messageId }: { id: string; messageId: string }) =>
+      attendanceService.deleteMessageForEveryone(id, messageId),
+    onSuccess: (_result, variables) => {
+      void queryClient.invalidateQueries({ queryKey: attendanceKeys.messages(variables.id) });
+      void queryClient.invalidateQueries({ queryKey: attendanceKeys.all });
+    },
+  });
+}
+
+export function useDeleteMessageForMe() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, messageId }: { id: string; messageId: string }) =>
+      attendanceService.deleteMessageForMe(id, messageId),
+    onSuccess: (_result, variables) => {
+      void queryClient.invalidateQueries({ queryKey: attendanceKeys.messages(variables.id) });
+      void queryClient.invalidateQueries({ queryKey: attendanceKeys.all });
+    },
+  });
+}
+
 export function useSendConversationMedia() {
   const queryClient = useQueryClient();
   return useMutation({

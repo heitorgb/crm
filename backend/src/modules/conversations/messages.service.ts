@@ -176,10 +176,10 @@ export class MessagesService {
     page: number,
     perPage: number,
   ): Promise<PageResult<MessageView>> {
-    const { tenantId } = this.tenantContext.requireContext();
+    const { tenantId, userId } = this.tenantContext.requireContext();
     await this.requireConversation(tenantId, conversationId);
 
-    return this.listByConversationId(tenantId, conversationId, page, perPage);
+    return this.listByConversationId(tenantId, conversationId, page, perPage, userId);
   }
 
   /** System variant used by the webhook/processing where no tenant context exists. */
@@ -188,11 +188,16 @@ export class MessagesService {
     conversationId: string,
     page: number,
     perPage: number,
+    userId?: string,
   ): Promise<PageResult<MessageView>> {
+    const where: Prisma.MessageWhereInput = {
+      tenantId, conversationId,
+      ...(userId ? { hiddenForUsers: { none: { userId } } } : {}),
+    };
     const [total, messages] = await this.prisma.$transaction([
-      this.prisma.message.count({ where: { tenantId, conversationId } }),
+      this.prisma.message.count({ where }),
       this.prisma.message.findMany({
-        where: { tenantId, conversationId },
+        where,
         orderBy: { occurredAt: 'desc' },
         skip: skipOf(page, perPage),
         take: perPage,
@@ -223,9 +228,9 @@ export class MessagesService {
   }
 
   async findOne(id: string): Promise<MessageView> {
-    const { tenantId } = this.tenantContext.requireContext();
+    const { tenantId, userId } = this.tenantContext.requireContext();
     const message = await this.prisma.message.findFirst({
-      where: { id, tenantId },
+      where: { id, tenantId, hiddenForUsers: { none: { userId } } },
       include: MESSAGE_INCLUDE,
     });
 
@@ -316,9 +321,13 @@ export class MessagesService {
     conversationId: string;
     messageId: string;
     attachmentId: string;
+    userId?: string;
   }): Promise<StoredAttachment> {
     const message = await this.prisma.message.findFirst({
-      where: { id: input.messageId, tenantId: input.tenantId, conversationId: input.conversationId },
+      where: {
+        id: input.messageId, tenantId: input.tenantId, conversationId: input.conversationId,
+        ...(input.userId ? { hiddenForUsers: { none: { userId: input.userId } } } : {}),
+      },
       select: { id: true },
     });
     if (!message) {
@@ -352,9 +361,10 @@ export class MessagesService {
     attachmentId: string;
     variant: 'main' | 'thumb';
   }): Promise<{ buffer: Buffer; mimeType: string; fileName: string }> {
-    const { tenantId } = this.tenantContext.requireContext();
+    const { tenantId, userId } = this.tenantContext.requireContext();
     const attachment = await this.findAttachment({
       tenantId,
+      userId,
       conversationId: input.conversationId,
       messageId: input.messageId,
       attachmentId: input.attachmentId,
@@ -370,6 +380,20 @@ export class MessagesService {
       mimeType: attachment.mimeType,
       fileName: attachment.fileName,
     };
+  }
+
+  async purgeMessageAttachments(tenantId: string, messageId: string): Promise<void> {
+    const attachments = await this.prisma.messageAttachment.findMany({
+      where: { tenantId, messageId },
+      select: { storageKey: true, metadata: true },
+    });
+    await this.prisma.messageAttachment.deleteMany({ where: { tenantId, messageId } });
+    await Promise.allSettled(attachments.flatMap((attachment) => {
+      const metadata = isRecord(attachment.metadata) ? attachment.metadata : {};
+      const keys = [attachment.storageKey];
+      if (typeof metadata.thumbnailKey === 'string') keys.push(metadata.thumbnailKey);
+      return keys.map((key) => this.storage.delete(key));
+    }));
   }
 
   async markOutboundStatus(

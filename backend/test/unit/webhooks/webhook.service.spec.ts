@@ -345,8 +345,10 @@ describe('WebhookService connection lifecycle', () => {
     expect(result.accepted).toBe(true);
     expect(instances.applyConnectionObservation).toHaveBeenCalledWith('inst-1', 'close', {
       observedAt,
+      receivedAt: expect.any(Date),
       reason: 401,
       source: 'webhook',
+      eventType: 'connection.update',
     });
   });
 
@@ -380,8 +382,10 @@ describe('WebhookService connection lifecycle', () => {
     expect(result.accepted).toBe(true);
     expect(instances.applyConnectionObservation).toHaveBeenCalledWith('inst-1', 'close', {
       observedAt: disconnectionAt,
+      receivedAt: expect.any(Date),
       reason: 401,
       source: 'webhook',
+      eventType: 'status.instance',
     });
   });
 
@@ -408,8 +412,10 @@ describe('WebhookService connection lifecycle', () => {
 
     expect(instances.applyConnectionObservation).toHaveBeenCalledWith('inst-1', 'close', {
       observedAt,
+      receivedAt: expect.any(Date),
       reason: null,
       source: 'webhook',
+      eventType: 'logout.instance',
     });
   });
 

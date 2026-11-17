@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import type { ConversationMessage } from '@/types/attendance';
 import { MessageBubble } from './message-bubble';
@@ -66,6 +66,30 @@ describe('MessageBubble failure indicator', () => {
 
     expect(screen.queryByText('Não enviada')).toBeNull();
     expect(screen.queryByLabelText('Falha no envio')).toBeNull();
+  });
+});
+
+describe('MessageBubble actions', () => {
+  it('offers forwarding and both deletion scopes for a sent message', () => {
+    const onForward = vi.fn();
+    const onDelete = vi.fn();
+    const onDeleteForMe = vi.fn();
+    const message = buildMessage('SENT');
+    render(<MessageBubble conversationId="conversation-1" message={message} isGroup={false}
+      whatsappInstanceId="instance-1" onForward={onForward} onDelete={onDelete}
+      onDeleteForMe={onDeleteForMe} />);
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Mais opções da mensagem' }), { button: 0, ctrlKey: false });
+    expect(screen.getByText('Encaminhar')).toBeTruthy();
+    expect(screen.getByText('Apagar para todos')).toBeTruthy();
+    expect(screen.getByText('Apagar para mim')).toBeTruthy();
+    fireEvent.click(screen.getByText('Encaminhar'));
+    expect(onForward).toHaveBeenCalledWith(message);
+  });
+
+  it('replaces revoked content with a deletion notice', () => {
+    renderBubble('SENT', { content: null, metadata: { deletedForEveryone: true } });
+    expect(screen.getByText('Você apagou esta mensagem')).toBeTruthy();
   });
 });
 

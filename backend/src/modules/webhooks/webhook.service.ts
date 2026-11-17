@@ -191,6 +191,7 @@ export class WebhookService implements OnModuleInit {
     await this.processEvolution(stored.payload, {
       scheduleRecovery: false,
       observedAt: stored.createdAt,
+      receivedAt: new Date(),
     });
     await this.markEventProcessed(webhookEventId);
   }
@@ -203,6 +204,7 @@ export class WebhookService implements OnModuleInit {
       const result = await this.processEvolution(payload, {
         scheduleRecovery: true,
         observedAt: options.observedAt ?? null,
+        receivedAt: new Date(),
       });
       this.traceWebhook(payload, result);
       return result;
@@ -260,9 +262,10 @@ export class WebhookService implements OnModuleInit {
 
   private async processEvolution(
     payload: unknown,
-    options: { scheduleRecovery: boolean; observedAt: Date | null } = {
+    options: { scheduleRecovery: boolean; observedAt: Date | null; receivedAt: Date } = {
       scheduleRecovery: true,
       observedAt: null,
+      receivedAt: new Date(),
     },
   ): Promise<WebhookIngestResult> {
     const observedAt = options.observedAt ?? new Date();
@@ -343,7 +346,13 @@ export class WebhookService implements OnModuleInit {
     }
 
     try {
-      const result = await this.processRecordedEvent(instance, eventType, payload, observedAt);
+      const result = await this.processRecordedEvent(
+        instance,
+        eventType,
+        payload,
+        observedAt,
+        options.receivedAt,
+      );
       await this.markEventProcessed(claim.id);
       return result;
     } catch (error) {
@@ -359,6 +368,7 @@ export class WebhookService implements OnModuleInit {
     eventType: string,
     payload: Record<string, unknown>,
     observedAt: Date,
+    receivedAt: Date,
   ): Promise<WebhookIngestResult> {
     if (eventType === 'groups.upsert' || eventType === 'groups.update') {
       await this.handleGroupUpsert(instance, payload, eventType === 'groups.upsert');
@@ -382,22 +392,22 @@ export class WebhookService implements OnModuleInit {
       return { accepted: true };
     }
 
-    // Evolution v2 reports the session lifecycle as `connection.update`. It is
-    // authoritative evidence of a degraded session (conflict, device_removed,
-    // connection closed) that `connectionState: open` alone can hide, so it is
-    // persisted and broadcast to the tenant.
+    // Evolution v2 reports the session lifecycle as `connection.update`. It is a
+    // signal, not an authoritative state: the instances service re-reads the
+    // provider and only persists a confirmed snapshot, so delayed/transient
+    // closes cannot disconnect a live session.
     if (eventType === 'connection.update') {
-      await this.handleConnectionUpdate(instance, payload, observedAt);
+      await this.handleConnectionUpdate(instance, payload, observedAt, receivedAt);
       return { accepted: true };
     }
 
     if (eventType === 'status.instance') {
-      await this.handleStatusInstance(instance, payload, observedAt);
+      await this.handleStatusInstance(instance, payload, observedAt, receivedAt);
       return { accepted: true };
     }
 
     if (eventType === 'logout.instance') {
-      await this.handleLogoutInstance(instance, observedAt);
+      await this.handleLogoutInstance(instance, observedAt, receivedAt);
       return { accepted: true };
     }
 
@@ -1316,6 +1326,7 @@ export class WebhookService implements OnModuleInit {
     instance: ResolvedInstance,
     payload: Record<string, unknown>,
     observedAt: Date,
+    receivedAt: Date,
   ): Promise<void> {
     const data = isRecord(payload.data) ? payload.data : null;
     const state = readString(data?.state) ?? readString(data?.connection);
@@ -1328,8 +1339,10 @@ export class WebhookService implements OnModuleInit {
 
     const result = await this.instances.applyConnectionObservation(instance.instanceName, state, {
       observedAt,
+      receivedAt,
       reason: statusReason,
       source: 'webhook',
+      eventType: 'connection.update',
     });
 
     if (result) {
@@ -1343,14 +1356,14 @@ export class WebhookService implements OnModuleInit {
 
   /**
    * `status.instance` is emitted by Evolution alongside `connection.update` on
-   * non-reconnectable closes (for example when the device is removed from the
-   * phone). It is a second, independent signal so a lost `connection.update`
-   * does not leave the CRM reporting a connected session.
+   * non-reconnectable closes. It is a second signal to verify the session, not
+   * a state by itself: a delayed `closed` must not override a live `open`.
    */
   private async handleStatusInstance(
     instance: ResolvedInstance,
     payload: Record<string, unknown>,
     observedAt: Date,
+    receivedAt: Date,
   ): Promise<void> {
     const data = isRecord(payload.data) ? payload.data : null;
     const status = readString(data?.status)?.toLowerCase();
@@ -1367,8 +1380,10 @@ export class WebhookService implements OnModuleInit {
 
     const result = await this.instances.applyConnectionObservation(instance.instanceName, 'close', {
       observedAt: disconnectedAt,
+      receivedAt,
       reason,
       source: 'webhook',
+      eventType: 'status.instance',
     });
 
     this.logger.log(
@@ -1380,14 +1395,21 @@ export class WebhookService implements OnModuleInit {
 
   /**
    * `logout.instance` has no data payload. It fires when the provider ends the
-   * session (device removed or logout), so it always maps to a disconnected
-   * state. The observation timestamp is the webhook receipt time.
+   * session (device removed or logout), so it triggers a verification. A live
+   * `open` read keeps the session connected; repeated valid closes confirm the
+   * disconnection. Receipt time is informational and never defines the order.
    */
-  private async handleLogoutInstance(instance: ResolvedInstance, observedAt: Date): Promise<void> {
+  private async handleLogoutInstance(
+    instance: ResolvedInstance,
+    observedAt: Date,
+    receivedAt: Date,
+  ): Promise<void> {
     const result = await this.instances.applyConnectionObservation(instance.instanceName, 'close', {
       observedAt,
+      receivedAt,
       reason: null,
       source: 'webhook',
+      eventType: 'logout.instance',
     });
 
     this.logger.log(

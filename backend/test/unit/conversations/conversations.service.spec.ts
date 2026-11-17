@@ -21,6 +21,7 @@ const context: TenantContext = {
 interface PrismaMock {
   contact: { findFirst: ReturnType<typeof vi.fn> };
   message: { findFirst: ReturnType<typeof vi.fn> };
+  messageHiddenForUser: { upsert: ReturnType<typeof vi.fn> };
   user: { findUnique: ReturnType<typeof vi.fn> };
   whatsAppInstance: { findFirst: ReturnType<typeof vi.fn> };
   $queryRaw: ReturnType<typeof vi.fn>;
@@ -60,6 +61,7 @@ function createService(): {
   const prisma: PrismaMock = {
     contact: { findFirst: vi.fn() },
     message: { findFirst: vi.fn() },
+    messageHiddenForUser: { upsert: vi.fn() },
     user: { findUnique: vi.fn() },
     whatsAppInstance: { findFirst: vi.fn() },
     $queryRaw: vi.fn(),
@@ -197,6 +199,36 @@ describe('ConversationsService.startFromContact', () => {
     await expect(
       service.startFromContact({ contactId: 'contact-1', whatsappInstanceId: 'instance-1' }),
     ).rejects.toBeInstanceOf(WhatsAppInstanceNotFoundError);
+  });
+});
+
+describe('ConversationsService message actions', () => {
+  it('refuses forwarding when any destination is outside the current tenant', async () => {
+    const { service, prisma, processing } = createService();
+    prisma.message.findFirst.mockResolvedValue({
+      id: 'message-1', type: 'TEXT', content: 'Olá', metadata: {}, attachments: [],
+    });
+    prisma.conversation.count.mockResolvedValue(0);
+
+    await expect(service.forwardMessage('conv-1', 'message-1', ['other-tenant-conv']))
+      .rejects.toBeInstanceOf(ConversationNotFoundError);
+    expect(prisma.conversation.count).toHaveBeenCalledWith({
+      where: { id: { in: ['other-tenant-conv'] }, tenantId: 'tenant-1', deletedAt: null },
+    });
+    expect(processing.deliverText).not.toHaveBeenCalled();
+  });
+
+  it('hides a message only for the active user', async () => {
+    const { service, prisma } = createService();
+    prisma.message.findFirst.mockResolvedValue({ id: 'message-1' });
+
+    await service.deleteMessageForMe('conv-1', 'message-1');
+
+    expect(prisma.messageHiddenForUser.upsert).toHaveBeenCalledWith({
+      where: { userId_messageId: { userId: 'user-1', messageId: 'message-1' } },
+      create: { tenantId: 'tenant-1', userId: 'user-1', messageId: 'message-1' },
+      update: {},
+    });
   });
 });
 

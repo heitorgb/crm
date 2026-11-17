@@ -93,6 +93,70 @@ describe('EvolutionClient.sendText link preview', () => {
   });
 });
 
+describe('EvolutionClient.getConnectionState', () => {
+  it('distinguishes a valid open state', async () => {
+    const { client, fetchMock } = createClient();
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ instance: { instanceName: 'inst-1', state: 'open' } }),
+    });
+
+    await expect(client.getConnectionState('inst-1')).resolves.toEqual({
+      instance: 'inst-1',
+      state: 'open',
+      kind: 'confirmed',
+    });
+  });
+
+  it('marks an unknown state as inconclusive instead of close', async () => {
+    const { client, fetchMock } = createClient();
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ instance: { instanceName: 'inst-1' } }),
+    });
+
+    await expect(client.getConnectionState('inst-1')).resolves.toEqual({
+      instance: 'inst-1',
+      state: 'unknown',
+      kind: 'invalid',
+    });
+
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ instance: { instanceName: 'inst-1', state: 'maintenance' } }),
+    });
+
+    await expect(client.getConnectionState('inst-1')).resolves.toEqual({
+      instance: 'inst-1',
+      state: 'maintenance',
+      kind: 'unknown',
+    });
+  });
+
+  it('reports a missing instance as not_found', async () => {
+    const { client, fetchMock } = createClient();
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 404, json: async () => ({}) });
+
+    await expect(client.getConnectionState('inst-1')).resolves.toEqual({
+      instance: 'inst-1',
+      state: 'unknown',
+      kind: 'not_found',
+    });
+  });
+
+  it('propagates communication failures instead of inventing a state', async () => {
+    const { client, fetchMock } = createClient();
+    fetchMock.mockRejectedValueOnce(new Error('socket hang up'));
+
+    await expect(client.getConnectionState('inst-1')).rejects.toMatchObject({
+      code: 'EVOLUTION_REQUEST_FAILED',
+    });
+  });
+});
+
 describe('EvolutionClient.fetchInstances', () => {
   it('reads the session owner from v2 and v1 payload shapes', async () => {
     const { client, fetchMock } = createClient();

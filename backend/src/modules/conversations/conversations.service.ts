@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { ConversationStatus, MessageDirection, MessageType, Prisma } from '@prisma/client';
+import { ConversationStatus, MessageDirection, MessageStatus, MessageType, Prisma } from '@prisma/client';
 import { AppException } from '../../common/errors/app.exception.js';
 import { buildPage, skipOf, type PageResult } from '../../common/http/pagination.js';
 import {
@@ -108,7 +108,7 @@ export class ConversationsService {
   ) {}
 
   async list(query: ListConversationsQueryDto): Promise<PageResult<ConversationView>> {
-    const { tenantId } = this.tenantContext.requireContext();
+    const { tenantId, userId } = this.tenantContext.requireContext();
     const where: Prisma.ConversationWhereInput = { tenantId, deletedAt: null };
 
     if (query.status) where.status = query.status;
@@ -138,13 +138,17 @@ export class ConversationsService {
         ],
         skip: skipOf(query.page, query.perPage),
         take: query.perPage,
-        include: CONVERSATION_INCLUDE,
+        include: {
+          ...CONVERSATION_INCLUDE,
+          messages: { ...CONVERSATION_INCLUDE.messages, where: { hiddenForUsers: { none: { userId } } } },
+        },
       }),
     ]);
 
     const unread = await this.countUnreadByConversation(
       tenantId,
       conversations.map((conversation) => conversation.id),
+      userId,
     );
 
     return buildPage(
@@ -158,17 +162,20 @@ export class ConversationsService {
   }
 
   async findOne(id: string): Promise<ConversationView> {
-    const { tenantId } = this.tenantContext.requireContext();
+    const { tenantId, userId } = this.tenantContext.requireContext();
     const conversation = await this.prisma.conversation.findFirst({
       where: { id, tenantId, deletedAt: null },
-      include: CONVERSATION_INCLUDE,
+      include: {
+        ...CONVERSATION_INCLUDE,
+        messages: { ...CONVERSATION_INCLUDE.messages, where: { hiddenForUsers: { none: { userId } } } },
+      },
     });
 
     if (!conversation) {
       throw new ConversationNotFoundError();
     }
 
-    const unread = await this.countUnreadByConversation(tenantId, [conversation.id]);
+    const unread = await this.countUnreadByConversation(tenantId, [conversation.id], userId);
 
     return toConversationView(conversation, unread.get(conversation.id) ?? 0);
   }
@@ -450,7 +457,7 @@ export class ConversationsService {
 
   /** Total inbound messages still unread across the tenant inbox (archived excluded). */
   async unreadTotal(): Promise<{ total: number }> {
-    const { tenantId } = this.tenantContext.requireContext();
+    const { tenantId, userId } = this.tenantContext.requireContext();
     const rows = await this.prisma.$queryRaw<Array<{ total: bigint }>>`
       SELECT COUNT(*)::bigint AS "total"
       FROM "messages" m
@@ -459,6 +466,7 @@ export class ConversationsService {
         AND c."is_archived" = false
         AND c."deleted_at" IS NULL
         AND m."direction" = 'INBOUND'
+        AND NOT EXISTS (SELECT 1 FROM "message_hidden_for_users" h WHERE h."message_id" = m."id" AND h."user_id" = ${userId}::uuid)
         AND (c."last_read_at" IS NULL OR m."occurred_at" > c."last_read_at")
     `;
 
@@ -472,6 +480,7 @@ export class ConversationsService {
   private async countUnreadByConversation(
     tenantId: string,
     conversationIds: string[],
+    userId: string,
   ): Promise<Map<string, number>> {
     if (conversationIds.length === 0) {
       return new Map();
@@ -485,6 +494,7 @@ export class ConversationsService {
         AND c."deleted_at" IS NULL
         AND m."conversation_id" IN (${Prisma.join(conversationIds)})
         AND m."direction" = 'INBOUND'
+        AND NOT EXISTS (SELECT 1 FROM "message_hidden_for_users" h WHERE h."message_id" = m."id" AND h."user_id" = ${userId}::uuid)
         AND (c."last_read_at" IS NULL OR m."occurred_at" > c."last_read_at")
       GROUP BY m."conversation_id"
     `;
@@ -611,6 +621,81 @@ export class ConversationsService {
     );
 
     return this.messages.findOne(message.id);
+  }
+
+  async forwardMessage(id: string, messageId: string, conversationIds: string[]): Promise<void> {
+    const { tenantId, userId } = this.tenantContext.requireContext();
+    const source = await this.prisma.message.findFirst({
+      where: { id: messageId, conversationId: id, tenantId, conversation: { deletedAt: null },
+        hiddenForUsers: { none: { userId } } },
+      include: { attachments: true },
+    });
+    if (!source) throw new MessageNotFoundError();
+    const metadata = typeof source.metadata === 'object' && source.metadata !== null && !Array.isArray(source.metadata)
+      ? source.metadata : {};
+    if (metadata.viewOnce === true || metadata.deletedForEveryone === true) {
+      throw new AppException('MESSAGE_NOT_FORWARDABLE', 'Esta mensagem não pode ser encaminhada.', 400);
+    }
+    const targets = [...new Set(conversationIds)];
+    const count = await this.prisma.conversation.count({ where: { id: { in: targets }, tenantId, deletedAt: null } });
+    if (count !== targets.length) throw new ConversationNotFoundError();
+    for (const target of targets) {
+      if (source.type === MessageType.TEXT && source.content) {
+        await this.sendHumanMessage(target, source.content, false);
+      } else if (source.attachments[0]) {
+        const attachment = source.attachments[0];
+        const file = await this.messages.readAttachment({
+          conversationId: id, messageId, attachmentId: attachment.id, variant: 'main',
+        });
+        await this.sendHumanMedia(target, {
+          buffer: file.buffer, fileName: file.fileName, mimeType: file.mimeType,
+          caption: source.content ?? undefined,
+        }, false);
+      } else {
+        throw new AppException('MESSAGE_NOT_FORWARDABLE', 'A mídia desta mensagem não está disponível.', 400);
+      }
+    }
+  }
+
+  async deleteMessageForEveryone(id: string, messageId: string): Promise<void> {
+    const { tenantId } = this.tenantContext.requireContext();
+    const message = await this.prisma.message.findFirst({
+      where: { id: messageId, conversationId: id, tenantId, conversation: { deletedAt: null } },
+      include: { conversation: { include: { instance: true } } },
+    });
+    if (!message) throw new MessageNotFoundError();
+    if (message.direction !== MessageDirection.OUTBOUND || !message.externalMessageId || !message.conversation.externalContactId ||
+      message.status === MessageStatus.FAILED || message.status === MessageStatus.PENDING) {
+      throw new AppException('MESSAGE_NOT_DELETABLE', 'Somente mensagens enviadas e confirmadas podem ser apagadas para todos.', 400);
+    }
+    const metadata = typeof message.metadata === 'object' && message.metadata !== null && !Array.isArray(message.metadata)
+      ? message.metadata : {};
+    if (metadata.deletedForEveryone === true) return;
+    await this.evolution.deleteMessageForEveryone(message.conversation.instance.instanceName, {
+      id: message.externalMessageId, remoteJid: message.conversation.externalContactId, fromMe: true,
+    });
+    await this.prisma.message.update({
+      where: { id: messageId },
+      data: { content: null, metadata: { deletedForEveryone: true } as Prisma.InputJsonValue },
+    });
+    await this.messages.purgeMessageAttachments(tenantId, messageId);
+    await this.prisma.messageTranscription.deleteMany({ where: { tenantId, messageId } });
+    this.realtime.emitToConversation(tenantId, id, 'message.updated', { conversationId: id, messageId });
+    this.realtime.emitToTenant(tenantId, 'conversation.updated', { conversationId: id });
+  }
+
+  async deleteMessageForMe(id: string, messageId: string): Promise<void> {
+    const { tenantId, userId } = this.tenantContext.requireContext();
+    const message = await this.prisma.message.findFirst({
+      where: { id: messageId, conversationId: id, tenantId, conversation: { deletedAt: null } },
+      select: { id: true },
+    });
+    if (!message) throw new MessageNotFoundError();
+    await this.prisma.messageHiddenForUser.upsert({
+      where: { userId_messageId: { userId, messageId } },
+      create: { tenantId, userId, messageId },
+      update: {},
+    });
   }
 
   /**

@@ -40,10 +40,12 @@ class FakeEvolution {
   readonly sentMedia: SentMedia[] = [];
   readonly sentAudio: { instance: string; number: string; audio: string }[] = [];
   readonly updated: UpdatedMessage[] = [];
+  readonly deletedMessages: Array<{ instance: string; id: string; remoteJid: string; fromMe: boolean }> = [];
   readonly created: string[] = [];
   readonly deleted: string[] = [];
   readonly instances = new Map<string, string>();
   connectionStateOverride?: string;
+  connectionStateSequence: string[] = [];
   connectionStateError?: Error;
   readonly webhooks: { instance: string; url: string; events: string[] }[] = [];
   readonly groupLookups: string[] = [];
@@ -125,9 +127,10 @@ class FakeEvolution {
     if (this.connectionStateError) {
       throw this.connectionStateError;
     }
+    const sequenced = this.connectionStateSequence.shift();
     return {
       instance,
-      state: this.connectionStateOverride ?? this.instances.get(instance) ?? 'open',
+      state: this.connectionStateOverride ?? sequenced ?? this.instances.get(instance) ?? 'open',
     };
   }
 
@@ -154,6 +157,10 @@ class FakeEvolution {
     }
     this.updated.push({ ...input, instance });
     return { key: input.key, status: 'EDITED' };
+  }
+
+  async deleteMessageForEveryone(instance: string, key: { id: string; remoteJid: string; fromMe: boolean }) {
+    this.deletedMessages.push({ instance, ...key });
   }
 
   async getBase64FromMediaMessage() {
@@ -228,10 +235,12 @@ describe('WhatsApp attendance (integration)', () => {
     evolution.sentMedia.length = 0;
     evolution.sentAudio.length = 0;
     evolution.updated.length = 0;
+    evolution.deletedMessages.length = 0;
     evolution.created.length = 0;
     evolution.deleted.length = 0;
     evolution.instances.clear();
     evolution.connectionStateOverride = undefined;
+    evolution.connectionStateSequence = [];
     evolution.connectionStateError = undefined;
     evolution.webhooks.length = 0;
     evolution.groupLookups.length = 0;
@@ -900,6 +909,7 @@ describe('WhatsApp attendance (integration)', () => {
       });
       expect(persistedQr).toBe(0);
 
+      evolution.instances.set(instanceName, 'open');
       await postWebhook({
         event: 'connection.update',
         instance: instanceName,
@@ -916,6 +926,7 @@ describe('WhatsApp attendance (integration)', () => {
         expect.objectContaining({ instanceId, status: 'CONNECTED' }),
       );
 
+      evolution.instances.set(instanceName, 'close');
       await postWebhook({
         event: 'status.instance',
         instance: instanceName,
@@ -947,6 +958,7 @@ describe('WhatsApp attendance (integration)', () => {
       const newer = new Date(Date.now() + 2_000);
       const older = new Date(Date.now() + 1_000);
 
+      evolution.instances.set(instanceName, 'open');
       const opened = await postWebhook(
         {
           event: 'connection.update',
@@ -985,6 +997,7 @@ describe('WhatsApp attendance (integration)', () => {
         headers: authHeaders(ownerA),
       });
 
+      evolution.instances.set(instanceName, 'refused');
       await postWebhook({
         event: 'connection.update',
         instance: instanceName,
@@ -1038,6 +1051,113 @@ describe('WhatsApp attendance (integration)', () => {
       expect(stored.status).toBe('DISCONNECTED');
     });
 
+    it('keeps CONNECTED when a delayed close webhook is contradicted by the live session', async () => {
+      const instanceName = `delayed-close-${randomUUID()}`;
+      const instanceId = await createInstance(ownerA, instanceName, 'CONNECTED');
+      evolution.instances.set(instanceName, 'open');
+
+      const response = await postWebhook({
+        event: 'connection.update',
+        instance: instanceName,
+        data: { instance: instanceName, state: 'close', statusReason: 401 },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const stored = await prisma.whatsAppInstance.findUniqueOrThrow({
+        where: { id: instanceId },
+      });
+      expect(stored.status).toBe('CONNECTED');
+      expect(stored.connectionStatusReason).toBeNull();
+    });
+
+    it('keeps CONNECTED when a delayed logout.instance arrives after a live open read', async () => {
+      const instanceName = `delayed-logout-${randomUUID()}`;
+      const instanceId = await createInstance(ownerA, instanceName, 'CONNECTED');
+      evolution.instances.set(instanceName, 'open');
+
+      const response = await postWebhook({
+        event: 'logout.instance',
+        instance: instanceName,
+        data: null,
+      });
+
+      expect(response.statusCode).toBe(200);
+      const stored = await prisma.whatsAppInstance.findUniqueOrThrow({
+        where: { id: instanceId },
+      });
+      expect(stored.status).toBe('CONNECTED');
+    });
+
+    it('does not disconnect after a single close that recovers on the next read', async () => {
+      const instanceName = `transient-close-${randomUUID()}`;
+      const instanceId = await createInstance(ownerA, instanceName, 'CONNECTED');
+      evolution.connectionStateSequence = ['close', 'open'];
+
+      await postWebhook({
+        event: 'connection.update',
+        instance: instanceName,
+        data: { instance: instanceName, state: 'close' },
+      });
+
+      const stored = await prisma.whatsAppInstance.findUniqueOrThrow({
+        where: { id: instanceId },
+      });
+      expect(stored.status).toBe('CONNECTED');
+    });
+
+    it('persists DISCONNECTED after repeated valid closes', async () => {
+      const instanceName = `true-drop-${randomUUID()}`;
+      const instanceId = await createInstance(ownerA, instanceName, 'CONNECTED');
+      evolution.instances.set(instanceName, 'close');
+
+      await postWebhook({
+        event: 'connection.update',
+        instance: instanceName,
+        data: { instance: instanceName, state: 'close', statusReason: 401 },
+      });
+
+      const stored = await prisma.whatsAppInstance.findUniqueOrThrow({
+        where: { id: instanceId },
+      });
+      expect(stored.status).toBe('DISCONNECTED');
+      expect(stored.connectionStatusReason).toBe(401);
+    });
+
+    it('preserves the confirmed state when the provider read fails', async () => {
+      const instanceName = `provider-failure-${randomUUID()}`;
+      const instanceId = await createInstance(ownerA, instanceName, 'CONNECTED');
+      evolution.connectionStateError = new EvolutionRequestError('timeout');
+
+      const response = await postWebhook({
+        event: 'connection.update',
+        instance: instanceName,
+        data: { instance: instanceName, state: 'close', statusReason: 401 },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const stored = await prisma.whatsAppInstance.findUniqueOrThrow({
+        where: { id: instanceId },
+      });
+      expect(stored.status).toBe('CONNECTED');
+    });
+
+    it('preserves the confirmed state when the provider returns an unknown state', async () => {
+      const instanceName = `provider-unknown-${randomUUID()}`;
+      const instanceId = await createInstance(ownerA, instanceName, 'CONNECTED');
+      evolution.connectionStateOverride = 'unknown';
+
+      await postWebhook({
+        event: 'connection.update',
+        instance: instanceName,
+        data: { instance: instanceName, state: 'close' },
+      });
+
+      const stored = await prisma.whatsAppInstance.findUniqueOrThrow({
+        where: { id: instanceId },
+      });
+      expect(stored.status).toBe('CONNECTED');
+    });
+
     it('rejects a concurrent connect for the same instance with 409', async () => {
       const instanceName = `concurrent-${randomUUID()}`;
       const instanceId = await createInstance(ownerA, instanceName, 'DISCONNECTED');
@@ -1076,6 +1196,8 @@ describe('WhatsApp attendance (integration)', () => {
       const instanceB = `tenant-b-${randomUUID()}`;
       const idA = await createInstance(ownerA, instanceA, 'CONNECTED');
       const idB = await createInstance(ownerB, instanceB, 'CONNECTED');
+      evolution.instances.set(instanceA, 'close');
+      evolution.instances.set(instanceB, 'close');
       const emit = vi.spyOn(app.get(RealtimeService), 'emitToTenant');
 
       await Promise.all([
@@ -4603,6 +4725,77 @@ describe('WhatsApp attendance (integration)', () => {
       };
     }
 
+    it('forwards only within the tenant and hides a message only for its requester', async () => {
+      const { conversationId, instanceName } = await seedConversation();
+      await postWebhook(evolutionPayload(
+        instanceName, randomUUID(), 'Outro contato', '5511888888888@s.whatsapp.net',
+      ));
+      const target = await prisma.conversation.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId, externalContactId: '5511888888888@s.whatsapp.net' },
+      });
+      const source = await prisma.message.findFirstOrThrow({ where: { conversationId } });
+
+      const foreign = await app.inject({
+        method: 'POST', url: `/api/conversations/${conversationId}/messages/${source.id}/forward`,
+        headers: authHeaders(ownerB), payload: { conversationIds: [target.id] },
+      });
+      expect(foreign.statusCode).toBe(404);
+
+      const forwarded = await app.inject({
+        method: 'POST', url: `/api/conversations/${conversationId}/messages/${source.id}/forward`,
+        headers: authHeaders(ownerA), payload: { conversationIds: [target.id] },
+      });
+      expect(forwarded.statusCode).toBe(200);
+      expect(evolution.sent.at(-1)?.text).toBe('Olá');
+
+      const hidden = await app.inject({
+        method: 'DELETE', url: `/api/conversations/${conversationId}/messages/${source.id}/for-me`,
+        headers: authHeaders(ownerA),
+      });
+      expect(hidden.statusCode).toBe(204);
+
+      const ownerMessages = await app.inject({
+        method: 'GET', url: `/api/conversations/${conversationId}/messages`, headers: authHeaders(ownerA),
+      });
+      const teammateMessages = await app.inject({
+        method: 'GET', url: `/api/conversations/${conversationId}/messages`, headers: authHeaders(userA),
+      });
+      expect(ownerMessages.json().data).toHaveLength(0);
+      expect(teammateMessages.json().data).toHaveLength(1);
+      const ownerPreview = await app.inject({
+        method: 'GET', url: `/api/conversations/${conversationId}`, headers: authHeaders(ownerA),
+      });
+      const teammatePreview = await app.inject({
+        method: 'GET', url: `/api/conversations/${conversationId}`, headers: authHeaders(userA),
+      });
+      expect(ownerPreview.json().lastMessage).toBeNull();
+      expect(teammatePreview.json().lastMessage.content).toBe('Olá');
+    });
+
+    it('revokes only an outbound message and removes its content after provider confirmation', async () => {
+      const { conversationId, instanceName } = await seedConversation();
+      const sent = await app.inject({
+        method: 'POST', url: `/api/conversations/${conversationId}/messages`,
+        headers: authHeaders(ownerA), payload: { content: 'Apagar depois' },
+      });
+      expect(sent.statusCode).toBe(201);
+      const outbound = await prisma.message.findFirstOrThrow({
+        where: { conversationId, direction: 'OUTBOUND' },
+      });
+      const deleted = await app.inject({
+        method: 'DELETE', url: `/api/conversations/${conversationId}/messages/${outbound.id}/for-everyone`,
+        headers: authHeaders(ownerA),
+      });
+      expect(deleted.statusCode).toBe(204);
+      expect(evolution.deletedMessages).toEqual([{
+        instance: instanceName, id: outbound.externalMessageId,
+        remoteJid: '5511999999999@s.whatsapp.net', fromMe: true,
+      }]);
+      const stored = await prisma.message.findUniqueOrThrow({ where: { id: outbound.id } });
+      expect(stored.content).toBeNull();
+      expect(stored.metadata).toEqual({ deletedForEveryone: true });
+    });
+
     it('lists conversations and messages, and sends without takeover', async () => {
       const { conversationId } = await seedConversation();
 
@@ -4776,6 +4969,7 @@ describe('WhatsApp attendance (integration)', () => {
     it('blocks the send and persists nothing when the instance is not connected', async () => {
       const instanceName = `not-connected-${randomUUID()}`;
       await createInstance(ownerA, instanceName, 'DISCONNECTED');
+      evolution.instances.set(instanceName, 'close');
       await postWebhook(evolutionPayload(instanceName, randomUUID(), 'oi'));
 
       const conversation = await prisma.conversation.findFirstOrThrow({
@@ -4796,6 +4990,74 @@ describe('WhatsApp attendance (integration)', () => {
         where: { tenantId: ownerA.tenantId, direction: 'OUTBOUND' },
       });
       expect(outbound).toBe(0);
+    });
+
+    it('repairs a stale DISCONNECTED state from the live session and sends without a new QR', async () => {
+      const instanceName = `stale-send-${randomUUID()}`;
+      const instanceId = await createInstance(ownerA, instanceName, 'DISCONNECTED');
+      evolution.instances.set(instanceName, 'open');
+      await postWebhook(evolutionPayload(instanceName, randomUUID(), 'oi'));
+
+      const conversation = await prisma.conversation.findFirstOrThrow({
+        where: { tenantId: ownerA.tenantId },
+      });
+
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/conversations/${conversation.id}/messages`,
+        headers: authHeaders(ownerA),
+        payload: { content: 'Olá' },
+      });
+
+      expect(response.statusCode).toBe(201);
+      expect(evolution.sent).toEqual([
+        expect.objectContaining({ instance: instanceName, text: 'Olá' }),
+      ]);
+      expect(evolution.created).not.toContain(instanceName);
+      expect(evolution.deleted).not.toContain(instanceName);
+
+      const stored = await prisma.whatsAppInstance.findUniqueOrThrow({
+        where: { id: instanceId },
+      });
+      expect(stored.status).toBe('CONNECTED');
+      const outbound = await prisma.message.count({
+        where: { tenantId: ownerA.tenantId, direction: 'OUTBOUND' },
+      });
+      expect(outbound).toBe(1);
+    });
+
+    it('receives and sends concurrently without interrupting either pipeline', async () => {
+      const { conversationId, instanceName } = await seedConversation();
+      evolution.instances.set(instanceName, 'open');
+
+      const [sent, received] = await Promise.all([
+        app.inject({
+          method: 'POST',
+          url: `/api/conversations/${conversationId}/messages`,
+          headers: authHeaders(ownerA),
+          payload: { content: 'Resposta simultânea' },
+        }),
+        postWebhook(evolutionPayload(instanceName, randomUUID(), 'Chegou junto')),
+      ]);
+
+      expect(sent.statusCode).toBe(201);
+      expect(received.statusCode).toBe(200);
+
+      const stored = await prisma.whatsAppInstance.findFirstOrThrow({
+        where: { instanceName },
+      });
+      expect(stored.status).toBe('CONNECTED');
+
+      const messages = await prisma.message.findMany({
+        where: { tenantId: ownerA.tenantId, conversationId },
+        select: { direction: true, content: true },
+      });
+      expect(messages).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ direction: 'OUTBOUND', content: 'Resposta simultânea' }),
+          expect.objectContaining({ direction: 'INBOUND', content: 'Chegou junto' }),
+        ]),
+      );
     });
 
     it('returns the most recent messages first when paginating', async () => {

@@ -130,6 +130,19 @@ export const attendanceService = {
       body: { content },
     }),
 
+  forwardMessage: (id: string, messageId: string, conversationIds: string[]) =>
+    apiRequest<{ ok: true }>(`/conversations/${id}/messages/${messageId}/forward`, {
+      method: 'POST', body: { conversationIds },
+    }),
+
+  deleteMessageForEveryone: (id: string, messageId: string) =>
+    apiRequest<void>(`/conversations/${id}/messages/${messageId}/for-everyone`, {
+      method: 'DELETE',
+    }),
+
+  deleteMessageForMe: (id: string, messageId: string) =>
+    apiRequest<void>(`/conversations/${id}/messages/${messageId}/for-me`, { method: 'DELETE' }),
+
   sendMedia: (
     id: string,
     file: File,

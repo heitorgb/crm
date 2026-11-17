@@ -11,11 +11,14 @@ import {
   Mic,
   Pencil,
   Reply,
+  Forward,
+  Trash2,
   Sticker,
   UserRound,
   Video,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 import type {
   ConversationMessage,
@@ -56,6 +59,9 @@ interface MessageBubbleProps {
   quoteTarget?: ConversationMessage | null;
   onReply?: (message: ConversationMessage) => void;
   onEdit?: (message: ConversationMessage) => void;
+  onForward?: (message: ConversationMessage) => void;
+  onDelete?: (message: ConversationMessage) => void;
+  onDeleteForMe?: (message: ConversationMessage) => void;
   onNavigateToQuote?: (quoted: QuotedMessage) => void;
 }
 
@@ -70,6 +76,9 @@ export function MessageBubble({
   quoteTarget = null,
   onReply,
   onEdit,
+  onForward,
+  onDelete,
+  onDeleteForMe,
   onNavigateToQuote,
 }: MessageBubbleProps) {
   const isOutbound = message.direction === 'OUTBOUND';
@@ -83,7 +92,11 @@ export function MessageBubble({
   const quoted = storedQuote ? mergeQuotedTarget(storedQuote, quoteTarget) : null;
   const reactions = readMessageReactions(message);
   const contacts = message.type === 'CONTACT' ? readMessageContacts(message.metadata) : [];
-  const editable = canEditMessage(message);
+  const deleted = message.metadata?.deletedForEveryone === true;
+  const editable = canEditMessage(message) && !deleted;
+  const forwardable = !deleted && !isViewOnce;
+  const deletableForEveryone = isOutbound && !deleted && !!message.externalMessageId &&
+    message.status !== 'FAILED' && message.status !== 'PENDING';
 
   if (isViewOnce) {
     return (
@@ -159,8 +172,11 @@ export function MessageBubble({
         </div>
         <MessageActions
           canEdit={editable}
-          onReply={onReply ? () => onReply(message) : undefined}
+          onReply={onReply && !deleted ? () => onReply(message) : undefined}
           onEdit={onEdit ? () => onEdit(message) : undefined}
+          onForward={onForward && forwardable ? () => onForward(message) : undefined}
+          onDelete={onDelete && deletableForEveryone ? () => onDelete(message) : undefined}
+          onDeleteForMe={onDeleteForMe ? () => onDeleteForMe(message) : undefined}
         />
       </div>
     );
@@ -194,8 +210,11 @@ export function MessageBubble({
         </div>
         <MessageActions
           canEdit={editable}
-          onReply={onReply ? () => onReply(message) : undefined}
+          onReply={onReply && !deleted ? () => onReply(message) : undefined}
           onEdit={onEdit ? () => onEdit(message) : undefined}
+          onForward={onForward && forwardable ? () => onForward(message) : undefined}
+          onDelete={onDelete && deletableForEveryone ? () => onDelete(message) : undefined}
+          onDeleteForMe={onDeleteForMe ? () => onDeleteForMe(message) : undefined}
         />
       </div>
     );
@@ -261,7 +280,9 @@ export function MessageBubble({
               {message.senderName}
             </span>
           ) : null}
-          {isMedia ? (
+          {deleted ? (
+            <span className="italic text-muted-foreground">Você apagou esta mensagem</span>
+          ) : isMedia ? (
             <>
               {quoted ? (
                 <QuoteBlock
@@ -283,7 +304,7 @@ export function MessageBubble({
               <MessageLinkPreview message={message} isOutbound={isOutbound} />
             </>
           )}
-          {isMedia && message.content ? (
+          {isMedia && message.content && !deleted ? (
             <div className="px-1.5">
               <ExpandableText
                 text={message.content}
@@ -319,8 +340,11 @@ export function MessageBubble({
       </div>
       <MessageActions
         canEdit={editable}
-        onReply={onReply ? () => onReply(message) : undefined}
+        onReply={onReply && !deleted ? () => onReply(message) : undefined}
         onEdit={onEdit ? () => onEdit(message) : undefined}
+        onForward={onForward && forwardable ? () => onForward(message) : undefined}
+        onDelete={onDelete && deletableForEveryone ? () => onDelete(message) : undefined}
+        onDeleteForMe={onDeleteForMe ? () => onDeleteForMe(message) : undefined}
       />
     </div>
   );
@@ -476,11 +500,14 @@ interface MessageActionsProps {
   canEdit: boolean;
   onReply?: () => void;
   onEdit?: () => void;
+  onForward?: () => void;
+  onDelete?: () => void;
+  onDeleteForMe?: () => void;
 }
 
-function MessageActions({ canEdit, onReply, onEdit }: MessageActionsProps) {
+function MessageActions({ canEdit, onReply, onEdit, onForward, onDelete, onDeleteForMe }: MessageActionsProps) {
   const showEdit = canEdit && onEdit !== undefined;
-  if (!onReply && !showEdit) {
+  if (!onReply && !showEdit && !onForward && !onDelete && !onDeleteForMe) {
     return null;
   }
   return (
@@ -506,6 +533,20 @@ function MessageActions({ canEdit, onReply, onEdit }: MessageActionsProps) {
         >
           <Pencil className="size-4" />
         </Button>
+      ) : null}
+      {onForward || onDelete || onDeleteForMe ? (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon" className="message-reply-button size-8 rounded-full" aria-label="Mais opções da mensagem">
+              <Forward className="size-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {onForward ? <DropdownMenuItem onSelect={onForward}><Forward />Encaminhar</DropdownMenuItem> : null}
+            {onDelete ? <DropdownMenuItem onSelect={onDelete}><Trash2 />Apagar para todos</DropdownMenuItem> : null}
+            {onDeleteForMe ? <DropdownMenuItem onSelect={onDeleteForMe}><Trash2 />Apagar para mim</DropdownMenuItem> : null}
+          </DropdownMenuContent>
+        </DropdownMenu>
       ) : null}
     </div>
   );

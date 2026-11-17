@@ -63,10 +63,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Evolution 2.4 sends `X-Timestamp` (Date.now in ms) on every webhook. It is
- * the provider clock at dispatch and is used to order concurrently delivered
- * events; the payload's `date_time` is not used because 2.4 builds it with a
- * timezone offset. Values far from the local clock fall back to receipt time.
+ * Evolution 2.4 sends `X-Timestamp` (Date.now in ms) on webhooks. The value is
+ * kept as the provider generation time for diagnostics, but it is NOT used to
+ * order state changes: delivery can be delayed and a late event would otherwise
+ * look newer than the read that already corrected it. Ordering uses the
+ * DB-backed connection generation. Values far from the local clock are ignored.
  */
 function providerObservedAt(header: string | string[] | undefined): Date | null {
   const raw = Array.isArray(header) ? header[0] : header;

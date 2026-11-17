@@ -16,7 +16,6 @@ import { ConversationTagsDialog } from './conversation-tags-dialog';
 import { HistorySyncBanner } from './history-sync-banner';
 import { PhotoSendFlow } from './photo-send-flow';
 import { buildTimeline, conversationLabel } from './attendance-utils';
-import { isMediaPending } from './media-message-utils';
 import {
   useCloseConversation,
   useConversation,
@@ -106,7 +105,7 @@ export function AttendancePage() {
   const visibleMessages = buildTimeline(
     historyQuery.data?.pages,
     messagesQuery.data?.data ?? [],
-  ).filter((message) => !isMediaPending(message));
+  );
   const totalPages = messagesQuery.data?.meta.totalPages ?? 1;
   const hasOlderMessages = historyQuery.data ? historyQuery.hasNextPage === true : totalPages > 1;
   const loadingOlderMessages =

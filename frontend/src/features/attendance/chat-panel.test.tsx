@@ -46,6 +46,11 @@ vi.mock('./sender-avatar', () => ({
   SenderAvatar: () => null,
 }));
 
+vi.mock('./queries', () => ({
+  useDeleteMessageForEveryone: () => ({ isPending: false, mutateAsync: vi.fn() }),
+  useDeleteMessageForMe: () => ({ isPending: false, mutateAsync: vi.fn() }),
+}));
+
 const conversation: Conversation = {
   id: '55555555-5555-4555-8555-555555555555',
   status: 'OPEN',

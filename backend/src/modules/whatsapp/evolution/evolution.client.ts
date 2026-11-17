@@ -23,9 +23,12 @@ export class EvolutionRequestError extends AppException {
   }
 }
 
+export type EvolutionConnectionStateKind = 'confirmed' | 'unknown' | 'invalid' | 'not_found';
+
 export interface EvolutionConnectionState {
   instance: string;
   state: string;
+  kind: EvolutionConnectionStateKind;
 }
 
 export interface EvolutionInstanceSummary {
@@ -102,6 +105,16 @@ export interface EvolutionContact {
   avatarUrl: string | null;
 }
 
+const KNOWN_CONNECTION_STATES = new Set([
+  'open',
+  'connected',
+  'connecting',
+  'close',
+  'disconnected',
+  'refused',
+  'error',
+]);
+
 @Injectable()
 export class EvolutionClient {
   private readonly logger = new Logger(EvolutionClient.name);
@@ -122,13 +135,44 @@ export class EvolutionClient {
     return Boolean(this.baseUrl && this.apiKey);
   }
 
+  /**
+   * Reads the current session state. The parser deliberately distinguishes a
+   * valid state, an unknown/unrecognized state, an invalid body and a missing
+   * instance: only `confirmed` is evidence, the others are inconclusive.
+   */
   async getConnectionState(instanceName: string): Promise<EvolutionConnectionState> {
-    const response = await this.request('GET', `/instance/connectionState/${encodeURIComponent(instanceName)}`);
-    const data = response as { instance?: { instanceName?: string; state?: string } };
-    return {
-      instance: data.instance?.instanceName ?? instanceName,
-      state: data.instance?.state ?? 'unknown',
-    };
+    let response: unknown;
+    try {
+      response = await this.request(
+        'GET',
+        `/instance/connectionState/${encodeURIComponent(instanceName)}`,
+      );
+    } catch (error) {
+      if (error instanceof EvolutionRequestError && error.httpStatus === 404) {
+        return { instance: instanceName, state: 'unknown', kind: 'not_found' };
+      }
+      throw error;
+    }
+
+    if (!isRecord(response)) {
+      return { instance: instanceName, state: 'unknown', kind: 'invalid' };
+    }
+
+    const instance = isRecord(response.instance) ? response.instance : null;
+    const rawState = readString(instance?.state) ?? readString(response.state);
+    const resolvedName =
+      readString(instance?.instanceName) ?? readString(response.instanceName) ?? instanceName;
+
+    if (!rawState) {
+      return { instance: resolvedName, state: 'unknown', kind: 'invalid' };
+    }
+
+    const state = rawState.toLowerCase();
+    if (KNOWN_CONNECTION_STATES.has(state)) {
+      return { instance: resolvedName, state, kind: 'confirmed' };
+    }
+
+    return { instance: resolvedName, state, kind: 'unknown' };
   }
 
   async createInstance(instanceName: string): Promise<unknown> {

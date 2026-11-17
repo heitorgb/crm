@@ -12,6 +12,7 @@ import {
   type EvolutionClient,
 } from '../../../src/modules/whatsapp/evolution/evolution.client.js';
 import type { MessagesService } from '../../../src/modules/conversations/messages.service.js';
+import type { WhatsAppInstancesService } from '../../../src/modules/whatsapp/whatsapp-instances.service.js';
 
 interface Harness {
   service: ConversationProcessingService;
@@ -23,6 +24,7 @@ interface Harness {
     configured: boolean;
     sendText: ReturnType<typeof vi.fn>;
   };
+  instances: { ensureConnectedForSend: ReturnType<typeof vi.fn> };
   messages: {
     persistOutbound: ReturnType<typeof vi.fn>;
     markOutboundStatus: ReturnType<typeof vi.fn>;
@@ -44,6 +46,7 @@ function createHarness(): Harness {
     markOutboundFailed: vi.fn().mockResolvedValue(undefined),
   };
   const realtime = { emitToTenant: vi.fn(), emitToConversation: vi.fn() };
+  const instances = { ensureConnectedForSend: vi.fn().mockResolvedValue(true) };
   const queue = { enqueue: vi.fn().mockResolvedValue(undefined) };
   const transcriptionSettings = { isAutoEnabled: vi.fn().mockResolvedValue(false) };
 
@@ -55,6 +58,7 @@ function createHarness(): Harness {
     prisma as unknown as PrismaService,
     tenantContext,
     evolution as unknown as EvolutionClient,
+    instances as unknown as WhatsAppInstancesService,
     messages as unknown as MessagesService,
     realtime as unknown as RealtimeService,
     {} as never,
@@ -64,7 +68,7 @@ function createHarness(): Harness {
     queue as unknown as JobQueue,
   );
 
-  return { service, prisma, evolution, messages, queue, transcriptionSettings };
+  return { service, prisma, evolution, instances, messages, queue, transcriptionSettings };
 }
 
 function seedMessage(
@@ -467,8 +471,9 @@ describe('ConversationProcessingService.dispatch', () => {
   });
 
   it('blocks the send and does not persist when the instance is not connected', async () => {
-    const { service, prisma, evolution, messages } = createHarness();
+    const { service, prisma, evolution, instances, messages } = createHarness();
     seedConversation(prisma);
+    instances.ensureConnectedForSend.mockResolvedValue(false);
     prisma.conversation.findFirst.mockResolvedValue({
       id: 'conversation-1',
       tenantId: 'tenant-1',

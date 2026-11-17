@@ -38,7 +38,8 @@ Lead no WhatsApp
 ## Entidades
 
 - `WhatsAppInstance`: `tenantId`, `name`, `instanceName` (único global, chave de resolução do
-  webhook), `externalInstanceId?`, `phone?`, `status`, `credentialsEncrypted?`, `active`.
+  webhook), `externalInstanceId?`, `phone?`, `status`, `connectionIntent`, `connectionVersion`,
+  `credentialsEncrypted?`, `active`.
   O número de instâncias por organização é limitado por `Tenant.whatsappInstanceLimit`
   (default `3`, configurável pelo admin da plataforma; `0` bloqueia novas instâncias).
 - `Conversation`: `tenantId`, `whatsappInstanceId`, `externalContactId?` (JID/número, chave de
@@ -729,11 +730,14 @@ Referência do evento: [implementação da Evolution](https://github.com/Evoluti
   mensagem que já foi aceita pelo provedor (tem id externo) ou que chegou a `SENT`/`DELIVERED`/`READ`
   nunca volta para a fila de envio — evita duplicatas. Não há reenvio automático em massa de
   pendentes após reconexão.
-- **Guarda de conexão**: o envio humano (texto, mídia e edição) só ocorre quando a instância está
-  `CONNECTED`. Caso contrário a API responde `409 WHATSAPP_INSTANCE_NOT_CONNECTED`, nada é persistido
-  nem enviado. Isso impede enviar por uma instância órfã/desconectada mantida no CRM (aceite seguido
-  de erro) e orienta o operador a reconectar. O processamento da fila `whatsapp.message.send` também
-  é ignorado (com log `whatsapp.send.skipped`) enquanto a instância não estiver conectada.
+- **Guarda de conexão com pré-checagem**: o envio humano (texto, mídia, áudio e edição) consulta
+  o estado centralizado. `CONNECTED` confirmado envia sem nova consulta; qualquer outro estado faz
+  uma leitura REST controlada (exceto desconexão manual). Se a sessão estiver `open`, o CRM corrige o
+  estado e prossegue com o envio original; se estiver comprovadamente desconectada ou a leitura for
+  inconclusiva, responde `409 WHATSAPP_INSTANCE_NOT_CONNECTED`, nada é persistido nem enviado, e a
+  sessão **não** é recriada. Isso elimina o falso bloqueio por estado local desatualizado sem abrir
+  uma consulta REST por mensagem. O processamento da fila `whatsapp.message.send` também é ignorado
+  (com log `whatsapp.send.skipped`) quando a instância não pode ser confirmada.
 - Realtime: gateway Socket.IO no namespace `/realtime`, autenticado por JWT + membership no
   handshake. Rooms: `tenant:{tenantId}`, `tenant:{tenantId}:user:{userId}`,
   `tenant:{tenantId}:conversation:{conversationId}`. Eventos são emitidos por room — nunca
@@ -764,57 +768,91 @@ Referência do evento: [implementação da Evolution](https://github.com/Evoluti
 
 ### Estado da conexão (webhooks + reconciliação)
 
-- O CRM mantém uma máquina de estados única em
-  `WhatsAppInstancesService.applyConnectionObservation`, usada por webhook, *poll* e reconciliação.
-  Estados confirmados: `CONNECTED` (`open`), `CONNECTING` (`connecting`), `DISCONNECTED`
-  (`close`/`disconnected`) e `ERROR` (`refused`/`error`).
-- A Evolution 2.4 reporta o ciclo por `connection.update` (`data.state`), `status.instance`
-  (`status: closed` + `disconnectionReasonCode`) e `logout.instance`. Os três são tratados; os dois
-  últimos funcionam como sinais independentes caso um `connection.update` se perca.
-- Cada observação carrega um instante (`X-Timestamp` do webhook, início da leitura no *poll* ou da
-  reconciliação). `WhatsAppInstance.connection_observed_at` é monotônico: uma observação mais antiga
-  é ignorada e não sobrescreve um estado mais novo. O motivo (`connection_status_reason`) é
-  persistido e logado.
-- Uma conexão explícita grava `connection_requested_at`; uma desconexão confirmada zera esse campo.
-  Eventos assíncronos atrasados não reativam uma instância desconectada, mas uma leitura ao vivo da
-  Evolution (`connectionState: open`) continua sendo autoritativa.
-- **Recuperação automática:** a Evolution reconecta sozinha após um `close` transitório. Um `open`
-  recebido por webhook em uma instância `DISCONNECTED` é confirmado por leitura ao vivo
-  (`connectionState`) e, se confirmado, restaura `CONNECTED`; se a sessão estiver fechada, o evento
-  é tratado como atrasado e ignorado (`ignored_after_disconnect`).
+O CRM separa quatro coisas que antes eram confundidas: **estado confirmado** pelo provedor,
+**observação** recebida por webhook, **intenção explícita** do operador e **estado persistido**.
+
+- Estados persistidos: `CONNECTED` (`open`), `CONNECTING` (`connecting`), `DISCONNECTED`
+  (`close`/`disconnected`) e `ERROR` (`refused`/`error`). Qualquer outro valor é **indeterminado**,
+  nunca convertido em desconexão.
+- `WhatsAppInstance.connection_intent` registra a intenção explícita: `CONNECT` ao solicitar uma
+  conexão, `DISCONNECT` ao desconectar manualmente e `NONE` no restante. Uma instância com
+  `DISCONNECT` **não** volta a `CONNECTED` por webhook atrasado nem pela reconciliação; somente uma
+  nova conexão explícita (ou a pré-checagem de envio feita pelo próprio operador) rearma a sessão.
+- `WhatsAppInstance.connection_version` é a **geração** da verificação. Toda leitura/observação
+  incrementa a versão atomicamente no PostgreSQL antes de consultar o provedor, e a persistência é
+  condicional a essa versão. Duas verificações simultâneas — inclusive em processos/workers
+  diferentes — não sobrescrevem a geração mais nova; a perdedora registra
+  `whatsapp.connection.observation.ignored_stale`. Não há dependência de `Map` em memória para
+  corretude.
+- **Webhook não é estado.** `connection.update`, `status.instance` e `logout.instance` são apenas
+  sinais para verificar a sessão. O estado é decidido por uma leitura REST atual de
+  `GET /instance/connectionState`.
+- Uma leitura `open` válida mantém ou restaura `CONNECTED` e limpa o motivo anterior.
+- Uma leitura `connecting` não rebaixa o estado confirmado: a sessão está iniciando, não caiu.
+- Uma leitura `close`/`disconnected` só é persistida após **confirmação por leituras consecutivas**
+  (`WHATSAPP_CONNECTION_CONFIRM_READS`, padrão 3, com intervalo
+  `WHATSAPP_CONNECTION_CONFIRM_INTERVAL_MS`, padrão 500 ms). Uma única leitura negativa, um
+  `close` transitório ou um evento atrasado não derrubam a instância. Se qualquer leitura
+  confirmar `open`, o CRM recupera `CONNECTED`; se alguma for `connecting`, a confirmação é
+  inconclusiva e o último estado é preservado.
+- Timeout, falha de rede, HTTP 500/502/503, JSON inválido, corpo sem `instance.state`, estado
+  desconhecido e instância não encontrada são **inconclusivos**: preservam o último estado
+  confirmado e são registrados como `whatsapp.connection.snapshot.inconclusive`. Nunca viram
+  `DISCONNECTED`.
+- O parser da Evolution (`EvolutionClient.getConnectionState`) distingue resposta válida,
+  `unknown`, corpo inválido e `not_found`. A ausência em `fetchInstances` não é usada como prova de
+  desconexão; somente a resposta específica do endpoint (ou um `not_found` explícito) é aceita.
+- **Ordenação:** o header `X-Timestamp` e o instante de recebimento são registrados para
+  diagnóstico, mas **não** definem quem vence. Um webhook entregue tarde pode ter horário de
+  recebimento mais recente que a leitura que o corrigiu; por isso a ordem é dada pela geração
+  persistida e pela intenção explícita. O instante de geração do evento é logado separadamente do
+  instante de recebimento.
 - Durante uma tentativa de conexão há uma janela de tolerância
   (`WHATSAPP_CONNECT_FLOW_GRACE_MS`, padrão 20 s) na qual um `close` transitório não derruba o
-  `CONNECTING`.
-- **Reconciliação periódica**: a cada 60 s
-  (`WHATSAPP_INSTANCE_RECONCILE_INTERVAL_MS`) o backend relê `GET /instance/connectionState` das
-  instâncias ativas, dentro do contexto do tenant (uma instância `DISCONNECTED` só é alterada quando
-  a Evolution reporta `open`, recuperando a sessão que reconectou sozinha), e corrige
-  webhooks perdidos (backend fora do ar, URL alterada, `close` silencioso). Uma execução inicial
-  ocorre ~10 s após o boot. Falha de comunicação com a Evolution **não** rebaixa o estado.
-- A tela **Configurações → WhatsApp** reage a `whatsapp.instance.updated` invalidando a listagem.
-  O QR rotacionado chega por `whatsapp.instance.qr` e substitui a imagem no diálogo.
+  `CONNECTING`. Motivos terminais (`401`/`403`) e o estado `refused` (`ERROR`) não são mascarados
+  por essa janela.
+- **Reconciliação periódica**: a cada 60 s (`WHATSAPP_INSTANCE_RECONCILE_INTERVAL_MS`) o backend
+  relê `GET /instance/connectionState` das instâncias ativas, dentro do contexto do tenant, e aplica
+  exatamente as mesmas regras acima. Ela recupera webhooks perdidos (backend fora do ar, URL
+  alterada) e reconhece uma sessão reaberta pelo provedor quando há evidência atual e a intenção não
+  é `DISCONNECT`. Falha de comunicação não rebaixa o estado.
+- O endpoint `GET /api/whatsapp/instances/:id/status` continua forçando uma leitura real. Uma
+  instância desconectada manualmente permanece `DISCONNECTED`; uma falha do provedor responde erro
+  sem alterar o estado persistido.
+- **Desconectar** usa `DELETE /instance/logout` e só grava `DISCONNECTED` após o endpoint específico
+  confirmar `close`/`disconnected` (ou `not_found`), com
+  `WHATSAPP_DISCONNECT_CONFIRM_TIMEOUT_MS` (padrão 10 s). A intenção `DISCONNECT` é persistida junto
+  e impede reativação automática por eventos atrasados.
 - `connectionState: open` **não** é prova de que o envio funciona: sessões degradadas
   (`Stream Errored (conflict)`, `device_removed`, `Connection Closed`) podem continuar reportando
-  `open`. O `connection.update` é a evidência autoritativa para rebaixar o status. A recuperação da
-  sessão (reconectar o número) continua sendo uma ação manual do operador.
-- **Limitação da Evolution 2.4 (documentada, não presumida):** `connection.update` de `close` só é
-  emitido quando o motivo é não reconectável (401/403/402/406/408). Fechamentos reconectáveis,
-  incluindo `515 restartRequired`, reconectam sem emitir o evento — por isso a reconciliação
-  periódica é necessária. O `payload.date_time` da 2.4 não é usado para ordenar eventos porque é
-  gerado com deslocamento de timezone; o header `X-Timestamp` é usado quando presente.
-- **Sessão única por número:** se o mesmo número estiver vinculado a mais de uma instância da
-  Evolution, as sessões se substituem (`Stream Errored (conflict)`, motivo 440) e a Evolution as
-  reconecta em loop — sem emitir `close` (motivo reconectável), então o CRM continua mostrando
-  `CONNECTED` enquanto a instância "fica desconectando". O backend compara o `ownerJid` retornado por
-  `GET /instance/fetchInstances` e faz logout das outras sessões do mesmo número:
-  - ao conectar (conexão explícita ou transição para `CONNECTED`), a instância recém-conectada fica
-    com o número;
-  - na reconciliação periódica, as instâncias são percorridas pela conexão solicitada mais recente
-    (`connection_requested_at desc`), que mantém o número.
-  São encerradas instâncias órfãs da Evolution (sem registro no CRM) e instâncias do **mesmo tenant**,
-  que passam a `DISCONNECTED` com motivo `440`. Sessões de outro tenant nunca são tocadas — apenas
-  logadas (`whatsapp.connection.duplicate_session_foreign_tenant`). Falha nessa verificação nunca
-  impede a atualização do estado da conexão.
+  `open`. O webhook continua sendo útil como sinal, mas agora ele dispara uma verificação em vez de
+  decretar desconexão. A recuperação de uma sessão realmente caída continua sendo uma ação do
+  operador.
+- **Sessão única por número:** o tratamento de sessões duplicadas (`ownerJid` em
+  `GET /instance/fetchInstances`) foi preservado. Ao conectar (ou na reconciliação), instâncias
+  órfãs e instâncias do mesmo tenant com o mesmo número são encerradas e ficam `DISCONNECTED` com
+  motivo `440`. Sessões de outro tenant nunca são tocadas — apenas logadas
+  (`whatsapp.connection.duplicate_session_foreign_tenant`). Falha nessa verificação nunca impede a
+  atualização do estado da conexão.
+
+#### Envio com estado local divergente
+
+Antes de enviar texto, mídia ou áudio, `ConversationProcessingService` chama
+`WhatsAppInstancesService.ensureConnectedForSend`:
+
+1. `CONNECTED` confirmado → envia sem nenhuma consulta REST (não há leitura por mensagem).
+2. Qualquer outro estado (exceto intenção manual `DISCONNECT`) → **uma** leitura REST atual.
+3. Leitura `open` → corrige o estado persistido para `CONNECTED` (com a mesma geração/versionamento),
+   emite `whatsapp.instance.updated` e prossegue com o envio original.
+4. Leitura negativa, inconclusiva ou provedor indisponível → bloqueia com
+   `409 WHATSAPP_INSTANCE_NOT_CONNECTED`, sem persistir mensagem e **sem** recriar sessão nem gerar
+   QR.
+5. Instância desconectada manualmente → bloqueia sem consultar o provedor.
+
+A pré-checagem não reexecuta o envio. Timeout na chamada de envio continua com resultado incerto:
+a mensagem fica `FAILED`, não é reenviada automaticamente e o operador decide o retry — evitando
+duplicidade quando o provedor já aceitou a mensagem. As mesmas regras valem para texto, mídia,
+áudio, mensagens armazenadas/agendadas e edição.
 
 ### Observabilidade do envio
 

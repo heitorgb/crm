@@ -1,13 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Inject, Injectable, Logger, type OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import {
-  ConversationStatus,
-  MessageStatus,
-  MessageType,
-  Prisma,
-  WhatsAppInstanceStatus,
-} from '@prisma/client';
+import { ConversationStatus, MessageStatus, MessageType, Prisma } from '@prisma/client';
 import { hasHttpUrl, type LinkPreviewMetadata } from '../../common/link-preview/link-preview.js';
 import { pickDestination, type DestinationInput } from '../../common/whatsapp/destination.js';
 import type { TenantContext } from '../../common/tenant-context/tenant-context.types.js';
@@ -32,6 +26,7 @@ import {
   type EvolutionQuotedMessage,
   type EvolutionSendResult,
 } from '../whatsapp/evolution/evolution.client.js';
+import { WhatsAppInstancesService } from '../whatsapp/whatsapp-instances.service.js';
 import {
   ConversationNotFoundError,
   MessageNotEditableError,
@@ -149,6 +144,7 @@ export class ConversationProcessingService implements OnModuleInit {
     private readonly prisma: PrismaService,
     private readonly tenantContext: TenantContextService,
     private readonly evolution: EvolutionClient,
+    private readonly instances: WhatsAppInstancesService,
     private readonly messages: MessagesService,
     private readonly realtime: RealtimeService,
     private readonly media: MediaProcessingService,
@@ -180,7 +176,7 @@ export class ConversationProcessingService implements OnModuleInit {
       return;
     }
 
-    if (conversation.instance.status !== WhatsAppInstanceStatus.CONNECTED) {
+    if (!(await this.instances.ensureConnectedForSend(tenantId, conversation.instance.id))) {
       throw new WhatsAppInstanceNotConnectedError();
     }
 
@@ -224,7 +220,7 @@ export class ConversationProcessingService implements OnModuleInit {
       return;
     }
 
-    if (conversation.instance.status !== WhatsAppInstanceStatus.CONNECTED) {
+    if (!(await this.instances.ensureConnectedForSend(tenantId, conversation.instance.id))) {
       throw new WhatsAppInstanceNotConnectedError();
     }
 
@@ -387,10 +383,10 @@ export class ConversationProcessingService implements OnModuleInit {
       where: { id: input.whatsappInstanceId, tenantId: input.tenantId },
       select: { instanceName: true, status: true },
     });
-    if (!instance) {
-      throw new WhatsAppInstanceNotConnectedError();
-    }
-    if (instance.status !== WhatsAppInstanceStatus.CONNECTED) {
+    if (
+      !instance ||
+      !(await this.instances.ensureConnectedForSend(input.tenantId, input.whatsappInstanceId))
+    ) {
       throw new WhatsAppInstanceNotConnectedError();
     }
 
@@ -503,7 +499,7 @@ export class ConversationProcessingService implements OnModuleInit {
     if (!conversation) {
       throw new ConversationNotFoundError();
     }
-    if (conversation.instance.status !== WhatsAppInstanceStatus.CONNECTED) {
+    if (!(await this.instances.ensureConnectedForSend(input.tenantId, conversation.instance.id))) {
       throw new WhatsAppInstanceNotConnectedError();
     }
 
@@ -612,7 +608,7 @@ export class ConversationProcessingService implements OnModuleInit {
     if (!conversation) {
       throw new ConversationNotFoundError();
     }
-    if (conversation.instance.status !== WhatsAppInstanceStatus.CONNECTED) {
+    if (!(await this.instances.ensureConnectedForSend(input.tenantId, conversation.instance.id))) {
       throw new WhatsAppInstanceNotConnectedError();
     }
 
@@ -719,7 +715,7 @@ export class ConversationProcessingService implements OnModuleInit {
       destinationInput(conversation),
       conversation.preferredAddress,
     );
-    if (conversation.instance.status !== WhatsAppInstanceStatus.CONNECTED) {
+    if (!(await this.instances.ensureConnectedForSend(tenantId, conversation.instance.id))) {
       throw new WhatsAppInstanceNotConnectedError();
     }
     if (!this.evolution.configured || !remoteJid || !destination) {
@@ -812,10 +808,7 @@ export class ConversationProcessingService implements OnModuleInit {
    * stores it with the regular attachment pipeline. It is reused by the media
    * job and by the transcription job when the attachment is not available yet.
    */
-  async ensureMediaStored(
-    tenantId: string,
-    messageId: string,
-  ): Promise<MediaStorageResult> {
+  async ensureMediaStored(tenantId: string, messageId: string): Promise<MediaStorageResult> {
     const message = await this.prisma.message.findFirst({
       where: { id: messageId, tenantId },
       include: { conversation: { include: { instance: true } } },
@@ -848,10 +841,11 @@ export class ConversationProcessingService implements OnModuleInit {
 
     let content;
     try {
-      content = await this.evolution.getBase64FromMediaMessage(
-        conversation.instance.instanceName,
-        { id: externalId, remoteJid, fromMe },
-      );
+      content = await this.evolution.getBase64FromMediaMessage(conversation.instance.instanceName, {
+        id: externalId,
+        remoteJid,
+        fromMe,
+      });
     } catch (error) {
       this.logger.warn(
         `Failed to fetch media for message ${messageId}: ${
@@ -970,7 +964,7 @@ export class ConversationProcessingService implements OnModuleInit {
       }
 
       const conversation = message.conversation;
-      if (conversation.instance.status !== WhatsAppInstanceStatus.CONNECTED) {
+      if (!(await this.instances.ensureConnectedForSend(tenantId, conversation.instance.id))) {
         this.logger.warn(
           `whatsapp.send.skipped ${JSON.stringify({
             phase: fallback ? 'fallback' : 'retry',
@@ -1416,12 +1410,7 @@ export class ConversationProcessingService implements OnModuleInit {
 }
 
 export type MediaStorageResult =
-  | 'stored'
-  | 'missing'
-  | 'missing_media_key'
-  | 'fetch_failed'
-  | 'too_large'
-  | 'empty';
+  'stored' | 'missing' | 'missing_media_key' | 'fetch_failed' | 'too_large' | 'empty';
 
 interface StoredMedia {
   storageKey: string;

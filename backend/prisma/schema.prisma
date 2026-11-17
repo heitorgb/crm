@@ -803,6 +803,7 @@ model WhatsAppInstance {
   connectionStatusReason Int?                      @map("connection_status_reason")
   connectionRequestedAt  DateTime?                 @map("connection_requested_at")
   connectionVersion      Int                       @default(0) @map("connection_version")
+  connectionStateVersion Int                       @default(0) @map("connection_state_version")
   connectionIntent       WhatsAppConnectionIntent  @default(NONE) @map("connection_intent")
   credentialsEncrypted   String?                   @map("credentials_encrypted")
   active                 Boolean                   @default(true)

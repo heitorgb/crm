@@ -185,6 +185,7 @@ interface ConnectionRow {
   connectionRequestedAt: Date | null;
   connectionStatusReason: number | null;
   connectionVersion: number;
+  connectionStateVersion: number;
   connectionIntent: WhatsAppConnectionIntent;
 }
 
@@ -664,6 +665,7 @@ export class WhatsAppInstancesService implements OnModuleInit {
         connectionRequestedAt: true,
         connectionStatusReason: true,
         connectionVersion: true,
+        connectionStateVersion: true,
         connectionIntent: true,
       },
     });
@@ -987,7 +989,7 @@ export class WhatsAppInstancesService implements OnModuleInit {
       }
       const snapshot = await this.readProviderSnapshot(instanceName);
       if (snapshot.kind !== 'confirmed') {
-        this.logConnection('snapshot.inconclusive', {
+          this.logConnection('snapshot.inconclusive', {
           instanceId: context.instanceId,
           tenantId: context.tenantId,
           instanceName,
@@ -1045,6 +1047,7 @@ export class WhatsAppInstancesService implements OnModuleInit {
         connectionRequestedAt: true,
         connectionStatusReason: true,
         connectionVersion: true,
+        connectionStateVersion: true,
         connectionIntent: true,
       },
     });
@@ -1068,6 +1071,7 @@ export class WhatsAppInstancesService implements OnModuleInit {
         connectionRequestedAt: true,
         connectionStatusReason: true,
         connectionVersion: true,
+        connectionStateVersion: true,
         connectionIntent: true,
       },
     });
@@ -1085,6 +1089,7 @@ export class WhatsAppInstancesService implements OnModuleInit {
             connectionRequestedAt: true,
             connectionStatusReason: true,
             connectionVersion: true,
+            connectionStateVersion: true,
             connectionIntent: true,
           },
         });
@@ -1093,7 +1098,8 @@ export class WhatsAppInstancesService implements OnModuleInit {
       throw new EvolutionRequestError('WhatsApp instance disappeared during connection update');
     }
 
-    return normalizeConnectionRow(row);
+    const normalized = normalizeConnectionRow(row);
+    return normalized;
   }
 
   private async applyConfirmedState(
@@ -1117,22 +1123,27 @@ export class WhatsAppInstancesService implements OnModuleInit {
       data.connectionRequestedAt = null;
     }
 
-    let version = current.connectionVersion;
+    const version = current.connectionVersion;
     let lostRace = false;
 
     if (options.intent !== undefined) {
-      // Explicit intent (manual disconnect) always wins. The atomic increment
-      // invalidates any reading that started before the operation finished.
-      const updated = await this.prisma.whatsAppInstance.update({
+      // Explicit intent (manual disconnect) always wins over readings. The
+      // token was allocated at the start of the operation, so an older reading
+      // can no longer overwrite it.
+      await this.prisma.whatsAppInstance.update({
         where: { id: current.id },
-        data: { ...data, connectionVersion: { increment: 1 } },
-        select: { connectionVersion: true },
+        data: { ...data, connectionStateVersion: version },
       });
-      version = updated.connectionVersion ?? current.connectionVersion + 1;
     } else {
+      // Only a confirmed state advances the persisted generation. Inconclusive
+      // verifications bump the allocation counter but must not invalidate a
+      // confirmed write that is still in flight.
       const applied = await this.prisma.whatsAppInstance.updateMany({
-        where: { id: current.id, connectionVersion: current.connectionVersion },
-        data,
+        where: {
+          id: current.id,
+          connectionStateVersion: { lt: version },
+        },
+        data: { ...data, connectionStateVersion: version },
       });
       lostRace = applied.count === 0;
     }
@@ -1594,17 +1605,25 @@ export class WhatsAppInstancesService implements OnModuleInit {
     options: { observedAt: Date; attemptId: string },
   ): Promise<void> {
     // An explicit request always wins over an in-flight asynchronous reading:
-    // the version bump invalidates any older generation still about to write.
-    await this.prisma.whatsAppInstance.update({
-      where: { id },
-      data: {
-        status,
-        connectionObservedAt: new Date(),
-        connectionStatusReason: null,
-        connectionRequestedAt: options.observedAt,
-        connectionIntent: WhatsAppConnectionIntent.CONNECT,
-        connectionVersion: { increment: 1 },
-      },
+    // its token is newer than any observation that started before it. Both
+    // writes share a transaction so the intent and its generation agree.
+    await this.prisma.$transaction(async (tx) => {
+      const bumped = await tx.whatsAppInstance.update({
+        where: { id },
+        data: {
+          status,
+          connectionObservedAt: new Date(),
+          connectionStatusReason: null,
+          connectionRequestedAt: options.observedAt,
+          connectionIntent: WhatsAppConnectionIntent.CONNECT,
+          connectionVersion: { increment: 1 },
+        },
+        select: { connectionVersion: true },
+      });
+      await tx.whatsAppInstance.update({
+        where: { id },
+        data: { connectionStateVersion: bumped.connectionVersion },
+      });
     });
   }
 
@@ -2354,6 +2373,7 @@ function normalizeConnectionRow(row: ConnectionRow): ConnectionRow {
     ...row,
     connectionStatusReason: row.connectionStatusReason ?? null,
     connectionVersion: row.connectionVersion ?? 0,
+    connectionStateVersion: row.connectionStateVersion ?? 0,
     connectionIntent: row.connectionIntent ?? WhatsAppConnectionIntent.NONE,
   };
 }

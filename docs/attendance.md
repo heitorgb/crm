@@ -778,12 +778,16 @@ O CRM separa quatro coisas que antes eram confundidas: **estado confirmado** pel
   conexão, `DISCONNECT` ao desconectar manualmente e `NONE` no restante. Uma instância com
   `DISCONNECT` **não** volta a `CONNECTED` por webhook atrasado nem pela reconciliação; somente uma
   nova conexão explícita (ou a pré-checagem de envio feita pelo próprio operador) rearma a sessão.
-- `WhatsAppInstance.connection_version` é a **geração** da verificação. Toda leitura/observação
-  incrementa a versão atomicamente no PostgreSQL antes de consultar o provedor, e a persistência é
-  condicional a essa versão. Duas verificações simultâneas — inclusive em processos/workers
-  diferentes — não sobrescrevem a geração mais nova; a perdedora registra
-  `whatsapp.connection.observation.ignored_stale`. Não há dependência de `Map` em memória para
-  corretude.
+- `WhatsAppInstance.connection_version` é o **contador de alocação** da verificação. Toda
+  leitura/observação incrementa esse contador atomicamente no PostgreSQL antes de consultar o
+  provedor. `connection_state_version` guarda a **última geração que realmente persistiu um estado
+  confirmado**. Uma verificação inconclusiva (timeout, HTTP 5xx, JSON inválido, `unknown`,
+  `not_found`) pode alocar uma geração nova, mas **não** avança `connection_state_version` nem
+  invalida uma escrita confirmada que ainda está em andamento. A persistência de um estado só
+  ocorre quando `connection_state_version < connection_version` da verificação; a perdedora registra
+  `whatsapp.connection.observation.ignored_stale`. Isso vale inclusive entre processos/workers
+  diferentes e impede que um replay concorrente e inconclusivo de webhook derrube uma confirmação
+  válida. Não há dependência de `Map` em memória para corretude.
 - **Webhook não é estado.** `connection.update`, `status.instance` e `logout.instance` são apenas
   sinais para verificar a sessão. O estado é decidido por uma leitura REST atual de
   `GET /instance/connectionState`.

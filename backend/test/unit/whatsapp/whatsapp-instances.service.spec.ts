@@ -270,6 +270,7 @@ describe('WhatsAppInstancesService connection state machine', () => {
     connectionRequestedAt: null,
     connectionStatusReason: null,
     connectionVersion: 3,
+    connectionStateVersion: 3,
     connectionIntent: 'NONE',
   };
 
@@ -358,11 +359,12 @@ describe('WhatsAppInstancesService connection state machine', () => {
     expect(evolution.getConnectionState).toHaveBeenCalledTimes(3);
     expect(prisma.whatsAppInstance.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 'i1', connectionVersion: 3 },
+        where: { id: 'i1', connectionStateVersion: { lt: 3 } },
         data: expect.objectContaining({
           status: 'DISCONNECTED',
           connectionStatusReason: 401,
           connectionRequestedAt: null,
+          connectionStateVersion: 3,
         }),
       }),
     );
@@ -408,9 +410,14 @@ describe('WhatsAppInstancesService connection state machine', () => {
     seed(prisma);
     prisma.whatsAppInstance.updateMany.mockResolvedValue({ count: 0 });
     prisma.whatsAppInstance.findUnique
-      .mockResolvedValueOnce({ ...row, connectionVersion: 3 })
-      .mockResolvedValueOnce({ ...row, connectionVersion: 3 })
-      .mockResolvedValueOnce({ ...row, status: 'CONNECTED', connectionVersion: 9 });
+      .mockResolvedValueOnce({ ...row, connectionVersion: 3, connectionStateVersion: 3 })
+      .mockResolvedValueOnce({ ...row, connectionVersion: 3, connectionStateVersion: 3 })
+      .mockResolvedValueOnce({
+        ...row,
+        status: 'CONNECTED',
+        connectionVersion: 9,
+        connectionStateVersion: 9,
+      });
 
     const result = await service.applyConnectionObservation('inst-1', 'open', {
       source: 'webhook',
@@ -422,6 +429,28 @@ describe('WhatsAppInstancesService connection state machine', () => {
       ignored: true,
       version: 9,
     });
+  });
+
+  it('does not let an inconclusive concurrent verification block a confirmed close', async () => {
+    const { service, prisma, evolution } = createHarness({});
+    seed(prisma, { connectionVersion: 5, connectionStateVersion: 2 });
+    evolution.getConnectionState.mockResolvedValue({ instance: 'inst-1', state: 'close' });
+
+    const result = await service.applyConnectionObservation('inst-1', 'close', {
+      source: 'webhook',
+      reason: 401,
+    });
+
+    expect(result).toMatchObject({ status: 'DISCONNECTED', changed: true });
+    expect(prisma.whatsAppInstance.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'i1', connectionStateVersion: { lt: 5 } },
+        data: expect.objectContaining({
+          status: 'DISCONNECTED',
+          connectionStateVersion: 5,
+        }),
+      }),
+    );
   });
 
   it('ignores a missing state or unknown instance', async () => {
@@ -485,6 +514,7 @@ describe('WhatsAppInstancesService send preflight', () => {
     connectionRequestedAt: null,
     connectionStatusReason: null,
     connectionVersion: 2,
+    connectionStateVersion: 2,
     connectionIntent: 'CONNECT',
   };
 
@@ -1240,6 +1270,7 @@ describe('WhatsAppInstancesService connection reconciliation', () => {
     connectionRequestedAt: null,
     connectionStatusReason: null,
     connectionVersion: 1,
+    connectionStateVersion: 1,
     connectionIntent: 'NONE',
   };
 
@@ -1507,6 +1538,7 @@ describe('WhatsAppInstancesService recovery after a provider reconnect', () => {
     connectionRequestedAt: null,
     connectionStatusReason: null,
     connectionVersion: 2,
+    connectionStateVersion: 2,
     connectionIntent: 'CONNECT',
   };
 

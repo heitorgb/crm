@@ -33,6 +33,7 @@ import {
   WhatsAppInstanceLimitReachedError,
   WhatsAppInstanceNameConflictError,
   WhatsAppInstanceNotFoundError,
+  WhatsAppProviderReconnectingError,
 } from './whatsapp.errors.js';
 
 export interface WhatsAppHistorySyncView {
@@ -169,8 +170,9 @@ const WEBHOOK_EVENTS = [
 const EVOLUTION_INSTANCE_POLL_INTERVAL_MS = 250;
 const EVOLUTION_INSTANCE_POLL_TIMEOUT_MS = 10_000;
 const DISCONNECT_CONFIRM_DELAY_MS = 500;
-const CONNECT_TICKET_RETRY_DELAY_MS = 1_500;
-const CONNECT_TICKET_ATTEMPTS = 2;
+const CONNECT_POLL_INTERVAL_MS = 1_000;
+const CONNECT_RESTORE_WAIT_MS = 10_000;
+const CONNECT_QR_GRACE_MS = 3_000;
 const SYSTEM_USER_ID = '00000000-0000-4000-8000-000000000001';
 const SYSTEM_MEMBERSHIP_ID = '00000000-0000-4000-8000-000000000002';
 const TERMINAL_DISCONNECT_REASONS = new Set([401, 403]);
@@ -182,6 +184,12 @@ const NON_RESTORABLE_REASONS = new Set([401, 402, 403, 406, 411, 440]);
 const RESTORE_MAX_ATTEMPTS = 3;
 const RESTORE_BACKOFF_BASE_MS = 60_000;
 const RESTORE_POLL_INTERVAL_MS = 1_000;
+// Evolution 2.4 does not reconnect these closes by itself (codesToNotReconnect):
+// a negative reading after them is a real disconnection, never a flap.
+const FINAL_CLOSE_REASONS = new Set([401, 402, 403, 406, 408]);
+const CONFLICT_STORM_WINDOW_MS = 5 * 60_000;
+const CONFLICT_STORM_THRESHOLD = 5;
+const CONFLICT_STORM_LOG_INTERVAL_MS = 10 * 60_000;
 const UNEXPECTED_RESTORE_SKIPS = new Set([
   'provider_unavailable',
   'provider_instance_missing',
@@ -225,6 +233,14 @@ interface RestoreCandidate {
   connectionObservedAt: Date | null;
 }
 
+/** What this process recently heard from the provider, per Evolution instance. */
+interface ProviderSignals {
+  lastActivityAt: number;
+  lastOpenAt: number;
+  conflictCloses: number[];
+  stormLoggedAt: number;
+}
+
 interface RestoreState {
   /** First time this process saw the close confirmed; periodic reads refresh the DB timestamp. */
   closedSince: number;
@@ -240,6 +256,7 @@ export class WhatsAppInstancesService implements OnModuleInit {
   private readonly historyOperations = new Map<string, Promise<void>>();
   private readonly qrCache = new Map<string, WhatsAppConnectionQr>();
   private readonly restoreStates = new Map<string, RestoreState>();
+  private readonly providerSignals = new Map<string, ProviderSignals>();
   private reconcileRunning = false;
 
   constructor(
@@ -492,7 +509,7 @@ export class WhatsAppInstancesService implements OnModuleInit {
 
       let attempt: ConnectionAttempt;
       try {
-        attempt = await this.ensureInstanceAndConnect(instance.instanceName);
+        attempt = await this.ensureInstanceAndConnect(instance);
       } catch (error) {
         this.logConnection('failed', {
           instanceId: instance.id,
@@ -658,6 +675,9 @@ export class WhatsAppInstancesService implements OnModuleInit {
     state: string | null,
     options: ConnectionObservationOptions = {},
   ): Promise<AppliedConnectionObservation | null> {
+    if ((options.source ?? 'webhook') === 'webhook') {
+      this.recordProviderActivity(instanceName, state, options.reason ?? null, options.eventType);
+    }
     const status = mapEvolutionState(state);
     if (status === null) {
       this.logConnection('snapshot.inconclusive', {
@@ -924,6 +944,33 @@ export class WhatsAppInstancesService implements OnModuleInit {
       );
     }
 
+    // A session that was open seconds ago and reads closed now is flapping:
+    // the provider is reconnecting it (or two sockets keep replacing each
+    // other). Downgrading would block sends that the provider still delivers.
+    if (this.isFlapping(instanceName, options.reason ?? null)) {
+      this.logConnection('snapshot.inconclusive', {
+        instanceId: current.id,
+        tenantId: current.tenantId,
+        instanceName,
+        source,
+        reason: 'recently_open',
+        providerStatus: negativeStatus,
+        lastOpenMsAgo: Date.now() - this.signalsFor(instanceName).lastOpenAt,
+        previousStatus: current.status,
+        version: current.connectionVersion,
+      });
+      return this.observationResult(
+        current,
+        current.status,
+        receivedAt,
+        current.connectionStatusReason,
+        source,
+        false,
+        current.connectionVersion,
+        true,
+      );
+    }
+
     if (options.skipConfirmation || source === 'send') {
       return this.observationResult(
         current,
@@ -1067,6 +1114,9 @@ export class WhatsAppInstancesService implements OnModuleInit {
       const status = mapEvolutionState(snapshot.state);
       if (status === null) {
         return { kind: 'unknown', raw: snapshot.state };
+      }
+      if (status === WhatsAppInstanceStatus.CONNECTED) {
+        this.signalsFor(instanceName).lastOpenAt = Date.now();
       }
       return { kind: 'confirmed', status, raw: snapshot.state };
     } catch (error) {
@@ -1294,6 +1344,7 @@ export class WhatsAppInstancesService implements OnModuleInit {
     payloadData: unknown,
     observedAt: Date,
   ): Promise<void> {
+    this.recordProviderActivity(instance.instanceName, 'connecting', null);
     const ticket = extractProviderQr(payloadData);
     if (!ticket) {
       return;
@@ -1571,8 +1622,15 @@ export class WhatsAppInstancesService implements OnModuleInit {
     // The provider reconnects a recoverable close by itself a few seconds
     // later. Calling connect inside that window would open a second socket for
     // the same session, and both would keep replacing each other.
-    if (now - state.closedSince < this.config.get('WHATSAPP_AUTO_RESTORE_MIN_CLOSED_MS')) {
+    const minClosedMs = this.config.get('WHATSAPP_AUTO_RESTORE_MIN_CLOSED_MS');
+    if (now - state.closedSince < minClosedMs) {
       return 'within_provider_reconnect_window';
+    }
+    // Any recent connection event means the provider is still working on this
+    // session (reconnecting, or two sockets replacing each other). A connect
+    // now would add one more socket to it.
+    if (now - this.signalsFor(row.instanceName).lastActivityAt < minClosedMs) {
+      return 'provider_active';
     }
     if (state.exhausted) {
       return 'attempts_exhausted';
@@ -1608,6 +1666,78 @@ export class WhatsAppInstancesService implements OnModuleInit {
     }
 
     return qrIssued() ? 'qr' : 'not_open';
+  }
+
+  private signalsFor(instanceName: string): ProviderSignals {
+    let signals = this.providerSignals.get(instanceName);
+    if (!signals) {
+      signals = { lastActivityAt: 0, lastOpenAt: 0, conflictCloses: [], stormLoggedAt: 0 };
+      this.providerSignals.set(instanceName, signals);
+    }
+    return signals;
+  }
+
+  private isProviderActive(instanceName: string, windowMs: number): boolean {
+    return Date.now() - this.signalsFor(instanceName).lastActivityAt < windowMs;
+  }
+
+  private isFlapping(instanceName: string, reason: number | null): boolean {
+    const windowMs = this.config.get('WHATSAPP_CONNECTION_FLAP_WINDOW_MS');
+    if (!windowMs || (reason !== null && FINAL_CLOSE_REASONS.has(reason))) {
+      return false;
+    }
+    return Date.now() - this.signalsFor(instanceName).lastOpenAt < windowMs;
+  }
+
+  /**
+   * Connection webhooks of a connection still in progress show the provider is
+   * working on the session. Repeated `close` 440 (stream conflict "replaced")
+   * means two sockets share the same credentials and keep replacing each
+   * other: Evolution reconnects every one of them, so the loop never ends by
+   * itself. Only restarting the Evolution process (or a new pairing) stops it,
+   * so it is reported loudly.
+   */
+  private recordProviderActivity(
+    instanceName: string,
+    state: string | null,
+    reason: number | null,
+    eventType?: string,
+  ): void {
+    const now = Date.now();
+    const signals = this.signalsFor(instanceName);
+    const normalized = state?.toLowerCase() ?? null;
+    // After `refused`, a logout or a close it does not reconnect, Evolution
+    // leaves the session alone: only events of a connection still in progress
+    // mean it will keep working on it.
+    const providerGaveUp =
+      eventType === 'logout.instance' ||
+      eventType === 'status.instance' ||
+      normalized === 'refused' ||
+      (normalized === 'close' && reason !== null && FINAL_CLOSE_REASONS.has(reason));
+    if (!providerGaveUp) {
+      signals.lastActivityAt = now;
+    }
+
+    if (reason !== SESSION_REPLACED_REASON || state?.toLowerCase() !== 'close') {
+      return;
+    }
+    signals.conflictCloses = signals.conflictCloses
+      .filter((at) => now - at < CONFLICT_STORM_WINDOW_MS)
+      .concat(now);
+    if (
+      signals.conflictCloses.length >= CONFLICT_STORM_THRESHOLD &&
+      now - signals.stormLoggedAt >= CONFLICT_STORM_LOG_INTERVAL_MS
+    ) {
+      signals.stormLoggedAt = now;
+      this.logger.warn(
+        `whatsapp.connection.conflict_storm ${JSON.stringify({
+          instanceName,
+          conflicts: signals.conflictCloses.length,
+          windowMs: CONFLICT_STORM_WINDOW_MS,
+          hint: 'two provider sockets share this session and keep replacing each other; restart the Evolution container',
+        })}`,
+      );
+    }
   }
 
   private async loadProviderSnapshot(): Promise<EvolutionInstanceSummary[] | null> {
@@ -2086,7 +2216,11 @@ export class WhatsAppInstancesService implements OnModuleInit {
     return this.tenantContext.run({ tenant: context }, fn);
   }
 
-  private async ensureInstanceAndConnect(instanceName: string): Promise<ConnectionAttempt> {
+  private async ensureInstanceAndConnect(instance: {
+    id: string;
+    instanceName: string;
+  }): Promise<ConnectionAttempt> {
+    const { instanceName } = instance;
     if (!(await this.evolution.instanceExists(instanceName))) {
       try {
         // The create response already carries the QR code for a fresh instance.
@@ -2108,9 +2242,24 @@ export class WhatsAppInstancesService implements OnModuleInit {
       return { raw: null, state };
     }
 
-    const raw = await this.connectUntilTicket(instanceName);
-    if (raw !== null) {
-      return { raw, state };
+    // On `close`, Evolution opens a new socket without ending the previous
+    // one. If it is still reconnecting the session by itself, a connect now
+    // creates a duplicate that replaces the other forever (stream conflict
+    // 440). Wait for its own reconnection instead.
+    const settleMs = this.config.get('WHATSAPP_PROVIDER_SETTLE_MS');
+    if (state === 'close' && this.isProviderActive(instanceName, settleMs)) {
+      const settled = await this.waitForProviderToSettle(instanceName, settleMs);
+      if (settled === 'open') {
+        return { raw: null, state: 'open' };
+      }
+      if (settled === 'active') {
+        throw new WhatsAppProviderReconnectingError();
+      }
+    }
+
+    const attempt = await this.requestConnection(instance);
+    if (attempt !== null) {
+      return attempt;
     }
 
     if (!this.config.get('WHATSAPP_AUTO_RECREATE_STALE_SESSION')) {
@@ -2128,25 +2277,89 @@ export class WhatsAppInstancesService implements OnModuleInit {
     return { raw: await this.recreateEvolutionInstance(instanceName), state: 'close' };
   }
 
-  private async connectUntilTicket(instanceName: string): Promise<unknown | null> {
-    for (let attempt = 0; attempt < CONNECT_TICKET_ATTEMPTS; attempt += 1) {
-      try {
-        const raw = await this.evolution.connect(instanceName);
-        if (hasConnectionTicket(extractConnectionTicket(raw))) {
-          return raw;
-        }
-      } catch (error) {
-        if (!isEvolutionMissing(error)) {
-          throw error;
-        }
+  private async waitForProviderToSettle(
+    instanceName: string,
+    settleMs: number,
+  ): Promise<'open' | 'quiet' | 'active'> {
+    const deadline = Date.now() + settleMs;
+
+    while (Date.now() < deadline) {
+      await delay(Math.min(CONNECT_POLL_INTERVAL_MS, Math.max(deadline - Date.now(), 0)));
+      const snapshot = await this.readProviderSnapshot(instanceName);
+      if (snapshot.kind === 'confirmed' && snapshot.status === WhatsAppInstanceStatus.CONNECTED) {
+        return 'open';
+      }
+      if (
+        snapshot.kind === 'confirmed' &&
+        snapshot.status === WhatsAppInstanceStatus.DISCONNECTED &&
+        !this.isProviderActive(instanceName, settleMs)
+      ) {
+        return 'quiet';
+      }
+    }
+
+    return this.isProviderActive(instanceName, settleMs) ? 'active' : 'quiet';
+  }
+
+  /**
+   * A single connect. Without a ticket in the answer, the provider is either
+   * restoring the stored session (it opens without a QR code) or the QR is not
+   * ready yet. Connect is only repeated while the provider reports
+   * `connecting`, where Evolution just returns the current QR; on `close` it
+   * would open another socket for the same session.
+   */
+  private async requestConnection(instance: {
+    id: string;
+    instanceName: string;
+  }): Promise<ConnectionAttempt | null> {
+    const startedAt = Date.now();
+    try {
+      const raw = await this.evolution.connect(instance.instanceName);
+      if (hasConnectionTicket(extractConnectionTicket(raw))) {
+        return { raw, state: 'close' };
+      }
+    } catch (error) {
+      if (!isEvolutionMissing(error)) {
+        throw error;
+      }
+      return null;
+    }
+
+    const deadline = startedAt + CONNECT_RESTORE_WAIT_MS;
+    for (;;) {
+      const snapshot = await this.readProviderSnapshot(instance.instanceName);
+      if (snapshot.kind === 'confirmed' && snapshot.status === WhatsAppInstanceStatus.CONNECTED) {
+        return { raw: null, state: 'open' };
+      }
+
+      const cached = this.qrCache.get(instance.id);
+      if (cached && cached.updatedAt.getTime() >= startedAt) {
+        return {
+          raw: { base64: cached.qrCodeBase64, code: cached.code, pairingCode: cached.pairingCode },
+          state: 'connecting',
+        };
+      }
+
+      if (snapshot.kind === 'confirmed' && snapshot.status === WhatsAppInstanceStatus.DISCONNECTED) {
         return null;
       }
 
-      if (attempt < CONNECT_TICKET_ATTEMPTS - 1) {
-        await delay(CONNECT_TICKET_RETRY_DELAY_MS);
+      if (
+        snapshot.kind === 'confirmed' &&
+        snapshot.status === WhatsAppInstanceStatus.CONNECTING &&
+        Date.now() - startedAt >= CONNECT_QR_GRACE_MS
+      ) {
+        const raw = await this.evolution.connect(instance.instanceName).catch(() => null);
+        if (hasConnectionTicket(extractConnectionTicket(raw))) {
+          return { raw, state: 'connecting' };
+        }
       }
+
+      if (Date.now() >= deadline) {
+        return null;
+      }
+      await delay(Math.min(CONNECT_POLL_INTERVAL_MS, Math.max(deadline - Date.now(), 0)));
     }
-    return null;
   }
 
   private async recreateEvolutionInstance(instanceName: string): Promise<unknown> {

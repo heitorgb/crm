@@ -65,6 +65,9 @@ for container in "$CRM_BACKEND" "$CRM_DB" "$EVO" "$EVO_DB" "$EVO_REDIS"; do
   docker inspect -f '{{.Name}} | imagem={{.Config.Image}} | estado={{.State.Status}} | iniciado={{.State.StartedAt}} | reinícios={{.RestartCount}} | OOMKilled={{.State.OOMKilled}}' "$container" 2>&1
 done
 docker stats --no-stream --format '{{.Name}} cpu={{.CPUPerc}} mem={{.MemUsage}}' $EVO $CRM_BACKEND 2>/dev/null
+echo
+echo "Todos os containers da Evolution (mais de um com a mesma base derruba a sessão):"
+docker ps -a --format '{{.Names}} | {{.Image}} | {{.Status}}' | grep -i 'evolution' | grep -viE 'postgres|redis'
 
 section "Configuração da Evolution (sem segredos)"
 if [[ -n "$EVO" ]]; then
@@ -102,7 +105,36 @@ FROM webhook_events
 WHERE event_type IN ('connection.update', 'status.instance', 'logout.instance')
   AND created_at > now() - interval '${DAYS} days'
 ORDER BY created_at DESC
-LIMIT 300;
+LIMIT 120;
+SQL
+
+  section "CRM: eventos de conexão por hora e instância (últimos ${DAYS} dias) — onde o loop começa"
+  crm_sql <<SQL
+SELECT to_char(date_trunc('hour', (created_at AT TIME ZONE 'UTC') AT TIME ZONE 'America/Sao_Paulo'), 'YYYY-MM-DD HH24:00') AS hora_brt,
+       payload->>'instance' AS instancia,
+       count(*) FILTER (WHERE payload->'data'->>'state' = 'connecting') AS connecting,
+       count(*) FILTER (WHERE payload->'data'->>'state' = 'open') AS open,
+       count(*) FILTER (WHERE payload->'data'->>'state' = 'close') AS close,
+       count(*) FILTER (WHERE payload->'data'->>'statusReason' = '440') AS conflito_440
+FROM webhook_events
+WHERE event_type = 'connection.update'
+  AND created_at > now() - interval '${DAYS} days'
+GROUP BY 1, 2
+ORDER BY 1 DESC, 2;
+SQL
+
+  section "CRM: origem dos eventos de conexão (mais de um servidor = outra Evolution com a mesma sessão)"
+  crm_sql <<SQL
+SELECT payload->>'server_url' AS servidor,
+       payload->>'instance' AS instancia,
+       count(*) AS eventos,
+       to_char((min(created_at) AT TIME ZONE 'UTC') AT TIME ZONE 'America/Sao_Paulo', 'YYYY-MM-DD HH24:MI') AS primeiro_brt,
+       to_char((max(created_at) AT TIME ZONE 'UTC') AT TIME ZONE 'America/Sao_Paulo', 'YYYY-MM-DD HH24:MI') AS ultimo_brt
+FROM webhook_events
+WHERE event_type IN ('connection.update', 'status.instance', 'logout.instance')
+  AND created_at > now() - interval '${DAYS} days'
+GROUP BY 1, 2
+ORDER BY 2, 3 DESC;
 SQL
 
   section "CRM: resumo dos eventos de conexão (últimos ${DAYS} dias)"
@@ -194,15 +226,20 @@ fi
 
 if [[ -n "$CRM_BACKEND" ]]; then
   section "Backend: logs de conexão/envio (últimas ${HOURS}h, até 400 linhas)"
-  docker logs --since "${HOURS}h" "$CRM_BACKEND" 2>&1 |
+  docker logs --timestamps --since "${HOURS}h" "$CRM_BACKEND" 2>&1 |
     grep -E 'whatsapp\.connection\.|whatsapp\.send\.(failed|skipped)|Connection reconciliation|Evolution request failed|reconcil' |
+    grep -vE 'whatsapp\.connection\.(webhook\.received|snapshot\.confirmed)' |
     grep -vE 'whatsapp\.connection\.reconciled [{][\\]?"scanned[\\]?":[0-9]+,[\\]?"changed[\\]?":0,[\\]?"failed[\\]?":0[}]' |
     tail -n 400 | mask
 fi
 
 if [[ -n "$EVO" ]]; then
   section "Evolution: logs relevantes (últimas ${HOURS}h, até 300 linhas)"
-  docker logs --since "${HOURS}h" "$EVO" 2>&1 |
+  echo "Conflitos 'replaced' (duas conexões com a mesma sessão) por hora (UTC):"
+  docker logs --timestamps --since "${HOURS}h" "$EVO" 2>&1 |
+    grep '"conflict"' | grep -o '^[0-9-]*T[0-9][0-9]' | sort | uniq -c
+  echo
+  docker logs --timestamps --since "${HOURS}h" "$EVO" 2>&1 |
     grep -iE 'connection (update|closed)|reconnect|initial connection|skipping|logout|removed|stream:error|stream errored|connected to whatsapp|not connection|unhandled|error' |
     grep -viE 'apikey|authorization' |
     tail -n 300 | mask

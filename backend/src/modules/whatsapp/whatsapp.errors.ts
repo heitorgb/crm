@@ -22,6 +22,16 @@ export class WhatsAppConnectionInProgressError extends AppException {
   }
 }
 
+export class WhatsAppProviderReconnectingError extends AppException {
+  constructor() {
+    super(
+      'WHATSAPP_PROVIDER_RECONNECTING',
+      'A Evolution está reconectando este número neste momento. Aguarde alguns segundos e atualize a página: conectar agora abriria uma conexão duplicada.',
+      409,
+    );
+  }
+}
+
 export class WhatsAppInstanceLimitReachedError extends AppException {
   constructor(used: number) {
     const message =

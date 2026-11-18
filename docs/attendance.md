@@ -825,7 +825,9 @@ O CRM separa quatro coisas que antes eram confundidas: **estado confirmado** pel
   `WHATSAPP_CONNECTION_CONFIRM_INTERVAL_MS`, padrão 500 ms). Uma única leitura negativa, um
   `close` transitório ou um evento atrasado não derrubam a instância. Se qualquer leitura
   confirmar `open`, o CRM recupera `CONNECTED`; se alguma for `connecting`, a confirmação é
-  inconclusiva e o último estado é preservado.
+  inconclusiva e o último estado é preservado. Uma leitura negativa até
+  `WHATSAPP_CONNECTION_FLAP_WINDOW_MS` depois de uma leitura `open` também é inconclusiva (oscilação),
+  exceto para `401`/`402`/`403`/`406`/`408`. Ver "Loop de conflito".
 - Timeout, falha de rede, HTTP 500/502/503, JSON inválido, corpo sem `instance.state`, estado
   desconhecido e instância não encontrada são **inconclusivos**: preservam o último estado
   confirmado e são registrados como `whatsapp.connection.snapshot.inconclusive`. Nunca viram
@@ -907,6 +909,10 @@ O que o CRM faz (`WhatsAppInstancesService.restoreAbandonedSession`): repete aut
    `connecting` (QR em andamento) nem indeterminada.
 6. Não há conexão, desconexão ou restauração em andamento para a mesma instância. A trava é
    verificada de novo imediatamente antes do `connect`.
+7. A Evolution está quieta: nenhum evento de conexão (`connection.update`, `status.instance`,
+   `logout.instance` ou QR) chegou nos últimos `WHATSAPP_AUTO_RESTORE_MIN_CLOSED_MS`. Qualquer
+   evento recente significa que ela ainda está trabalhando na sessão; um `connect` nesse momento
+   somaria mais um socket ao loop descrito em "Loop de conflito" abaixo.
 
 Depois do `connect`, o CRM aguarda até `WHATSAPP_AUTO_RESTORE_WAIT_MS` (padrão 15 s) pelo `open`. Em
 caso de sucesso, aplica `CONNECTED` pela mesma máquina de estados (geração/versionamento, evento
@@ -924,6 +930,57 @@ envio (quem tenta enviar destrava a sessão na hora, ver abaixo). Os "pulos" rot
 Para desligar sem deploy de código: `WHATSAPP_AUTO_RESTORE_ENABLED=false` no `backend/.env` e reinício
 do backend.
 
+#### Loop de conflito: duas conexões com a mesma sessão
+
+Diagnóstico de produção (18/11/2026), com `scripts/whatsapp-diagnostics.sh`:
+
+- A instância `Uti dos celulares` recebia cerca de 100 eventos de conexão por minuto: `connecting` →
+  `open` → `close 440`, com 3 ou 4 `connecting` no mesmo segundo.
+- Em 7 dias foram ~30 mil eventos, entre eles 1.609 `close 440` e 900 `close 428`.
+- O log da Evolution trazia `stream:error` com `conflict type="replaced"`: o servidor do WhatsApp avisa
+  que outra conexão com as **mesmas credenciais** assumiu a sessão.
+- Os envios funcionavam (nenhuma mensagem `FAILED` em 7 dias). O que bloqueava o atendente era o CRM
+  marcando a instância como desconectada a cada oscilação.
+
+Mecanismo, confirmado no código da Evolution 2.4.0-rc2:
+
+- `GET /instance/connect` numa instância `close` chama `connectToWhatsapp`, que cria um socket novo
+  **sem encerrar o anterior**.
+- Se isso acontece enquanto a Evolution ainda reconecta sozinha (ela espera 3 s após uma queda), ou
+  enquanto um socket antigo ainda vive, passam a existir dois sockets da mesma sessão. O WhatsApp
+  derruba um deles (`440`), a Evolution reconecta o derrubado, que derruba o outro, e assim por
+  diante. O loop não termina sozinho.
+- O webhook de `open` só é enviado depois de vários `await` e espalha o `stateConnection`
+  compartilhado da instância. Por isso, com vários sockets, ele chega como `close 440`: é assim que
+  aparecem os "close 440" no CRM, mesmo a Evolution não enviando webhook de queda recuperável.
+
+Como sair do loop: reiniciar o processo da Evolution (`docker restart orderup-evolution`). Isso
+encerra todos os sockets; na subida, ela abre um único socket por instância com a sessão salva,
+sem QR.
+
+O que o CRM faz para não criar nem alimentar o loop:
+
+- **Conectar manual** (`WhatsAppInstancesService.connect`):
+  - Se a Evolution informa `close` mas enviou eventos de conexão nos últimos
+    `WHATSAPP_PROVIDER_SETTLE_MS` (padrão 15 s), o CRM **não** chama `connect`. Ele espera a
+    reconexão da própria Evolution: se ela abrir, a instância fica conectada sem QR; se continuar
+    reconectando, responde `409 WHATSAPP_PROVIDER_RECONNECTING`.
+  - Com a Evolution quieta, o `connect` é feito **uma única vez**. Ele só é repetido com a Evolution
+    em `connecting`, quando ela apenas devolve o QR atual. Repetir com `close` abriria outro socket.
+  - Se a sessão salva for restaurada sem QR, o CRM aguarda o `open` (até 10 s) e responde
+    "conectado", em vez de mostrar um QR antigo ou dar erro.
+- **Oscilação não derruba o status**: uma leitura `close`/`refused` até
+  `WHATSAPP_CONNECTION_FLAP_WINDOW_MS` (padrão 30 s) depois de uma leitura `open` é tratada como
+  inconclusiva (`snapshot.inconclusive`, `reason: recently_open`) e mantém o estado confirmado. Assim
+  o envio continua liberado durante a oscilação. Isso não vale para `401`, `402`, `403`, `406` e
+  `408`, que a Evolution não reconecta: nesses casos a queda é aplicada na hora. `0` desliga a regra.
+- **Restauração automática** só roda com a Evolution quieta (condição 7 acima).
+- **Alerta**: 5 ou mais `close 440` em 5 minutos geram, no máximo a cada 10 minutos por instância,
+  `whatsapp.connection.conflict_storm` (warn), com a orientação de reiniciar a Evolution.
+
+Os sinais (último evento, última leitura `open`, quedas 440) ficam em memória, por processo. Depois
+de um reinício do backend, eles recomeçam vazios.
+
 #### Diagnóstico no servidor
 
 `scripts/whatsapp-diagnostics.sh` é somente leitura e mascara telefones e segredos. Execute na pasta
@@ -937,12 +994,15 @@ Ele reúne:
 
 - estado salvo das instâncias;
 - linha do tempo e resumo dos eventos de conexão (`webhook_events`, com o motivo de cada queda);
+- eventos de conexão por hora e por instância, com os `440`, para ver onde um loop começa;
+- de qual servidor vêm os eventos (`server_url`) e todos os containers da Evolution: mais de uma
+  Evolution com a mesma base também causa o loop de conflito;
 - mensagens recebidas, enviadas e falhas por hora, e falhas por código;
 - estado, motivo e horário da última desconexão no banco da Evolution;
 - se a sessão salva ainda existe no Redis/banco da Evolution;
 - reinícios e OOM dos containers;
 - configurações relevantes da Evolution;
-- logs filtrados do backend e da Evolution.
+- conflitos `replaced` por hora e logs filtrados do backend e da Evolution, com horário.
 
 `DAYS` e `HOURS` ajustam as janelas.
 

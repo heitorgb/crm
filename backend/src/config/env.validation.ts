@@ -116,6 +116,8 @@ const integrationEnvSchema = z.object({
   WHATSAPP_CONNECTION_CONFIRM_READS: z.coerce.number().int().min(2).max(10).default(3),
   WHATSAPP_CONNECTION_CONFIRM_INTERVAL_MS: z.coerce.number().int().min(0).default(500),
   WHATSAPP_CONNECT_FLOW_GRACE_MS: z.coerce.number().int().min(0).default(20_000),
+  WHATSAPP_CONNECTION_FLAP_WINDOW_MS: z.coerce.number().int().min(0).max(300_000).default(30_000),
+  WHATSAPP_PROVIDER_SETTLE_MS: z.coerce.number().int().min(1_000).max(60_000).default(15_000),
   WHATSAPP_QR_CACHE_TTL_MS: z.coerce.number().int().min(1_000).default(60_000),
   WHATSAPP_AUTO_RECREATE_STALE_SESSION: optionalBoolean.default(false),
   WHATSAPP_AUTO_RESTORE_ENABLED: optionalBoolean.default(true),

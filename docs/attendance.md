@@ -857,14 +857,94 @@ O CRM separa quatro coisas que antes eram confundidas: **estado confirmado** pel
 - `connectionState: open` **não** é prova de que o envio funciona: sessões degradadas
   (`Stream Errored (conflict)`, `device_removed`, `Connection Closed`) podem continuar reportando
   `open`. O webhook continua sendo útil como sinal, mas agora ele dispara uma verificação em vez de
-  decretar desconexão. A recuperação de uma sessão realmente caída continua sendo uma ação do
-  operador.
+  decretar desconexão. Uma sessão que a Evolution fechou e abandonou é restaurada automaticamente
+  (ver "Sessão abandonada pela Evolution" abaixo); as demais quedas continuam exigindo o operador.
+- Uma leitura periódica não traz motivo. Ao confirmar de novo o mesmo estado, ela **preserva** o
+  motivo informado pelo provedor na queda (`connection_status_reason`), em vez de apagá-lo.
 - **Sessão única por número:** o tratamento de sessões duplicadas (`ownerJid` em
   `GET /instance/fetchInstances`) foi preservado. Ao conectar (ou na reconciliação), instâncias
   órfãs e instâncias do mesmo tenant com o mesmo número são encerradas e ficam `DISCONNECTED` com
   motivo `440`. Sessões de outro tenant nunca são tocadas — apenas logadas
   (`whatsapp.connection.duplicate_session_foreign_tenant`). Falha nessa verificação nunca impede a
   atualização do estado da conexão.
+
+#### Sessão abandonada pela Evolution (restauração automática)
+
+Sintoma em produção: o aparelho continua na lista de dispositivos conectados do celular, mas o CRM
+passa a mostrar a instância desconectada e o envio é bloqueado. Ao clicar em **Conectar**, a sessão
+volta sozinha, **sem** ler QR.
+
+Causa, confirmada no código da Evolution 2.4.0-rc2 (`whatsapp.baileys.service.ts`,
+`connectionUpdate`) e em relatos da comunidade sobre a 2.3.7/2.4:
+
+- Num fechamento recuperável (rede, `428`, `500`, `503`, `515`...), a Evolution faz **uma única**
+  tentativa de reconexão, 3 s depois, dentro de um `setTimeout` sem tratamento de erro. Se essa
+  tentativa falha, nada tenta de novo, e nenhum webhook de `close` é enviado. O estado fica `close`
+  para sempre, mas a sessão salva (no Redis, com `CACHE_REDIS_SAVE_INSTANCES=true`) continua válida.
+- Depois de um reinício da Evolution, `instance.wuid` só é preenchido no primeiro `open`. Se a
+  primeira conexão cair antes de abrir, o ramo `isInitialConnection` retorna sem reconectar ("Initial
+  connection closed, waiting for QR code generation..."), com o mesmo resultado.
+- `GET /instance/connect` numa instância `close` chama `connectToWhatsapp`, que reaproveita a sessão
+  salva e abre sem QR. Por isso a reconexão manual funciona.
+- Já os códigos que a Evolution trata como finais (`401`, `402`, `403`, `406` e, a partir da
+  2.4.0-rc2, também `408`) apagam a sessão salva (`logout.instance` → `cleaningUp`). Nesses casos é
+  preciso um novo QR.
+
+O que o CRM faz (`WhatsAppInstancesService.restoreAbandonedSession`): repete automaticamente o mesmo
+`GET /instance/connect` da reconexão manual, somente quando **todas** as condições valem:
+
+1. `WHATSAPP_AUTO_RESTORE_ENABLED` (padrão `true`).
+2. A instância está `DISCONNECTED` confirmada pelo CRM e a intenção **não** é `DISCONNECT`.
+3. O motivo da queda não exige novo pareamento: `401`, `402`, `403`, `406`, `411` e `440` nunca são
+   restaurados. `440`/`411` indicam outra sessão ou outro aparelho no mesmo número; restaurar
+   brigaria com ela. `408` é tentado: se a Evolution tiver apagado a sessão, ela responde com QR e o
+   CRM para na primeira tentativa.
+4. A queda foi confirmada há pelo menos `WHATSAPP_AUTO_RESTORE_MIN_CLOSED_MS` (padrão 30 s). O
+   instante usado é o da primeira confirmação vista pelo processo, porque a leitura periódica atualiza
+   `connection_observed_at`. Isso evita competir com a reconexão da própria Evolution: duas conexões
+   simultâneas abririam dois sockets da mesma sessão, que se derrubariam em loop.
+5. A instância já foi pareada (`ownerJid` em `fetchInstances`) e a leitura atual é `close`, não
+   `connecting` (QR em andamento) nem indeterminada.
+6. Não há conexão, desconexão ou restauração em andamento para a mesma instância. A trava é
+   verificada de novo imediatamente antes do `connect`.
+
+Depois do `connect`, o CRM aguarda até `WHATSAPP_AUTO_RESTORE_WAIT_MS` (padrão 15 s) pelo `open`. Em
+caso de sucesso, aplica `CONNECTED` pela mesma máquina de estados (geração/versionamento, evento
+`whatsapp.instance.updated`) e registra `whatsapp.connection.restore.succeeded`. Se a Evolution
+emitir um QR, a sessão salva foi perdida: o CRM registra `restore.requires_pairing` e não tenta mais
+até uma ação do operador. Sem `open` nem QR, a tentativa conta (`restore.failed`), com espera de 1 e
+depois 2 minutos, até 3 tentativas por queda (`restore.exhausted`). Falha de rede ao chamar a
+Evolution não conta tentativa. O contador zera quando a instância volta a `CONNECTED` ou numa
+conexão/desconexão manual.
+
+Gatilhos: a reconciliação periódica (a queda é restaurada em 1 a 2 minutos) e a pré-checagem de
+envio (quem tenta enviar destrava a sessão na hora, ver abaixo). Os "pulos" rotineiros
+(`restore.skipped`) só são logados quando bloqueiam um envio, para não gerar uma linha por minuto.
+
+Para desligar sem deploy de código: `WHATSAPP_AUTO_RESTORE_ENABLED=false` no `backend/.env` e reinício
+do backend.
+
+#### Diagnóstico no servidor
+
+`scripts/whatsapp-diagnostics.sh` é somente leitura e mascara telefones e segredos. Execute na pasta
+do repositório no servidor:
+
+```bash
+bash scripts/whatsapp-diagnostics.sh > /tmp/whatsapp-diagnostico.txt 2>&1
+```
+
+Ele reúne:
+
+- estado salvo das instâncias;
+- linha do tempo e resumo dos eventos de conexão (`webhook_events`, com o motivo de cada queda);
+- mensagens recebidas, enviadas e falhas por hora, e falhas por código;
+- estado, motivo e horário da última desconexão no banco da Evolution;
+- se a sessão salva ainda existe no Redis/banco da Evolution;
+- reinícios e OOM dos containers;
+- configurações relevantes da Evolution;
+- logs filtrados do backend e da Evolution.
+
+`DAYS` e `HOURS` ajustam as janelas.
 
 #### Envio com estado local divergente
 
@@ -875,10 +955,14 @@ Antes de enviar texto, mídia ou áudio, `ConversationProcessingService` chama
 2. Qualquer outro estado (exceto intenção manual `DISCONNECT`) → **uma** leitura REST atual.
 3. Leitura `open` → corrige o estado persistido para `CONNECTED` (com a mesma geração/versionamento),
    emite `whatsapp.instance.updated` e prossegue com o envio original.
-4. Leitura negativa, inconclusiva ou provedor indisponível → bloqueia com
-   `409 WHATSAPP_INSTANCE_NOT_CONNECTED`, sem persistir mensagem e **sem** recriar sessão nem gerar
-   QR.
-5. Instância desconectada manualmente → bloqueia sem consultar o provedor.
+4. Instância `DISCONNECTED` com sessão abandonada pela Evolution (regras da seção anterior) → o CRM
+   restaura a sessão com `GET /instance/connect`, aguarda o `open` (até
+   `WHATSAPP_AUTO_RESTORE_WAIT_MS`) e prossegue com o envio original. A sessão salva é reaproveitada,
+   **nunca** recriada.
+5. Leitura negativa sem restauração possível, leitura inconclusiva ou provedor indisponível →
+   bloqueia com `409 WHATSAPP_INSTANCE_NOT_CONNECTED`, sem persistir mensagem e **sem** recriar
+   sessão.
+6. Instância desconectada manualmente → bloqueia sem consultar o provedor.
 
 A pré-checagem não reexecuta o envio. Timeout na chamada de envio continua com resultado incerto:
 a mensagem fica `FAILED`, não é reenviada automaticamente e o operador decide o retry — evitando
@@ -889,9 +973,13 @@ duplicidade quando o provedor já aceitou a mensagem. As mesmas regras valem par
 
 - O envio inicial e o retry registram log estruturado (`whatsapp.send.succeeded`/`failed`) com
   `phase`, `messageId`, `tenantId`, `instance`, `endpoint`, `durationMs`, `externalMessageId` e o
-  erro sanitizado (`name`, `message`, `httpStatus`). **Nunca** são registrados tokens, API keys,
-  cookies, QR codes ou credenciais. A causa original da exceção é preservada (`Error.cause`) sem
-  vazá-la ao cliente.
+  erro sanitizado (`name`, `message`, `httpStatus` e `providerMessage`). **Nunca** são registrados
+  tokens, API keys, cookies, QR codes ou credenciais. A causa original da exceção é preservada
+  (`Error.cause`) sem vazá-la ao cliente.
+- `providerMessage` é o motivo informado pela Evolution no corpo do erro
+  (`{ status, error, response: { message } }`), por exemplo `Connection Closed`. Ele é limitado a 200
+  caracteres, tem números de 8+ dígitos (telefones) mascarados e fica só no log, nunca na resposta ao
+  cliente. Sem ele, os logs mostravam apenas o status HTTP.
 
 ### Edição de mensagem
 

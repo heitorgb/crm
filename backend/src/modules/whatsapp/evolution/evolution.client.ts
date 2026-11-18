@@ -11,15 +11,19 @@ export class EvolutionUnavailableError extends AppException {
 }
 
 export class EvolutionRequestError extends AppException {
+  /** Reason given by the provider (sanitized), for logs only; never sent to clients. */
+  readonly providerMessage: string | null;
+
   constructor(
     message = 'Evolution API request failed',
     readonly httpStatus?: number,
-    options?: { cause?: unknown },
+    options?: { cause?: unknown; providerMessage?: string | null },
   ) {
     super('EVOLUTION_REQUEST_FAILED', message, 502);
     if (options?.cause !== undefined) {
       this.cause = options.cause;
     }
+    this.providerMessage = options?.providerMessage ?? null;
   }
 }
 
@@ -536,6 +540,7 @@ export class EvolutionClient {
         throw new EvolutionRequestError(
           `Evolution API responded with status ${response.status}`,
           response.status,
+          { providerMessage: await readProviderErrorMessage(response) },
         );
       }
 
@@ -552,6 +557,43 @@ export class EvolutionClient {
       throw new EvolutionRequestError('Evolution API request failed', undefined, { cause: error });
     }
   }
+}
+
+/**
+ * Evolution answers errors as `{ status, error, response: { message } }`, where
+ * `message` is a string or a list. The text explains failures such as
+ * "Connection Closed" that the HTTP status alone hides. Phone numbers are masked.
+ */
+async function readProviderErrorMessage(response: Response): Promise<string | null> {
+  let text: string;
+  try {
+    text = (await response.text()).slice(0, 4_000);
+  } catch {
+    return null;
+  }
+
+  let body: unknown;
+  try {
+    body = JSON.parse(text) as unknown;
+  } catch {
+    body = null;
+  }
+
+  const record = isRecord(body) ? body : null;
+  const nested = record && isRecord(record.response) ? record.response.message : undefined;
+  const raw = nested ?? record?.message ?? record?.error ?? (record ? null : text);
+  const message = Array.isArray(raw)
+    ? raw.map((item) => (typeof item === 'string' ? item : JSON.stringify(item))).join('; ')
+    : typeof raw === 'string'
+      ? raw
+      : raw !== null && raw !== undefined
+        ? JSON.stringify(raw)
+        : null;
+
+  if (!message || message.trim().length === 0) {
+    return null;
+  }
+  return message.replace(/\d{8,}/g, '<number>').replace(/\s+/g, ' ').trim().slice(0, 200);
 }
 
 function extractMessageId(raw: unknown): string | undefined {

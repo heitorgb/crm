@@ -1596,3 +1596,333 @@ describe('WhatsAppInstancesService recovery after a provider reconnect', () => {
     expect(prisma.whatsAppInstance.updateMany).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * Reproduces Evolution 2.4.0-rc2: after a recoverable close the provider makes a
+ * single reconnect attempt and, when it fails, stays `close` without any webhook
+ * while the stored session is still valid. A plain `/instance/connect` restores
+ * it without a QR code; when the session was lost it starts a QR cycle instead.
+ */
+describe('WhatsAppInstancesService automatic restore of an abandoned session', () => {
+  interface FakeRow {
+    id: string;
+    tenantId: string;
+    instanceName: string;
+    status: string;
+    active: boolean;
+    connectionObservedAt: Date | null;
+    connectionRequestedAt: Date | null;
+    connectionStatusReason: number | null;
+    connectionVersion: number;
+    connectionStateVersion: number;
+    connectionIntent: string;
+  }
+
+  interface FakeProvider {
+    state: string;
+    ownerJid: string | null;
+    sessionStored: boolean;
+  }
+
+  const RESTORE_ENV = {
+    WHATSAPP_AUTO_RESTORE_ENABLED: true,
+    WHATSAPP_AUTO_RESTORE_MIN_CLOSED_MS: 30_000,
+    WHATSAPP_AUTO_RESTORE_WAIT_MS: 300,
+  };
+
+  function setup(
+    rowOverrides: Partial<FakeRow> = {},
+    providerOverrides: Partial<FakeProvider> = {},
+    env: Record<string, unknown> = {},
+  ) {
+    const harness = createHarness({ ...RESTORE_ENV, ...env });
+    const row: FakeRow = {
+      id: 'i1',
+      tenantId: 't1',
+      instanceName: 'inst-1',
+      status: 'DISCONNECTED',
+      active: true,
+      connectionObservedAt: new Date(Date.now() - 120_000),
+      connectionRequestedAt: null,
+      connectionStatusReason: null,
+      connectionVersion: 5,
+      connectionStateVersion: 5,
+      connectionIntent: 'NONE',
+      ...rowOverrides,
+    };
+    const provider: FakeProvider = {
+      state: 'close',
+      ownerJid: '5511999999999@s.whatsapp.net',
+      sessionStored: true,
+      ...providerOverrides,
+    };
+    const { prisma, evolution, service } = harness;
+
+    prisma.whatsAppInstance.findMany.mockImplementation((args: { where: { active?: boolean } }) =>
+      Promise.resolve(
+        args.where.active
+          ? [
+              {
+                id: row.id,
+                tenantId: row.tenantId,
+                instanceName: row.instanceName,
+                status: row.status,
+                connectionIntent: row.connectionIntent,
+                connectionStatusReason: row.connectionStatusReason,
+                connectionObservedAt: row.connectionObservedAt,
+              },
+            ]
+          : [],
+      ),
+    );
+    prisma.whatsAppInstance.findUnique.mockImplementation(() => Promise.resolve({ ...row }));
+    prisma.whatsAppInstance.findFirst.mockImplementation(() => Promise.resolve({ ...row }));
+    prisma.whatsAppInstance.update.mockImplementation(
+      (args: { data: { connectionVersion?: { increment: number } } }) => {
+        if (args.data.connectionVersion) {
+          row.connectionVersion += args.data.connectionVersion.increment;
+        }
+        return Promise.resolve({ ...row });
+      },
+    );
+    prisma.whatsAppInstance.updateMany.mockImplementation(
+      (args: { where: { connectionStateVersion?: { lt: number } }; data: Partial<FakeRow> }) => {
+        const limit = args.where.connectionStateVersion?.lt;
+        if (limit === undefined || row.connectionStateVersion >= limit) {
+          return Promise.resolve({ count: 0 });
+        }
+        Object.assign(row, args.data);
+        return Promise.resolve({ count: 1 });
+      },
+    );
+
+    evolution.getConnectionState.mockImplementation(() =>
+      Promise.resolve({ instance: row.instanceName, state: provider.state }),
+    );
+    evolution.fetchInstances.mockImplementation(() =>
+      Promise.resolve([
+        { name: row.instanceName, state: provider.state, ownerJid: provider.ownerJid },
+      ]),
+    );
+    evolution.connect.mockImplementation(async () => {
+      if (provider.sessionStored) {
+        provider.state = 'open';
+        return { count: 0 };
+      }
+      provider.state = 'connecting';
+      await service.applyProviderQr(
+        { id: row.id, tenantId: row.tenantId, instanceName: row.instanceName },
+        { qrcode: { base64: 'cXI=', code: '2@qr' } },
+        new Date(),
+      );
+      return { qrcode: { base64: 'cXI=' } };
+    });
+
+    return { ...harness, row, provider };
+  }
+
+  function allowNextAttempt(service: WhatsAppInstancesService): void {
+    const states = (
+      service as unknown as { restoreStates: Map<string, { nextAttemptAt: number }> }
+    ).restoreStates;
+    for (const state of states.values()) {
+      state.nextAttemptAt = 0;
+    }
+  }
+
+  it('restores a session the provider left closed, without a QR code', async () => {
+    const { service, evolution, realtime, row } = setup();
+
+    await service.reconcileConnectionStates();
+
+    expect(evolution.connect).toHaveBeenCalledTimes(1);
+    expect(evolution.connect).toHaveBeenCalledWith('inst-1');
+    expect(row.status).toBe('CONNECTED');
+    expect(row.connectionStatusReason).toBeNull();
+    expect(realtime.emitToTenant).toHaveBeenCalledWith(
+      't1',
+      'whatsapp.instance.updated',
+      expect.objectContaining({
+        instanceId: 'i1',
+        status: 'CONNECTED',
+        previousStatus: 'DISCONNECTED',
+      }),
+    );
+  });
+
+  it('does not race the reconnect the provider makes right after the close', async () => {
+    const { service, evolution, row } = setup({
+      connectionObservedAt: new Date(Date.now() - 5_000),
+    });
+
+    await service.reconcileConnectionStates();
+
+    expect(evolution.connect).not.toHaveBeenCalled();
+    expect(row.status).toBe('DISCONNECTED');
+  });
+
+  it('never restores after a manual disconnect', async () => {
+    const { service, evolution, row } = setup({ connectionIntent: 'DISCONNECT' });
+
+    await service.reconcileConnectionStates();
+
+    expect(evolution.connect).not.toHaveBeenCalled();
+    expect(row.status).toBe('DISCONNECTED');
+  });
+
+  it.each([401, 403, 440])(
+    'never restores a close that requires a new pairing (%i)',
+    async (reason) => {
+      const { service, evolution, row } = setup({ connectionStatusReason: reason });
+
+      await service.reconcileConnectionStates();
+
+      expect(evolution.connect).not.toHaveBeenCalled();
+      expect(row.status).toBe('DISCONNECTED');
+    },
+  );
+
+  it('does not restore an instance that was never paired', async () => {
+    const { service, evolution } = setup({}, { ownerJid: null });
+
+    await service.reconcileConnectionStates();
+
+    expect(evolution.connect).not.toHaveBeenCalled();
+  });
+
+  it('leaves a provider that is already connecting alone', async () => {
+    const { service, evolution } = setup({}, { state: 'connecting' });
+
+    await service.reconcileConnectionStates();
+
+    expect(evolution.connect).not.toHaveBeenCalled();
+  });
+
+  it('stops at the first QR code, because the provider lost the session', async () => {
+    const { service, evolution, row } = setup({}, { sessionStored: false });
+
+    await service.reconcileConnectionStates();
+    allowNextAttempt(service);
+    await service.reconcileConnectionStates();
+
+    expect(evolution.connect).toHaveBeenCalledTimes(1);
+    expect(row.status).toBe('DISCONNECTED');
+  });
+
+  it('waits between attempts and gives up after three failed restores', async () => {
+    const { service, evolution, row } = setup();
+    evolution.connect.mockResolvedValue({ count: 0 });
+
+    await service.reconcileConnectionStates();
+    await service.reconcileConnectionStates();
+    expect(evolution.connect).toHaveBeenCalledTimes(1);
+
+    allowNextAttempt(service);
+    await service.reconcileConnectionStates();
+    allowNextAttempt(service);
+    await service.reconcileConnectionStates();
+    allowNextAttempt(service);
+    await service.reconcileConnectionStates();
+
+    expect(evolution.connect).toHaveBeenCalledTimes(3);
+    expect(row.status).toBe('DISCONNECTED');
+  });
+
+  it('does not count an attempt when the provider cannot be reached', async () => {
+    const { service, evolution, row, provider } = setup();
+    evolution.connect
+      .mockRejectedValueOnce(new EvolutionRequestError('Evolution API request failed'))
+      .mockImplementationOnce(() => {
+        provider.state = 'open';
+        return Promise.resolve({ count: 0 });
+      });
+
+    await service.reconcileConnectionStates();
+    await service.reconcileConnectionStates();
+
+    expect(evolution.connect).toHaveBeenCalledTimes(2);
+    expect(row.status).toBe('CONNECTED');
+  });
+
+  it('counts a connect the provider answers with an error body', async () => {
+    const { service, evolution, row } = setup();
+    evolution.connect.mockResolvedValue({ error: true, message: 'Error: Connection Failure' });
+
+    await service.reconcileConnectionStates();
+    await service.reconcileConnectionStates();
+
+    expect(evolution.connect).toHaveBeenCalledTimes(1);
+    expect(row.status).toBe('DISCONNECTED');
+  });
+
+  it('keeps the close reason reported by the provider across periodic reads', async () => {
+    const { service, row } = setup({ connectionStatusReason: 408 }, { ownerJid: null });
+
+    await service.reconcileConnectionStates();
+
+    expect(row.status).toBe('DISCONNECTED');
+    expect(row.connectionStatusReason).toBe(408);
+  });
+
+  it('restores the session when an agent sends and lets the send proceed', async () => {
+    const { service, evolution, row } = setup();
+
+    await expect(service.ensureConnectedForSend('t1', 'i1')).resolves.toBe(true);
+
+    expect(evolution.connect).toHaveBeenCalledTimes(1);
+    expect(row.status).toBe('CONNECTED');
+  });
+
+  it('restores on a send right after a periodic read refreshed the close timestamp', async () => {
+    const { service, evolution, row } = setup();
+    evolution.connect.mockRejectedValueOnce(new EvolutionRequestError('Evolution API request failed'));
+
+    await service.reconcileConnectionStates();
+    expect(Date.now() - (row.connectionObservedAt?.getTime() ?? 0)).toBeLessThan(5_000);
+
+    await expect(service.ensureConnectedForSend('t1', 'i1')).resolves.toBe(true);
+    expect(evolution.connect).toHaveBeenCalledTimes(2);
+    expect(row.status).toBe('CONNECTED');
+  });
+
+  it('never runs two restores of the same session at the same time', async () => {
+    const { service, evolution, row } = setup();
+    const restore = (
+      service as unknown as {
+        restoreAbandonedSession: (
+          candidate: FakeRow,
+          trigger: 'reconcile' | 'send',
+          snapshot: unknown[] | null,
+        ) => Promise<boolean>;
+      }
+    ).restoreAbandonedSession.bind(service);
+    const snapshot = [
+      { name: 'inst-1', state: 'close', ownerJid: '5511999999999@s.whatsapp.net' },
+    ];
+
+    const results = await Promise.all([
+      restore({ ...row }, 'reconcile', snapshot),
+      restore({ ...row }, 'send', snapshot),
+    ]);
+
+    expect(evolution.connect).toHaveBeenCalledTimes(1);
+    expect(results.filter(Boolean)).toHaveLength(1);
+    expect(row.status).toBe('CONNECTED');
+  });
+
+  it('blocks the send without restoring inside the provider reconnect window', async () => {
+    const { service, evolution } = setup({ connectionObservedAt: new Date(Date.now() - 2_000) });
+
+    await expect(service.ensureConnectedForSend('t1', 'i1')).resolves.toBe(false);
+
+    expect(evolution.connect).not.toHaveBeenCalled();
+  });
+
+  it('does nothing when automatic restore is disabled', async () => {
+    const { service, evolution } = setup({}, {}, { WHATSAPP_AUTO_RESTORE_ENABLED: false });
+
+    await service.reconcileConnectionStates();
+
+    expect(evolution.connect).not.toHaveBeenCalled();
+  });
+});

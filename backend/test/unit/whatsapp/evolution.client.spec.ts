@@ -176,3 +176,41 @@ describe('EvolutionClient.fetchInstances', () => {
     ]);
   });
 });
+
+describe('EvolutionClient provider error details', () => {
+  it('keeps the provider reason for logs, masks phone numbers and keeps the public message', async () => {
+    const { client, fetchMock } = createClient();
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      text: async () =>
+        JSON.stringify({
+          status: 400,
+          error: 'Bad Request',
+          response: { message: ['Connection Closed', 'jid 5511999999999 not on WhatsApp'] },
+        }),
+    });
+
+    await expect(client.sendText('instance-1', '5511999999999', 'oi')).rejects.toMatchObject({
+      httpStatus: 400,
+      message: 'Evolution API responded with status 400',
+      providerMessage: 'Connection Closed; jid <number> not on WhatsApp',
+    });
+  });
+
+  it('tolerates an error response without a readable body', async () => {
+    const { client, fetchMock } = createClient();
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      text: async () => {
+        throw new Error('stream aborted');
+      },
+    });
+
+    await expect(client.sendText('instance-1', '5511999999999', 'oi')).rejects.toMatchObject({
+      httpStatus: 500,
+      providerMessage: null,
+    });
+  });
+});

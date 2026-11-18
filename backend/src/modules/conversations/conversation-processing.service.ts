@@ -1626,12 +1626,18 @@ function classifySendFailure(error: unknown): SendFailure {
   return { code: 'EVOLUTION_SEND_FAILED', retryable: false };
 }
 
-function sanitizeError(error: unknown): { name: string; message: string; httpStatus?: number } {
+function sanitizeError(error: unknown): {
+  name: string;
+  message: string;
+  httpStatus?: number;
+  providerMessage?: string;
+} {
   if (error instanceof EvolutionRequestError) {
     return {
       name: error.name,
       message: error.message,
       ...(error.httpStatus !== undefined ? { httpStatus: error.httpStatus } : {}),
+      ...(error.providerMessage ? { providerMessage: error.providerMessage } : {}),
     };
   }
   if (error instanceof Error) {

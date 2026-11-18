@@ -36,6 +36,7 @@ export interface WhatsAppInstance {
 export interface ConversationLastMessage {
   content: string | null;
   direction: MessageDirection;
+  status?: MessageStatus;
   senderName: string | null;
   occurredAt: string;
 }

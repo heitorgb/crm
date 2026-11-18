@@ -51,6 +51,16 @@
     --radius-md: 8px;
     --radius-lg: 16px;
     --radius-xl: 20px;
+
+    --wa-chat: 37 30% 91%;
+    --wa-chat-pattern: 37 30% 91% / 0.86;
+    --wa-header: 0 0% 100%;
+    --wa-bubble-in: 0 0% 100%;
+    --wa-bubble-out: 113 89% 91%;
+    --wa-composer: 0 0% 100%;
+    --wa-tick: 202 13% 45%;
+    --wa-tick-read: 199 79% 62%;
+    --wa-day: 0 0% 100%;
   }
 
   .dark {
@@ -95,6 +105,16 @@
     --sidebar-foreground: 220 24% 86%;
     --sidebar-accent: 224 20% 15%;
     --sidebar-border: 225 18% 16%;
+
+    --wa-chat: 202 41% 7%;
+    --wa-chat-pattern: 202 41% 7% / 0.92;
+    --wa-header: 203 32% 10%;
+    --wa-bubble-in: 203 23% 16%;
+    --wa-bubble-out: 157 59% 19%;
+    --wa-composer: 203 23% 16%;
+    --wa-tick: 203 12% 58%;
+    --wa-tick-read: 199 79% 62%;
+    --wa-day: 203 26% 13%;
   }
 
   * {
@@ -179,9 +199,9 @@
   }
 
   .chat-wallpaper {
-    background-color: hsl(var(--muted) / 0.4);
+    background-color: hsl(var(--wa-chat));
     background-image:
-      linear-gradient(hsl(var(--background) / 0.55), hsl(var(--background) / 0.55)),
+      linear-gradient(hsl(var(--wa-chat-pattern)), hsl(var(--wa-chat-pattern))),
       url('/chat-doodle.svg');
     background-repeat: repeat;
     background-size: auto, 300px 300px;

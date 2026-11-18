@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils';
 import { Header } from './header';
 import { MainContent } from './main-content';
 import { Sidebar } from './sidebar';
+import { useVisualViewportHeight } from './use-visual-viewport-height';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 
 export function AppLayout() {
@@ -24,6 +25,7 @@ export function AppLayout() {
   useMessageNotifications();
   useNativePush();
   useNoIndex();
+  useVisualViewportHeight();
 
   useEffect(() => {
     if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
@@ -42,7 +44,7 @@ export function AppLayout() {
   }, [setMobileSidebarOpen]);
 
   return (
-    <div className="flex h-screen overflow-hidden bg-background">
+    <div className="flex h-[var(--app-viewport-height,100dvh)] overflow-hidden bg-background">
       <Sidebar
         collapsed={collapsed}
         className={cn(

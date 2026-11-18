@@ -39,6 +39,7 @@ import type {
 export interface ConversationLastMessageView {
   content: string | null;
   direction: MessageDirection;
+  status: MessageStatus;
   senderName: string | null;
   occurredAt: Date;
 }
@@ -83,7 +84,7 @@ const CONVERSATION_INCLUDE = {
   messages: {
     take: 1,
     orderBy: { occurredAt: 'desc' as const },
-    select: { content: true, direction: true, senderName: true, occurredAt: true },
+    select: { content: true, direction: true, status: true, senderName: true, occurredAt: true },
   },
   tags: { select: { tag: { select: { id: true, name: true, color: true } } } },
 } satisfies Prisma.ConversationInclude;
@@ -925,6 +926,7 @@ function toConversationView(
       ? {
           content: lastMessage.content,
           direction: lastMessage.direction,
+          status: lastMessage.status,
           senderName: lastMessage.senderName,
           occurredAt: lastMessage.occurredAt,
         }

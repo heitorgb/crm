@@ -452,7 +452,7 @@ export function MessageComposer({
   });
 
   return (
-    <div className="relative border-t border-border bg-card px-2 py-2 sm:px-3 sm:py-3">
+    <div className="relative bg-wa-chat px-1.5 pb-[max(0.375rem,env(safe-area-inset-bottom))] pt-1.5 md:border-t md:border-border md:bg-wa-header md:px-3 md:py-3">
       {quickReplyMenuOpen ? (
         <QuickReplyMenu
           items={quickReplyItems}
@@ -581,7 +581,7 @@ export function MessageComposer({
         </div>
       ) : null}
       {!recorder.recording ? (
-        <label className="mb-1.5 flex w-fit cursor-pointer select-none items-center gap-2 px-1 text-xs font-medium text-muted-foreground">
+        <label className="mb-1.5 hidden w-fit cursor-pointer select-none items-center gap-2 px-1 text-xs font-medium text-muted-foreground md:flex">
           <input
             type="checkbox"
             checked={showAgentName}
@@ -592,7 +592,7 @@ export function MessageComposer({
         </label>
       ) : null}
       {recorder.recording ? (
-        <div className="flex items-center gap-3 px-1">
+        <div className="flex min-h-12 items-center gap-3 rounded-3xl bg-wa-composer py-1 pl-4 pr-1 shadow-sm">
           <span className="flex items-center gap-2 text-sm font-medium text-danger">
             <span className="size-2.5 animate-pulse rounded-full bg-danger" />
             Gravando {formatDuration(recorder.seconds)}
@@ -608,7 +608,7 @@ export function MessageComposer({
             </Button>
             <Button
               size="icon"
-              className="rounded-full"
+              className="size-11 rounded-full"
               onClick={() => recorder.stop()}
               disabled={busy}
               aria-label="Enviar áudio"
@@ -618,77 +618,81 @@ export function MessageComposer({
           </div>
         </div>
       ) : (
-        <div className="flex items-end gap-0.5 rounded-2xl border border-border bg-surface px-1 py-1 transition-colors focus-within:border-ring/50 focus-within:ring-2 focus-within:ring-ring/25 sm:gap-1 sm:px-1.5">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="size-9 shrink-0 rounded-full text-muted-foreground"
-            onClick={() => setCameraOpen(true)}
-            disabled={busy}
-            aria-label="Abrir câmera"
-          >
-            <Camera />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-9 shrink-0 rounded-full text-muted-foreground"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={busy}
-            aria-label="Anexar arquivo"
-          >
-            <Paperclip />
-          </Button>
-          <EmojiPicker onSelect={handleEmojiSelect} />
-          <Textarea
-            ref={textareaRef}
-            rows={1}
-            value={draft}
-            onChange={(event) => {
-              const next = event.target.value;
-              if (removedPreviewUrl && !next.includes(removedPreviewUrl)) {
-                setRemovedPreviewUrl(null);
-              }
-              if (next.length === 0) {
-                setUndoText(null);
-              }
-              setAiError(null);
-              setActiveQuickReplyIndex(0);
-              setDraft(next);
-            }}
-            onSelect={(event) => {
-              selectionRef.current = {
-                start: event.currentTarget.selectionStart,
-                end: event.currentTarget.selectionEnd,
-              };
-            }}
-            placeholder="Mensagem"
-            className="max-h-40 min-h-[38px] flex-1 resize-none rounded-md border-0 bg-transparent px-2 py-2.5 text-sm shadow-none focus-visible:ring-0"
-            onKeyDown={handleComposerKeyDown}
-          />
-          {canSend && aiAvailable ? (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="size-9 shrink-0 rounded-full text-primary"
-                  onClick={() => void handleFormalize()}
-                  disabled={busy}
-                  aria-label="Formalizar mensagem com IA"
-                >
-                  {aiBusy ? <Loader2 className="animate-spin" /> : <Sparkles />}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Formalizar mensagem com IA</TooltipContent>
-            </Tooltip>
-          ) : null}
+        <div className="flex items-end gap-1.5">
+          <div className="flex min-w-0 flex-1 items-end rounded-3xl bg-wa-composer px-1 py-0.5 shadow-sm transition-shadow focus-within:ring-1 focus-within:ring-ring/30">
+            <EmojiPicker onSelect={handleEmojiSelect} />
+            <Textarea
+              ref={textareaRef}
+              rows={1}
+              value={draft}
+              onChange={(event) => {
+                const next = event.target.value;
+                if (removedPreviewUrl && !next.includes(removedPreviewUrl)) {
+                  setRemovedPreviewUrl(null);
+                }
+                if (next.length === 0) {
+                  setUndoText(null);
+                }
+                setAiError(null);
+                setActiveQuickReplyIndex(0);
+                setDraft(next);
+              }}
+              onSelect={(event) => {
+                selectionRef.current = {
+                  start: event.currentTarget.selectionStart,
+                  end: event.currentTarget.selectionEnd,
+                };
+              }}
+              placeholder="Mensagem"
+              className="max-h-32 min-h-[44px] min-w-0 flex-1 resize-none rounded-none border-0 bg-transparent px-1 py-3 text-sm shadow-none focus-visible:ring-0 md:max-h-40"
+              onKeyDown={handleComposerKeyDown}
+            />
+            {canSend && aiAvailable ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="size-10 shrink-0 rounded-full text-primary"
+                    onClick={() => void handleFormalize()}
+                    disabled={busy}
+                    aria-label="Formalizar mensagem com IA"
+                  >
+                    {aiBusy ? <Loader2 className="animate-spin" /> : <Sparkles />}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Formalizar mensagem com IA</TooltipContent>
+              </Tooltip>
+            ) : null}
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-10 shrink-0 rounded-full text-muted-foreground"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={busy}
+              aria-label="Anexar arquivo"
+            >
+              <Paperclip />
+            </Button>
+            {canSend ? null : (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-10 shrink-0 rounded-full text-muted-foreground"
+                onClick={() => setCameraOpen(true)}
+                disabled={busy}
+                aria-label="Abrir câmera"
+              >
+                <Camera />
+              </Button>
+            )}
+          </div>
           {canSend ? (
             <Button
               size="icon"
-              className="size-9 shrink-0 rounded-full"
+              className="size-11 shrink-0 rounded-full shadow-sm [&_svg]:size-5"
               onClick={() => void handleSend()}
               disabled={busy}
               aria-label="Enviar mensagem"
@@ -697,9 +701,8 @@ export function MessageComposer({
             </Button>
           ) : (
             <Button
-              variant="ghost"
               size="icon"
-              className="size-9 shrink-0 rounded-full text-muted-foreground"
+              className="size-11 shrink-0 rounded-full shadow-sm [&_svg]:size-5"
               onClick={() => void recorder.start()}
               disabled={busy}
               aria-label="Gravar áudio"
@@ -710,7 +713,7 @@ export function MessageComposer({
         </div>
       )}
       {!recorder.recording ? (
-        <p className="mt-1 h-4 px-2 text-[11px] text-muted-foreground">
+        <p className="mt-1 hidden h-4 px-2 text-[11px] text-muted-foreground md:block">
           {draft.length === 0 ? 'Digite / para usar respostas rápidas.' : ''}
         </p>
       ) : null}

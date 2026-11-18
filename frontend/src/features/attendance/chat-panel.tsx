@@ -10,6 +10,8 @@ import { Link } from 'react-router-dom';
 import {
   ArrowDown,
   ArrowLeft,
+  Eye,
+  EyeOff,
   Info,
   Loader2,
   MessageSquare,
@@ -30,6 +32,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
+import { useAttendanceStore } from '@/stores/attendance-store';
 import type { Conversation, ConversationMessage, QuotedMessage } from '@/types/attendance';
 import {
   areGrouped,
@@ -99,6 +102,8 @@ export function ChatPanel({
   composerInsertion,
   onComposerInsertionHandled,
 }: ChatPanelProps) {
+  const showAgentName = useAttendanceStore((state) => state.showAgentName);
+  const setShowAgentName = useAttendanceStore((state) => state.setShowAgentName);
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -360,7 +365,7 @@ export function ChatPanel({
         backSwipeStartRef.current = null;
       }}
     >
-      <div className="flex items-center gap-2 border-b border-border bg-card px-2 py-2 sm:px-4 sm:py-3">
+      <div className="flex shrink-0 items-center gap-1 border-b border-border bg-wa-header px-1 pb-1.5 pt-[max(0.375rem,env(safe-area-inset-top))] sm:gap-2 sm:px-4 sm:py-3">
         {onBack ? (
           <Button
             variant="ghost"
@@ -430,6 +435,13 @@ export function ChatPanel({
                 Atualizar dados do grupo
               </DropdownMenuItem>
             ) : null}
+            <DropdownMenuItem
+              className="md:hidden"
+              onSelect={() => setShowAgentName(!showAgentName)}
+            >
+              {showAgentName ? <EyeOff /> : <Eye />}
+              {showAgentName ? 'Ocultar nome do atendente' : 'Exibir nome do atendente'}
+            </DropdownMenuItem>
             {conversation.contactId ? (
               <DropdownMenuItem asChild>
                 <Link to={`/contatos/${conversation.contactId}`}>
@@ -483,7 +495,6 @@ export function ChatPanel({
             ) : null}
             {messages.map((message, index) => {
               const previous = messages[index - 1];
-              const next = messages[index + 1];
               const showDay =
                 !previous || dayKey(previous.occurredAt) !== dayKey(message.occurredAt);
               const storedQuote = readQuotedMessage(message);
@@ -494,7 +505,7 @@ export function ChatPanel({
                 <Fragment key={message.id}>
                   {showDay ? (
                     <div className="flex justify-center pb-1 pt-4">
-                      <span className="rounded-md bg-card/90 px-2.5 py-1 text-[11px] font-medium text-muted-foreground shadow-sm">
+                      <span className="rounded-md bg-wa-day px-2.5 py-1 text-[11px] font-medium text-muted-foreground shadow-sm">
                         {formatDayLabel(message.occurredAt)}
                       </span>
                     </div>
@@ -505,7 +516,6 @@ export function ChatPanel({
                     isGroup={isGroup}
                     whatsappInstanceId={conversation.whatsappInstanceId}
                     groupedWithPrevious={areGrouped(previous, message, isGroup)}
-                    groupedWithNext={areGrouped(message, next, isGroup)}
                     highlighted={highlightedId === message.id || editing?.id === message.id}
                     quoteTarget={quoteTarget}
                     onReply={handleStartReply}

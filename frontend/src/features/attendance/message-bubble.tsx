@@ -1,10 +1,6 @@
 import type { MouseEvent } from 'react';
 import {
-  AlertCircle,
-  Check,
-  CheckCheck,
   CircleDashed,
-  Clock,
   FileText,
   Image as ImageIcon,
   MapPin,
@@ -23,7 +19,6 @@ import { cn } from '@/lib/utils';
 import type {
   ConversationMessage,
   MessageReaction,
-  MessageStatus,
   MessageType,
   QuotedMessage,
 } from '@/types/attendance';
@@ -39,6 +34,7 @@ import {
   readMessageReactions,
   readQuotedMessage,
 } from './attendance-utils';
+import { DeliveryTicks } from './delivery-ticks';
 import { ExpandableText } from './expandable-text';
 import { MessageLinkPreview } from './link-preview-card';
 import { MessageContact } from './message-contact';
@@ -54,7 +50,6 @@ interface MessageBubbleProps {
   isGroup: boolean;
   whatsappInstanceId: string;
   groupedWithPrevious?: boolean;
-  groupedWithNext?: boolean;
   highlighted?: boolean;
   quoteTarget?: ConversationMessage | null;
   onReply?: (message: ConversationMessage) => void;
@@ -71,7 +66,6 @@ export function MessageBubble({
   isGroup,
   whatsappInstanceId,
   groupedWithPrevious = false,
-  groupedWithNext = false,
   highlighted = false,
   quoteTarget = null,
   onReply,
@@ -133,12 +127,9 @@ export function MessageBubble({
           ) : null}
           <div
             className={cn(
-              'rounded-lg px-3 py-2 text-sm shadow-sm',
-              isOutbound
-                ? 'bg-primary-light text-foreground'
-                : 'border border-border bg-card text-foreground',
-              !groupedWithNext && (isOutbound ? 'rounded-br-sm' : 'rounded-bl-sm'),
-              groupedWithPrevious && (isOutbound ? 'rounded-tr-sm' : 'rounded-tl-sm'),
+              'rounded-md px-3 py-2 text-sm shadow-sm',
+              isOutbound ? 'bg-wa-bubble-out text-foreground' : 'bg-wa-bubble-in text-foreground',
+              !groupedWithPrevious && (isOutbound ? 'rounded-tr-none' : 'rounded-tl-none'),
             )}
           >
             <div className="flex items-start gap-2">
@@ -161,7 +152,7 @@ export function MessageBubble({
               <span
                 className={cn(
                   'tabular-nums',
-                  isOutbound ? 'text-foreground/55' : 'text-muted-foreground',
+                  isOutbound ? 'text-foreground/60' : 'text-muted-foreground',
                 )}
               >
                 {formatBubbleTime(message.occurredAt)}
@@ -263,13 +254,10 @@ export function MessageBubble({
         ) : null}
         <div
           className={cn(
-            'min-w-0 max-w-full rounded-lg text-sm shadow-sm',
-            isMedia ? 'overflow-hidden p-1' : 'px-3 py-1.5',
-            isOutbound
-              ? 'bg-primary-light text-foreground'
-              : 'border border-border bg-card text-foreground',
-            !groupedWithNext && (isOutbound ? 'rounded-br-sm' : 'rounded-bl-sm'),
-            groupedWithPrevious && (isOutbound ? 'rounded-tr-sm' : 'rounded-tl-sm'),
+            'min-w-0 max-w-full rounded-md text-sm shadow-sm',
+            isMedia ? 'overflow-hidden p-1' : 'px-2.5 py-1.5',
+            isOutbound ? 'bg-wa-bubble-out text-foreground' : 'bg-wa-bubble-in text-foreground',
+            !groupedWithPrevious && (isOutbound ? 'rounded-tr-none' : 'rounded-tl-none'),
           )}
         >
           {!isMedia && quoted ? (
@@ -329,7 +317,7 @@ export function MessageBubble({
             <span
               className={cn(
                 'tabular-nums',
-                isOutbound ? 'text-foreground/55' : 'text-muted-foreground',
+                isOutbound ? 'text-foreground/60' : 'text-muted-foreground',
               )}
             >
               {formatBubbleTime(message.occurredAt)}
@@ -549,41 +537,5 @@ function MessageActions({ canEdit, onReply, onEdit, onForward, onDelete, onDelet
         </DropdownMenu>
       ) : null}
     </div>
-  );
-}
-
-function DeliveryTicks({ status }: { status: MessageStatus }) {
-  if (status === 'FAILED') {
-    return (
-      <span title="Falha no envio" aria-label="Falha no envio" role="img">
-        <AlertCircle className="size-3.5 text-danger" />
-      </span>
-    );
-  }
-  if (status === 'PENDING') {
-    return (
-      <span title="Enviando" className="text-foreground/60">
-        <Clock className="size-3.5" />
-      </span>
-    );
-  }
-  if (status === 'READ') {
-    return (
-      <span title="Lida">
-        <CheckCheck className="size-3.5 text-info" />
-      </span>
-    );
-  }
-  if (status === 'DELIVERED') {
-    return (
-      <span title="Entregue" className="text-foreground/60">
-        <CheckCheck className="size-3.5" />
-      </span>
-    );
-  }
-  return (
-    <span title="Enviada" className="text-foreground/60">
-      <Check className="size-3.5" />
-    </span>
   );
 }

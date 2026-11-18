@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
 import type { TenantContextService } from '../../../src/common/tenant-context/tenant-context.service.js';
 import type { Env } from '../../../src/config/env.validation.js';
@@ -12,6 +13,7 @@ import type { WhatsAppContactSyncService } from '../../../src/modules/whatsapp/w
 import {
   WhatsAppConnectionInProgressError,
   WhatsAppInstanceLimitReachedError,
+  WhatsAppProviderReconnectingError,
 } from '../../../src/modules/whatsapp/whatsapp.errors.js';
 import {
   normalizeOwnerNumber,
@@ -709,7 +711,9 @@ describe('WhatsAppInstancesService connect/disconnect', () => {
 
     const result = await service.connect('i1');
 
-    expect(evolution.connect).toHaveBeenCalledTimes(2);
+    // A second connect while the provider reports `close` would open another
+    // socket for the same session, so it is never repeated.
+    expect(evolution.connect).toHaveBeenCalledTimes(1);
     expect(evolution.deleteInstance).toHaveBeenCalledWith('inst-1');
     expect(evolution.createInstance).toHaveBeenCalledTimes(1);
     expect(result.status).toBe('CONNECTING');
@@ -722,7 +726,7 @@ describe('WhatsAppInstancesService connect/disconnect', () => {
     evolution.connect.mockResolvedValue({ error: true, message: 'no ticket' });
 
     await expect(service.connect('i1')).rejects.toBeInstanceOf(EvolutionRequestError);
-    expect(evolution.connect).toHaveBeenCalledTimes(2);
+    expect(evolution.connect).toHaveBeenCalledTimes(1);
     expect(evolution.deleteInstance).not.toHaveBeenCalled();
   });
 
@@ -1918,11 +1922,228 @@ describe('WhatsAppInstancesService automatic restore of an abandoned session', (
     expect(evolution.connect).not.toHaveBeenCalled();
   });
 
+  it('never restores while the provider keeps sending connection events', async () => {
+    const { service, evolution, row } = setup();
+    evolution.connect.mockRejectedValueOnce(new EvolutionRequestError('Evolution API request failed'));
+    await service.reconcileConnectionStates();
+    expect(evolution.connect).toHaveBeenCalledTimes(1);
+
+    await service.applyConnectionObservation('inst-1', 'connecting', { source: 'webhook' });
+    await service.reconcileConnectionStates();
+
+    expect(evolution.connect).toHaveBeenCalledTimes(1);
+    expect(row.status).toBe('DISCONNECTED');
+  });
+
   it('does nothing when automatic restore is disabled', async () => {
     const { service, evolution } = setup({}, {}, { WHATSAPP_AUTO_RESTORE_ENABLED: false });
 
     await service.reconcileConnectionStates();
 
     expect(evolution.connect).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Reproduces what the production diagnostics showed: one session with several
+ * provider sockets that keep replacing each other (stream conflict "replaced",
+ * `close` 440), sending connecting/open/close every few seconds. The CRM must
+ * not add sockets to that loop, nor block sends because of it.
+ */
+describe('WhatsAppInstancesService with a provider reconnect storm', () => {
+  const instanceRow = {
+    id: 'i1',
+    tenantId: 't1',
+    name: 'Instance',
+    instanceName: 'inst-1',
+    externalInstanceId: null,
+    phone: null,
+    status: 'DISCONNECTED',
+    active: true,
+    credentialsEncrypted: null,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
+  const STORM_ENV = { WHATSAPP_PROVIDER_SETTLE_MS: 400, WHATSAPP_CONNECTION_FLAP_WINDOW_MS: 30_000 };
+
+  function providerEvent(service: WhatsAppInstancesService, state: string, reason = 200) {
+    return service.applyConnectionObservation('inst-1', state, { source: 'webhook', reason });
+  }
+
+  describe('manual connect', () => {
+    it('waits for the reconnect the provider is doing instead of opening a second socket', async () => {
+      const { service, prisma, evolution } = createHarness(STORM_ENV);
+      prisma.whatsAppInstance.findFirst.mockResolvedValue(instanceRow);
+      evolution.instanceExists.mockResolvedValue(true);
+      await providerEvent(service, 'connecting');
+      evolution.getConnectionState
+        .mockResolvedValueOnce({ instance: 'inst-1', state: 'close' })
+        .mockResolvedValue({ instance: 'inst-1', state: 'open' });
+
+      const ticket = await service.connect('i1');
+
+      expect(ticket.status).toBe('CONNECTED');
+      expect(evolution.connect).not.toHaveBeenCalled();
+    });
+
+    it('refuses to connect while the provider keeps reconnecting without opening', async () => {
+      const { service, prisma, evolution } = createHarness(STORM_ENV);
+      prisma.whatsAppInstance.findFirst.mockResolvedValue(instanceRow);
+      evolution.instanceExists.mockResolvedValue(true);
+      await providerEvent(service, 'close', 440);
+      evolution.getConnectionState.mockImplementation(async () => {
+        await providerEvent(service, 'connecting');
+        return { instance: 'inst-1', state: 'close' };
+      });
+
+      await expect(service.connect('i1')).rejects.toBeInstanceOf(WhatsAppProviderReconnectingError);
+      expect(evolution.connect).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['refused', 'connection.update', 428],
+      ['close', 'connection.update', 401],
+      ['close', 'logout.instance', null],
+    ] as const)(
+      'connects at once after the provider gave up the session (%s via %s)',
+      async (state, eventType, reason) => {
+        const { service, prisma, evolution } = createHarness(STORM_ENV);
+        prisma.whatsAppInstance.findFirst.mockResolvedValue(instanceRow);
+        evolution.instanceExists.mockResolvedValue(true);
+        await service.applyConnectionObservation('inst-1', state, {
+          source: 'webhook',
+          eventType,
+          reason,
+        });
+        evolution.getConnectionState.mockClear();
+
+        const ticket = await service.connect('i1');
+
+        expect(ticket.status).toBe('CONNECTING');
+        expect(evolution.connect).toHaveBeenCalledTimes(1);
+        expect(evolution.getConnectionState).toHaveBeenCalledTimes(1);
+      },
+    );
+
+    it('connects once when the provider is quiet and reports the restored session without a QR', async () => {
+      const { service, prisma, evolution } = createHarness(STORM_ENV);
+      prisma.whatsAppInstance.findFirst.mockResolvedValue(instanceRow);
+      evolution.instanceExists.mockResolvedValue(true);
+      evolution.connect.mockResolvedValue({ count: 0 });
+      evolution.getConnectionState
+        .mockResolvedValueOnce({ instance: 'inst-1', state: 'close' })
+        .mockResolvedValue({ instance: 'inst-1', state: 'open' });
+
+      const ticket = await service.connect('i1');
+
+      expect(ticket).toMatchObject({ status: 'CONNECTED', qrCodeBase64: null });
+      expect(evolution.connect).toHaveBeenCalledTimes(1);
+    });
+
+    it('returns the QR code the provider delivers by webhook while pairing', async () => {
+      const { service, prisma, evolution } = createHarness(STORM_ENV);
+      prisma.whatsAppInstance.findFirst.mockResolvedValue(instanceRow);
+      evolution.instanceExists.mockResolvedValue(true);
+      evolution.connect.mockImplementationOnce(async () => {
+        await service.applyProviderQr(
+          { id: 'i1', tenantId: 't1', instanceName: 'inst-1' },
+          { qrcode: { base64: 'bmV3LXFy', code: '2@new' } },
+          new Date(),
+        );
+        return { count: 0 };
+      });
+      evolution.getConnectionState
+        .mockResolvedValueOnce({ instance: 'inst-1', state: 'close' })
+        .mockResolvedValue({ instance: 'inst-1', state: 'connecting' });
+
+      const ticket = await service.connect('i1');
+
+      expect(ticket).toMatchObject({
+        status: 'CONNECTING',
+        qrCodeBase64: 'data:image/png;base64,bmV3LXFy',
+        code: '2@new',
+      });
+      expect(evolution.connect).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('flapping', () => {
+    const connectedRow = {
+      id: 'i1',
+      tenantId: 't1',
+      instanceName: 'inst-1',
+      status: 'CONNECTED',
+      connectionObservedAt: null,
+      connectionRequestedAt: null,
+      connectionStatusReason: null,
+      connectionVersion: 3,
+      connectionStateVersion: 3,
+      connectionIntent: 'NONE',
+    };
+
+    it('keeps CONNECTED when the session reads closed seconds after an open reading', async () => {
+      const { service, prisma, evolution } = createHarness(STORM_ENV);
+      prisma.whatsAppInstance.findUnique.mockResolvedValue(connectedRow);
+      evolution.getConnectionState.mockResolvedValueOnce({ instance: 'inst-1', state: 'open' });
+      await providerEvent(service, 'open');
+      evolution.getConnectionState.mockResolvedValue({ instance: 'inst-1', state: 'close' });
+
+      const result = await providerEvent(service, 'close', 440);
+
+      expect(result).toMatchObject({ status: 'CONNECTED', changed: false });
+      expect(prisma.whatsAppInstance.updateMany).not.toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: 'DISCONNECTED' }) }),
+      );
+    });
+
+    it.each([401, 403, 408])(
+      'still disconnects at once on a close the provider does not reconnect (%i)',
+      async (reason) => {
+        const { service, prisma, evolution } = createHarness(STORM_ENV);
+        prisma.whatsAppInstance.findUnique.mockResolvedValue(connectedRow);
+        evolution.getConnectionState.mockResolvedValueOnce({ instance: 'inst-1', state: 'open' });
+        await providerEvent(service, 'open');
+        evolution.getConnectionState.mockResolvedValue({ instance: 'inst-1', state: 'close' });
+
+        const result = await providerEvent(service, 'close', reason);
+
+        expect(result).toMatchObject({ status: 'DISCONNECTED', changed: true });
+      },
+    );
+
+    it('disconnects once the session stays closed past the flap window', async () => {
+      const { service, prisma, evolution } = createHarness({
+        ...STORM_ENV,
+        WHATSAPP_CONNECTION_FLAP_WINDOW_MS: 50,
+      });
+      prisma.whatsAppInstance.findUnique.mockResolvedValue(connectedRow);
+      evolution.getConnectionState.mockResolvedValueOnce({ instance: 'inst-1', state: 'open' });
+      await providerEvent(service, 'open');
+      evolution.getConnectionState.mockResolvedValue({ instance: 'inst-1', state: 'close' });
+      await new Promise((resolve) => setTimeout(resolve, 80));
+
+      const result = await providerEvent(service, 'close', 428);
+
+      expect(result).toMatchObject({ status: 'DISCONNECTED', changed: true });
+    });
+  });
+
+  it('reports a conflict storm once, without repeating the warning', async () => {
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    try {
+      const { service } = createHarness(STORM_ENV);
+
+      for (let index = 0; index < 7; index += 1) {
+        await providerEvent(service, 'close', 440);
+      }
+
+      const storms = warn.mock.calls.filter(([message]) =>
+        String(message).startsWith('whatsapp.connection.conflict_storm'),
+      );
+      expect(storms).toHaveLength(1);
+      expect(String(storms[0]?.[0])).toContain('"instanceName":"inst-1"');
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

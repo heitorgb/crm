@@ -71,6 +71,16 @@ export default {
           accent: 'hsl(var(--sidebar-accent) / <alpha-value>)',
           border: 'hsl(var(--sidebar-border) / <alpha-value>)',
         },
+        wa: {
+          chat: 'hsl(var(--wa-chat) / <alpha-value>)',
+          header: 'hsl(var(--wa-header) / <alpha-value>)',
+          'bubble-in': 'hsl(var(--wa-bubble-in) / <alpha-value>)',
+          'bubble-out': 'hsl(var(--wa-bubble-out) / <alpha-value>)',
+          composer: 'hsl(var(--wa-composer) / <alpha-value>)',
+          tick: 'hsl(var(--wa-tick) / <alpha-value>)',
+          'tick-read': 'hsl(var(--wa-tick-read) / <alpha-value>)',
+          day: 'hsl(var(--wa-day) / <alpha-value>)',
+        },
       },
       borderRadius: {
         sm: 'var(--radius-sm)',

@@ -39,6 +39,7 @@ import {
   conversationStatusTone,
   formatListTime,
 } from './attendance-utils';
+import { DeliveryTicks } from './delivery-ticks';
 import { SenderAvatar } from './sender-avatar';
 
 interface ConversationListProps {
@@ -225,12 +226,23 @@ export function ConversationList({
                         <span className="block truncate text-sm font-medium text-foreground">
                           {conversationLabel(item)}
                         </span>
-                        <p className="mt-0.5 truncate text-[13px] text-muted-foreground">
-                          {conversationPreview(item)}
+                        <p className="mt-0.5 flex min-w-0 items-center gap-1 text-[13px] text-muted-foreground">
+                          {item.lastMessage?.direction === 'OUTBOUND' && item.lastMessage.status ? (
+                            <DeliveryTicks
+                              status={item.lastMessage.status}
+                              className="inline-flex shrink-0"
+                            />
+                          ) : null}
+                          <span className="min-w-0 truncate">{conversationPreview(item)}</span>
                         </p>
                       </div>
                       <div className="flex shrink-0 flex-col items-end gap-1">
-                        <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                        <span
+                          className={cn(
+                            'flex items-center gap-1 text-[11px]',
+                            unread > 0 ? 'font-medium text-success' : 'text-muted-foreground',
+                          )}
+                        >
                           {item.isPinned ? (
                             <Pin
                               className="size-3.5 shrink-0 text-primary"

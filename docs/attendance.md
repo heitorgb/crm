@@ -321,7 +321,8 @@ CRM (sem dependências novas). A tela é **full-bleed**: `MainContent` deixa de 
   e indicadores de status/grupo/instância. Estados de carregamento (skeleton), erro (com retry) e
   lista vazia (convite para conectar o WhatsApp).
 - **Layout mobile**: abaixo de `lg`, o cabeçalho do atendimento mostra o avatar do usuário à
-  esquerda e, à direita, os botões de câmera e menu. O título "Conversas"/contador e os filtros de
+  esquerda e, à direita, os botões de câmera e menu (oculto abaixo de `md` com uma conversa aberta;
+  ver "Layout mobile no estilo WhatsApp"). O título "Conversas"/contador e os filtros de
   instância/status saem da tela inicial; a busca fica logo abaixo do cabeçalho e permanece visível
   enquanto a lista rola. As abas **Caixa de entrada**/**Arquivadas** ficam na área rolável e saem da
   tela ao descer, sem exigir a abertura do menu. Filtros
@@ -538,6 +539,32 @@ CRM (sem dependências novas). A tela é **full-bleed**: `MainContent` deixa de 
   socket é compartilhado por toda a aplicação via `RealtimeProvider`.
 
 Reabrir usa `POST /api/conversations/:id/takeover` (já existente).
+
+### Layout mobile no estilo WhatsApp
+
+A tela de atendimento no celular segue o layout do WhatsApp Android (temas claro e escuro):
+
+- **Ticks na lista de conversas:** quando a última mensagem é de saída, a prévia mostra o status
+  antes do texto: ✓ cinza (enviada), ✓✓ cinza (entregue) e ✓✓ azul (lida). O backend inclui
+  `lastMessage.status` na listagem; a lista é invalidada pelo evento `message.updated`. O
+  componente `delivery-ticks.tsx` é compartilhado com a bolha da conversa.
+- **Barra do CRM oculta com a conversa aberta:** abaixo de `md` (768px), quando a URL tem
+  `?conversation=`, o `Header` recebe `max-md:hidden`. Fica só o cabeçalho da conversa (voltar,
+  foto, nome, status). Ao voltar para a lista, a barra reaparece.
+- **Teclado e altura da tela:** o shell usa
+  `h-[var(--app-viewport-height,100dvh)]` em vez de `h-screen` (100vh cortava o compositor no
+  Chrome Android). O hook `use-visual-viewport-height.ts` atualiza `--app-viewport-height` a
+  partir de `visualViewport` (multiplicado por `scale`, para ignorar o zoom). A meta viewport tem
+  `interactive-widget=resizes-content` e `viewport-fit=cover`. O compositor e o cabeçalho da
+  conversa respeitam `env(safe-area-inset-*)`.
+- **Opção "Exibir nome do atendente":** no celular, sai do compositor e vai para o menu ⋮ do
+  cabeçalho da conversa ("Exibir/Ocultar nome do atendente"). No desktop, o checkbox continua
+  acima do campo. A dica "Digite / para usar respostas rápidas" aparece só no desktop.
+- **Visual:** os tokens `--wa-*` (`index.css`, cores `wa-*` no Tailwind) definem o fundo da
+  conversa, as bolhas de entrada e saída (com o canto da "cauda" na primeira mensagem do
+  grupo), o cabeçalho, os chips de data, a pílula do compositor e os ticks. O compositor é uma
+  pílula (emoji, texto, IA, anexo e câmera) com um botão verde redondo ao lado, que alterna entre
+  microfone e enviar. A câmera some quando há texto, como no WhatsApp.
 
 ### Iniciar atendimento a partir de um contato
 

@@ -14,13 +14,14 @@ interface HeaderProps {
 }
 
 export function Header({ onOpenMobileSidebar }: HeaderProps) {
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
   const session = useAuthStore((state) => state.session);
   const memberships = useAuthStore((state) => state.memberships);
   const switchTenant = useSwitchTenant();
   const openPhotoComposer = useAttendanceViewStore((state) => state.openPhotoComposer);
 
   const isAttendance = pathname.startsWith('/atendimento/conversas');
+  const attendanceChatOpen = isAttendance && new URLSearchParams(search).has('conversation');
 
   const tenants: TenantOption[] = memberships.length
     ? memberships.map((membership) => ({ id: membership.tenantId, name: membership.tenantName }))
@@ -29,7 +30,12 @@ export function Header({ onOpenMobileSidebar }: HeaderProps) {
       : [];
 
   return (
-    <header className="sticky top-0 z-30 flex h-14 items-center gap-2 border-b border-border/80 bg-background/80 px-3 backdrop-blur-xl supports-[backdrop-filter]:bg-background/70 sm:px-4">
+    <header
+      className={cn(
+        'sticky top-0 z-30 flex h-14 shrink-0 items-center gap-2 border-b border-border/80 bg-background/80 px-3 backdrop-blur-xl supports-[backdrop-filter]:bg-background/70 sm:px-4',
+        attendanceChatOpen && 'max-md:hidden',
+      )}
+    >
       {isAttendance ? (
         <div className="flex w-full items-center gap-2 lg:hidden">
           <UserMenu />

@@ -124,7 +124,7 @@ export function EmojiPicker({ onSelect }: EmojiPickerProps) {
           type="button"
           variant="ghost"
           size="icon"
-          className="shrink-0 rounded-full text-muted-foreground"
+          className="size-10 shrink-0 rounded-full text-muted-foreground"
           aria-label="Inserir emoji"
         >
           <Smile />

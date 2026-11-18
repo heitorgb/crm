@@ -158,3 +158,40 @@ describe('ConversationList inbox tabs', () => {
     expect(onSelect).toHaveBeenCalledWith(conversation.id);
   });
 });
+
+describe('ConversationList delivery status', () => {
+  const lastMessage = (
+    direction: 'INBOUND' | 'OUTBOUND',
+    status: 'SENT' | 'DELIVERED' | 'READ' | 'RECEIVED',
+  ): Conversation => ({
+    ...conversation,
+    lastMessageAt: '2026-10-20T12:00:00.000Z',
+    lastMessage: {
+      content: 'Pci a03 core',
+      direction,
+      status,
+      senderName: null,
+      occurredAt: '2026-10-20T12:00:00.000Z',
+    },
+  });
+
+  it.each([
+    ['SENT', 'Enviada'],
+    ['DELIVERED', 'Entregue'],
+    ['READ', 'Lida'],
+  ] as const)('shows the %s tick before the preview of an outbound message', (status, label) => {
+    renderList({ conversations: [lastMessage('OUTBOUND', status)] });
+
+    const tick = screen.getByRole('img', { name: label });
+    const preview = screen.getByText('Pci a03 core');
+    expect(tick.parentElement).toBe(preview.parentElement);
+    expect(tick.compareDocumentPosition(preview) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('does not show ticks for inbound messages', () => {
+    renderList({ conversations: [lastMessage('INBOUND', 'RECEIVED')] });
+
+    expect(screen.getByText('Pci a03 core')).toBeTruthy();
+    expect(screen.queryByRole('img', { name: /Enviada|Entregue|Lida/ })).toBeNull();
+  });
+});

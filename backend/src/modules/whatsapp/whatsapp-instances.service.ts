@@ -106,7 +106,7 @@ export interface ConnectionObservationOptions {
 }
 
 export type ConnectionObservationSource =
-  'webhook' | 'poll' | 'reconcile' | 'connect' | 'disconnect' | 'send';
+  'webhook' | 'poll' | 'reconcile' | 'connect' | 'disconnect' | 'send' | 'restore';
 
 export interface AppliedConnectionObservation {
   instanceId: string;
@@ -175,6 +175,18 @@ const SYSTEM_USER_ID = '00000000-0000-4000-8000-000000000001';
 const SYSTEM_MEMBERSHIP_ID = '00000000-0000-4000-8000-000000000002';
 const TERMINAL_DISCONNECT_REASONS = new Set([401, 403]);
 const SESSION_REPLACED_REASON = 440;
+// Logout, forbidden and the codes Evolution treats as final need a new pairing;
+// 411/440 mean another device or session owns the number, so restoring would
+// fight it.
+const NON_RESTORABLE_REASONS = new Set([401, 402, 403, 406, 411, 440]);
+const RESTORE_MAX_ATTEMPTS = 3;
+const RESTORE_BACKOFF_BASE_MS = 60_000;
+const RESTORE_POLL_INTERVAL_MS = 1_000;
+const UNEXPECTED_RESTORE_SKIPS = new Set([
+  'provider_unavailable',
+  'provider_instance_missing',
+  'provider_not_closed',
+]);
 
 interface ConnectionRow {
   id: string;
@@ -201,12 +213,33 @@ type NegativeConfirmation =
   | { kind: 'open' }
   | { kind: 'inconclusive' };
 
+type RestoreTrigger = 'reconcile' | 'send';
+
+interface RestoreCandidate {
+  id: string;
+  tenantId: string;
+  instanceName: string;
+  status: WhatsAppInstanceStatus;
+  connectionIntent: WhatsAppConnectionIntent;
+  connectionStatusReason: number | null;
+  connectionObservedAt: Date | null;
+}
+
+interface RestoreState {
+  /** First time this process saw the close confirmed; periodic reads refresh the DB timestamp. */
+  closedSince: number;
+  attempts: number;
+  nextAttemptAt: number;
+  exhausted: boolean;
+}
+
 @Injectable()
 export class WhatsAppInstancesService implements OnModuleInit {
   private readonly logger = new Logger(WhatsAppInstancesService.name);
   private readonly connectionOperations = new Map<string, string>();
   private readonly historyOperations = new Map<string, Promise<void>>();
   private readonly qrCache = new Map<string, WhatsAppConnectionQr>();
+  private readonly restoreStates = new Map<string, RestoreState>();
   private reconcileRunning = false;
 
   constructor(
@@ -444,6 +477,7 @@ export class WhatsAppInstancesService implements OnModuleInit {
   async connect(id: string): Promise<WhatsAppConnectionTicket> {
     return this.runConnectionOperation(id, 'connect', async () => {
       const instance = await this.requireInstanceById(id);
+      this.restoreStates.delete(instance.id);
       const attemptId = randomUUID();
       const observedAt = new Date();
       this.logConnection('requested', {
@@ -541,6 +575,7 @@ export class WhatsAppInstancesService implements OnModuleInit {
   async disconnect(id: string): Promise<{ status: WhatsAppInstanceStatus }> {
     return this.runConnectionOperation(id, 'disconnect', async () => {
       const instance = await this.requireInstanceById(id);
+      this.restoreStates.delete(instance.id);
       const attemptId = randomUUID();
       this.logConnection('requested', {
         instanceId: instance.id,
@@ -704,7 +739,11 @@ export class WhatsAppInstancesService implements OnModuleInit {
       receivedAt: new Date(),
       skipConfirmation: true,
     });
-    const connected = result?.status === WhatsAppInstanceStatus.CONNECTED;
+    let connected = result?.status === WhatsAppInstanceStatus.CONNECTED;
+
+    if (!connected && instance.status === WhatsAppInstanceStatus.DISCONNECTED) {
+      connected = await this.restoreAbandonedSession(instance, 'send', null);
+    }
 
     this.logConnection('send.preflight', {
       ...context,
@@ -1109,10 +1148,17 @@ export class WhatsAppInstancesService implements OnModuleInit {
   ): Promise<AppliedConnectionObservation> {
     const source = options.source ?? 'webhook';
     const observedAt = new Date();
+    // A periodic read carries no reason. It must not erase the reason the
+    // provider reported when the session actually closed.
+    const reason =
+      options.reason ??
+      (options.intent === undefined && status === current.status
+        ? current.connectionStatusReason
+        : null);
     const data: Prisma.WhatsAppInstanceUpdateManyMutationInput = {
       status,
       connectionObservedAt: observedAt,
-      connectionStatusReason: options.reason ?? null,
+      connectionStatusReason: reason,
     };
     if (options.intent !== undefined) {
       data.connectionIntent = options.intent;
@@ -1189,13 +1235,15 @@ export class WhatsAppInstancesService implements OnModuleInit {
         observedAt: observedAt.toISOString(),
         eventTime: options.observedAt?.toISOString() ?? null,
         receivedAt: options.receivedAt?.toISOString() ?? null,
-        reason: options.reason ?? null,
+        reason,
         attemptId: options.attemptId ?? null,
         version,
       });
     }
 
-    if (status !== WhatsAppInstanceStatus.CONNECTED) {
+    if (status === WhatsAppInstanceStatus.CONNECTED) {
+      this.restoreStates.delete(current.id);
+    } else {
       await this.interruptHistorySync(current.instanceName, source);
     }
 
@@ -1204,7 +1252,7 @@ export class WhatsAppInstancesService implements OnModuleInit {
         instanceId: current.id,
         status,
         previousStatus: current.status,
-        reason: options.reason ?? null,
+        reason,
       });
 
       if (status === WhatsAppInstanceStatus.CONNECTED) {
@@ -1213,15 +1261,7 @@ export class WhatsAppInstancesService implements OnModuleInit {
       }
     }
 
-    return this.observationResult(
-      current,
-      status,
-      observedAt,
-      options.reason ?? null,
-      source,
-      changed,
-      version,
-    );
+    return this.observationResult(current, status, observedAt, reason, source, changed, version);
   }
 
   private isWithinConnectGrace(
@@ -1292,16 +1332,19 @@ export class WhatsAppInstancesService implements OnModuleInit {
   }
 
   private async runConnectionReconciliation(): Promise<void> {
-    let instances: Array<{
-      id: string;
-      tenantId: string;
-      instanceName: string;
-      status: WhatsAppInstanceStatus;
-    }>;
+    let instances: RestoreCandidate[];
     try {
       instances = await this.prisma.whatsAppInstance.findMany({
         where: { active: true },
-        select: { id: true, tenantId: true, instanceName: true, status: true },
+        select: {
+          id: true,
+          tenantId: true,
+          instanceName: true,
+          status: true,
+          connectionIntent: true,
+          connectionStatusReason: true,
+          connectionObservedAt: true,
+        },
         orderBy: { connectionRequestedAt: { sort: 'desc', nulls: 'last' } },
       });
     } catch (error) {
@@ -1334,6 +1377,9 @@ export class WhatsAppInstancesService implements OnModuleInit {
           if (snapshot && result?.status === WhatsAppInstanceStatus.CONNECTED && !result.changed) {
             await this.releaseDuplicateSessions(instance, snapshot);
           }
+          if (result?.status === WhatsAppInstanceStatus.DISCONNECTED) {
+            await this.restoreAbandonedSession(instance, 'reconcile', snapshot);
+          }
         } catch (error) {
           failed += 1;
           this.logger.warn(
@@ -1350,6 +1396,218 @@ export class WhatsAppInstancesService implements OnModuleInit {
       changed,
       failed,
     });
+  }
+
+  /**
+   * Evolution 2.4 makes a single reconnect attempt after a recoverable close
+   * and neither retries it nor sends a webhook when it fails: the instance stays
+   * `close` while the stored session, and the linked device on the phone, are
+   * still valid. A manual connect then restores it without a QR code. This does
+   * the same automatically and with bounded attempts, only for a session the
+   * provider abandoned: never after a manual disconnect, never for a close that
+   * requires a new pairing and never inside the provider's own reconnect window.
+   * `row` is the state persisted before the current verification.
+   */
+  private async restoreAbandonedSession(
+    row: RestoreCandidate,
+    trigger: RestoreTrigger,
+    snapshot: EvolutionInstanceSummary[] | null,
+  ): Promise<boolean> {
+    const context = {
+      instanceId: row.id,
+      tenantId: row.tenantId,
+      instanceName: row.instanceName,
+      trigger,
+      reason: row.connectionStatusReason,
+    };
+
+    // Routine skips repeat on every reconciliation tick, so they are only
+    // logged when a send was blocked by them.
+    const skip = (skipped: string, extra: Record<string, unknown> = {}): false => {
+      if (trigger === 'send' || UNEXPECTED_RESTORE_SKIPS.has(skipped)) {
+        this.logConnection('restore.skipped', { ...context, skipped, ...extra });
+      }
+      return false;
+    };
+
+    const skipped = this.restoreSkipReason(row);
+    const state = this.restoreStates.get(row.id);
+    if (skipped || !state) {
+      return !skipped || skipped === 'disabled' || skipped === 'not_disconnected'
+        ? false
+        : skip(skipped);
+    }
+
+    const providerInstances = snapshot ?? (await this.loadProviderSnapshot());
+    if (!providerInstances) {
+      return skip('provider_unavailable');
+    }
+    const provider = providerInstances.find((entry) => entry.name === row.instanceName);
+    if (!provider) {
+      return skip('provider_instance_missing');
+    }
+    if (!normalizeOwnerNumber(provider.ownerJid)) {
+      return skip('never_paired');
+    }
+
+    const live = await this.readProviderSnapshot(row.instanceName);
+    if (live.kind !== 'confirmed' || live.status !== WhatsAppInstanceStatus.DISCONNECTED) {
+      return skip('provider_not_closed', {
+        providerResult: live.kind,
+        providerState: live.kind === 'confirmed' || live.kind === 'unknown' ? live.raw : null,
+      });
+    }
+
+    // Checked again right before taking the lock: the reads above yield, and two
+    // concurrent connects would open two sockets for the same session.
+    if (this.connectionOperations.has(row.id)) {
+      return skip('operation_in_progress');
+    }
+    this.connectionOperations.set(row.id, 'restore');
+    const startedAt = Date.now();
+    const attempt = state.attempts + 1;
+    this.logConnection('restore.started', {
+      ...context,
+      attempt,
+      maxAttempts: RESTORE_MAX_ATTEMPTS,
+      closedForMs: startedAt - state.closedSince,
+    });
+
+    try {
+      let response: unknown;
+      try {
+        response = await this.evolution.connect(row.instanceName);
+      } catch (error) {
+        // The provider could not be reached: this says nothing about the
+        // session, so it does not consume an attempt.
+        this.logConnection('restore.failed', {
+          ...context,
+          attempt,
+          counted: false,
+          error: sanitizeConnectionError(error),
+        });
+        return false;
+      }
+
+      const outcome =
+        isRecord(response) && response.error === true
+          ? 'rejected'
+          : await this.waitForRestoredSession(row, startedAt);
+
+      if (outcome === 'open') {
+        const result = await this.verifyConnectionState(row.instanceName, {
+          source: 'restore',
+          receivedAt: new Date(),
+        });
+        if (result?.status === WhatsAppInstanceStatus.CONNECTED) {
+          this.restoreStates.delete(row.id);
+          this.logConnection('restore.succeeded', {
+            ...context,
+            attempt,
+            durationMs: Date.now() - startedAt,
+          });
+          return true;
+        }
+      }
+
+      // A QR code means the provider no longer holds the session: only a new
+      // pairing helps, and further attempts would just restart the QR cycle.
+      const exhausted = outcome === 'qr' || attempt >= RESTORE_MAX_ATTEMPTS;
+      state.attempts = attempt;
+      state.nextAttemptAt = Date.now() + RESTORE_BACKOFF_BASE_MS * 2 ** (attempt - 1);
+      state.exhausted = exhausted;
+      const event =
+        outcome === 'qr'
+          ? 'restore.requires_pairing'
+          : exhausted
+            ? 'restore.exhausted'
+            : 'restore.failed';
+      this.logger.warn(
+        `whatsapp.connection.${event} ${JSON.stringify({
+          ...context,
+          attempt,
+          counted: true,
+          outcome,
+          providerMessage:
+            outcome === 'rejected' && isRecord(response)
+              ? sanitizeProviderText(readString(response.message))
+              : null,
+          durationMs: Date.now() - startedAt,
+        })}`,
+      );
+      return false;
+    } finally {
+      this.connectionOperations.delete(row.id);
+    }
+  }
+
+  private restoreSkipReason(row: RestoreCandidate): string | null {
+    if (!this.config.get('WHATSAPP_AUTO_RESTORE_ENABLED') || !this.evolution.configured) {
+      return 'disabled';
+    }
+    if (row.status !== WhatsAppInstanceStatus.DISCONNECTED) {
+      return 'not_disconnected';
+    }
+    if (row.connectionIntent === WhatsAppConnectionIntent.DISCONNECT) {
+      return 'manual_disconnect_intent';
+    }
+    if (
+      row.connectionStatusReason !== null &&
+      NON_RESTORABLE_REASONS.has(row.connectionStatusReason)
+    ) {
+      return 'requires_pairing_reason';
+    }
+    const now = Date.now();
+    let state = this.restoreStates.get(row.id);
+    if (!state) {
+      state = {
+        closedSince: row.connectionObservedAt?.getTime() ?? now,
+        attempts: 0,
+        nextAttemptAt: 0,
+        exhausted: false,
+      };
+      this.restoreStates.set(row.id, state);
+    }
+    // The provider reconnects a recoverable close by itself a few seconds
+    // later. Calling connect inside that window would open a second socket for
+    // the same session, and both would keep replacing each other.
+    if (now - state.closedSince < this.config.get('WHATSAPP_AUTO_RESTORE_MIN_CLOSED_MS')) {
+      return 'within_provider_reconnect_window';
+    }
+    if (state.exhausted) {
+      return 'attempts_exhausted';
+    }
+    if (now < state.nextAttemptAt) {
+      return 'backoff';
+    }
+    if (this.connectionOperations.has(row.id)) {
+      return 'operation_in_progress';
+    }
+    return null;
+  }
+
+  private async waitForRestoredSession(
+    row: RestoreCandidate,
+    startedAt: number,
+  ): Promise<'open' | 'qr' | 'not_open'> {
+    const deadline = startedAt + this.config.get('WHATSAPP_AUTO_RESTORE_WAIT_MS');
+    const qrIssued = (): boolean => {
+      const qr = this.qrCache.get(row.id);
+      return qr !== undefined && qr.updatedAt.getTime() >= startedAt;
+    };
+
+    while (Date.now() < deadline) {
+      const snapshot = await this.readProviderSnapshot(row.instanceName);
+      if (snapshot.kind === 'confirmed' && snapshot.status === WhatsAppInstanceStatus.CONNECTED) {
+        return 'open';
+      }
+      if (qrIssued()) {
+        return 'qr';
+      }
+      await delay(Math.min(RESTORE_POLL_INTERVAL_MS, Math.max(deadline - Date.now(), 0)));
+    }
+
+    return qrIssued() ? 'qr' : 'not_open';
   }
 
   private async loadProviderSnapshot(): Promise<EvolutionInstanceSummary[] | null> {
@@ -2358,9 +2616,19 @@ function trimTrailingSlash(value: string): string {
   return value.endsWith('/') ? value.slice(0, -1) : value;
 }
 
+/** Keeps provider text short and without phone numbers before it is logged. */
+function sanitizeProviderText(value: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+  return value.replace(/\d{8,}/g, '<number>').slice(0, 200);
+}
+
 function sanitizeConnectionError(error: unknown): string | null {
   if (error instanceof EvolutionRequestError) {
-    return error.httpStatus ? `${error.message} (${error.httpStatus})` : error.message;
+    const status = error.httpStatus ? ` (${error.httpStatus})` : '';
+    const detail = error.providerMessage ? `: ${error.providerMessage}` : '';
+    return `${error.message}${status}${detail}`;
   }
   if (error instanceof Error) {
     return error.message;

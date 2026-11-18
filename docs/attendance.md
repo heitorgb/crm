@@ -5,6 +5,8 @@
 - **Encaminhar:** o atendente escolhe até 20 conversas do mesmo tenant. Texto e mídias já armazenadas
   são reenviados pela instância da conversa de destino. Mensagens de visualização única ou mídias
   indisponíveis não podem ser encaminhadas. O envio passa pelo fluxo normal de mensagens.
+  O seletor segue o estilo do WhatsApp: cada conversa mostra foto, nome e número (ou "Grupo"),
+  com um círculo de seleção; os nomes escolhidos e o botão de enviar aparecem no rodapé.
 - **Apagar para mim:** oculta a mensagem apenas para o usuário atual no CRM; o WhatsApp e os outros
   atendentes continuam com a mensagem. A preferência é persistida em `message_hidden_for_users` e
   aplicada ao histórico, prévia e contadores do usuário.

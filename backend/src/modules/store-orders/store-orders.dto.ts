@@ -43,6 +43,10 @@ export class CreateStoreDto {
   @IsEnum(DeliveryConfirmationMode)
   @IsOptional()
   deliveryConfirmationMode?: DeliveryConfirmationMode;
+
+  @IsOptional()
+  @IsUUID()
+  whatsappInstanceId?: string | null;
 }
 
 export class UpdateStoreDto {
@@ -59,6 +63,10 @@ export class UpdateStoreDto {
   @IsOptional()
   @IsBoolean()
   active?: boolean;
+
+  @IsOptional()
+  @IsUUID()
+  whatsappInstanceId?: string | null;
 }
 
 export class ApprovedOrderDto {

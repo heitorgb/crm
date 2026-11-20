@@ -16,7 +16,7 @@ import { useAuthStore } from '@/stores/auth-store';
 import { StoreLogo } from './store-logo';
 
 type Status = 'PENDENTE_SEPARACAO' | 'SEPARANDO' | 'SEPARADO' | 'EM_ROTA' | 'OBSERVACAO' | 'ENTREGUE';
-type Store = { id: string; name: string; externalCode: string; logoUpdatedAt: string | null };
+type Store = { id: string; name: string; externalCode: string; whatsappInstanceId: string | null; logoUpdatedAt: string | null };
 type Order = {
   id: string; externalOrderId: string; customerName: string | null; orderText: string | null;
   status: Status; approvedAt: string; enteredRouteAt: string | null;
@@ -225,7 +225,7 @@ export function StoreOrdersPage() {
 
     <Dialog open={manualOpen} onOpenChange={setManualOpen}><DialogContent className="max-h-[calc(100dvh-1.5rem)] w-[calc(100vw-1.5rem)] overflow-y-auto overscroll-contain p-4 sm:max-h-[85vh] sm:p-5"><DialogHeader><DialogTitle>Novo pedido manual</DialogTitle></DialogHeader>
       <form className="space-y-4" onSubmit={(event) => { event.preventDefault(); setError(''); create.mutate(); }}>
-        <div className="space-y-2"><Label htmlFor="manual-store">Loja</Label><select id="manual-store" required value={formStoreId} disabled={messageSent || create.isPending} onChange={(event) => setFormStoreId(event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm"><option value="">Selecione a loja</option>{(stores.data ?? []).map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}</select></div>
+        <div className="space-y-2"><Label htmlFor="manual-store">Loja</Label><select id="manual-store" required value={formStoreId} disabled={messageSent || create.isPending} onChange={(event) => { const id = event.target.value; setFormStoreId(id); const linked = stores.data?.find((s) => s.id === id)?.whatsappInstanceId; if (linked) setWhatsappInstanceId(linked); }} className="h-10 w-full rounded-md border bg-background px-3 text-sm"><option value="">Selecione a loja</option>{(stores.data ?? []).map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}</select></div>
         <div className="space-y-2"><Label htmlFor="manual-contact">Contato</Label><ContactPicker id="manual-contact" value={contactId} onValueChange={setContactId} disabled={messageSent || create.isPending}/></div>
         <div className="space-y-2"><Label htmlFor="manual-whatsapp">Enviar pelo WhatsApp</Label><select id="manual-whatsapp" required value={selectedInstanceId} disabled={messageSent || create.isPending} onChange={(event) => setWhatsappInstanceId(event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm"><option value="">Selecione um WhatsApp conectado</option>{connectedInstances.map((instance) => <option key={instance.id} value={instance.id}>{instance.name}</option>)}</select>{connectedInstances.length === 0 && <p className="text-xs text-muted-foreground">Conecte um WhatsApp em Configurações para enviar a mensagem.</p>}</div>
         <div className="space-y-2"><Label htmlFor="manual-text">Texto do pedido</Label><Textarea id="manual-text" required maxLength={4000} value={orderText} disabled={messageSent || create.isPending} onChange={(event) => setOrderText(event.target.value)} placeholder="Cole ou escreva a mensagem do pedido" rows={6}/><p className="text-xs text-muted-foreground">O texto será enviado ao contato e registrado no pedido.</p></div>

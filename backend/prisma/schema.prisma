@@ -446,12 +446,14 @@ model Store {
   logoStorageKey           String?                  @map("logo_storage_key")
   logoUpdatedAt            DateTime?                @map("logo_updated_at")
   deliveryConfirmationMode DeliveryConfirmationMode @default(AUTOMATIC) @map("delivery_confirmation_mode")
+  whatsappInstanceId       String?                  @map("whatsapp_instance_id") @db.Uuid
   active                   Boolean                  @default(true)
   createdAt                DateTime                 @default(now()) @map("created_at")
   updatedAt                DateTime                 @updatedAt @map("updated_at")
 
-  tenant Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  orders StoreOrder[]
+  tenant   Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  instance WhatsAppInstance?    @relation(fields: [whatsappInstanceId], references: [id], onDelete: SetNull)
+  orders   StoreOrder[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, externalCode])
@@ -823,6 +825,7 @@ model WhatsAppInstance {
   avatars             WhatsAppAvatar[]
   billingSettings     BillingSettings[]
   webhookIntegrations WebhookIntegration[]
+  stores              Store[]
 
   @@index([tenantId, status])
   @@index([tenantId, createdAt])

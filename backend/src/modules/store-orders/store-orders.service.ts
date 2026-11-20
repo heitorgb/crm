@@ -51,8 +51,9 @@ export class StoreOrdersService {
         externalCode,
         deliveryConfirmationMode: dto.deliveryConfirmationMode ?? 'AUTOMATIC',
         integrationSecretHash: generated.hash,
+        whatsappInstanceId: dto.whatsappInstanceId ?? null,
       },
-      select: { id: true, name: true, externalCode: true, deliveryConfirmationMode: true, active: true, logoUpdatedAt: true },
+      select: { id: true, name: true, externalCode: true, deliveryConfirmationMode: true, whatsappInstanceId: true, active: true, logoUpdatedAt: true },
     });
     return { ...store, secret: generated.secret };
   }
@@ -61,7 +62,7 @@ export class StoreOrdersService {
     const { tenantId } = this.tenantContext.requireContext();
     return this.prisma.store.findMany({
       where: { tenantId },
-      select: { id: true, name: true, externalCode: true, deliveryConfirmationMode: true, active: true, createdAt: true, logoUpdatedAt: true },
+      select: { id: true, name: true, externalCode: true, deliveryConfirmationMode: true, whatsappInstanceId: true, active: true, createdAt: true, logoUpdatedAt: true },
       orderBy: { name: 'asc' },
     });
   }
@@ -76,8 +77,9 @@ export class StoreOrdersService {
       where: { id: storeId },
       data: { ...(name ? { name } : {}),
         ...(dto.deliveryConfirmationMode ? { deliveryConfirmationMode: dto.deliveryConfirmationMode } : {}),
-        ...(dto.active !== undefined ? { active: dto.active } : {}) },
-      select: { id: true, name: true, externalCode: true, deliveryConfirmationMode: true, active: true, createdAt: true, logoUpdatedAt: true },
+        ...(dto.active !== undefined ? { active: dto.active } : {}),
+        ...('whatsappInstanceId' in dto ? { whatsappInstanceId: dto.whatsappInstanceId ?? null } : {}) },
+      select: { id: true, name: true, externalCode: true, deliveryConfirmationMode: true, whatsappInstanceId: true, active: true, createdAt: true, logoUpdatedAt: true },
     });
   }
 
@@ -138,7 +140,7 @@ export class StoreOrdersService {
     const { tenantId } = this.tenantContext.requireContext();
     return this.prisma.store.findMany({
       where: { tenantId, active: true },
-      select: { id: true, name: true, externalCode: true, deliveryConfirmationMode: true, logoUpdatedAt: true },
+      select: { id: true, name: true, externalCode: true, deliveryConfirmationMode: true, whatsappInstanceId: true, logoUpdatedAt: true },
       orderBy: { name: 'asc' },
     });
   }

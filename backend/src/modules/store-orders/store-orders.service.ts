@@ -215,12 +215,12 @@ export class StoreOrdersService {
         const order = await tx.storeOrder.create({
           data: {
             tenantId, storeId: store.id, contactId: contact.id,
-            externalOrderId,
+            externalOrderId, status: 'SEPARANDO',
             customerName: contact.name, orderText: text, approvedAt: new Date(),
           },
         });
         await tx.storeOrderStatusChange.create({
-          data: { tenantId, orderId: order.id, status: 'PENDENTE_SEPARACAO',
+          data: { tenantId, orderId: order.id, status: 'SEPARANDO',
             actorMembershipId: membershipId, origin: 'CRM_MANUAL' },
         });
         return order;

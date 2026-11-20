@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowRight, Clock3, MapPin, Plus, Search } from 'lucide-react';
 import { ContactPicker } from '@/features/contacts/contact-picker';
@@ -97,10 +98,14 @@ export function StoreOrdersPage() {
   const queryClient = useQueryClient();
   const { socket } = useRealtime();
   const tenantId = useAuthStore((state) => state.session?.tenant.id);
+  const navigate = useNavigate();
+  const { search: locationSearch } = useLocation();
   const [storeId, setStoreId] = useState('all');
   const [group, setGroup] = useState('all');
   const [search, setSearch] = useState('');
-  const [manualOpen, setManualOpen] = useState(false);
+  const [manualOpen, setManualOpen] = useState(
+    () => new URLSearchParams(locationSearch).get('novo') === '1',
+  );
   const [selected, setSelected] = useState<Order | null>(null);
   const [formStoreId, setFormStoreId] = useState('');
   const [contactId, setContactId] = useState('');
@@ -132,6 +137,12 @@ export function StoreOrdersPage() {
     queryFn: () => apiRequest<OrderDetail>(`/store-orders/${selected!.id}`),
     enabled: selected !== null,
   });
+  useEffect(() => {
+    if (new URLSearchParams(locationSearch).get('novo') === '1') {
+      navigate('/entregas', { replace: true });
+    }
+  }, [locationSearch, navigate]);
+
   useEffect(() => {
     if (!socket) return;
     const refresh = () => {
@@ -185,7 +196,7 @@ export function StoreOrdersPage() {
 
   return <div className="mx-auto max-w-5xl space-y-5 p-4 pb-24 sm:p-6">
     <div className="flex items-center justify-between gap-4">
-      <div><p className="text-sm text-muted-foreground">Operação das lojas</p><h1 className="text-3xl font-semibold">Entregas</h1></div>
+      <div><p className="text-sm text-muted-foreground">Operação das lojas</p><h1 className="text-3xl font-semibold">Acompanhamento</h1></div>
       <Button onClick={() => { setError(''); setManualOpen(true); }} aria-label="Criar pedido manual"><Plus className="mr-2 size-4"/> Novo pedido</Button>
     </div>
     <div className="flex gap-2 overflow-x-auto pb-1">

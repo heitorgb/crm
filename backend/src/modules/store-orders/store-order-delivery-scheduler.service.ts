@@ -129,7 +129,15 @@ export class StoreOrderDeliverySchedulerService implements OnModuleInit {
   private async pushReminders(tenantId: string, reminders: SeparationReminder[]): Promise<void> {
     if (!this.fcm.isConfigured()) return;
     const devices = await this.prisma.pushDevice.findMany({
-      where: { tenantId, tenantUser: { tenantId, active: true, user: { active: true } } },
+      where: {
+        tenantId,
+        tenantUser: {
+          tenantId,
+          active: true,
+          user: { active: true },
+          AND: [this.modules.membersWithModule(MODULE_KEYS.DELIVERIES)],
+        },
+      },
       select: { id: true, token: true, tenantUser: { select: { role: true, storeAccess: { select: { storeId: true } } } } },
     });
     const invalidDeviceIds: string[] = [];

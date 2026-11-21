@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Plus, Store, Trash2, Users } from 'lucide-react';
+import { LayoutGrid, Plus, Store, Trash2, Users } from 'lucide-react';
 import { ConfirmDialog } from '@/components/common/confirm-dialog';
 import { EmptyState } from '@/components/common/empty-state';
 import { StatusBadge } from '@/components/common/status-badge';
@@ -21,7 +21,7 @@ import { ApiError, apiRequest } from '@/lib/api-client';
 import type { Role } from '@/types/auth';
 import type { Member } from '@/types/settings';
 import { MemberForm } from './member-form';
-import { MemberStoresDialog, type MemberStoreOption } from './member-stores-dialog';
+import { MemberAccessDialog, type MemberAccessOption } from './member-access-dialog';
 import { useMembers, useRemoveMember, useUpdateMember } from './queries';
 
 const roleLabel: Record<Role, string> = {
@@ -30,12 +30,40 @@ const roleLabel: Record<Role, string> = {
   USER: 'Usuário',
 };
 
-function memberStoresLabel(member: Member, stores: MemberStoreOption[]): string {
-  if (member.storeIds.length === 0) return 'Todas as lojas';
-  if (member.storeIds.length === 1) {
-    return stores.find((store) => store.id === member.storeIds[0])?.name ?? '1 loja';
-  }
-  return `${member.storeIds.length} lojas`;
+type AccessKind = 'stores' | 'modules';
+
+const accessCopy: Record<AccessKind, {
+  all: string;
+  plural: string;
+  title: string;
+  description: string;
+  error: string;
+}> = {
+  stores: {
+    all: 'Todas as lojas',
+    plural: 'lojas',
+    title: 'Lojas',
+    description: 'O usuário verá apenas os pedidos dessas lojas e as conversas do WhatsApp vinculado a elas. Sem nenhuma loja marcada, ele acessa todas.',
+    error: 'Não foi possível alterar as lojas do usuário.',
+  },
+  modules: {
+    all: 'Todos os módulos',
+    plural: 'módulos',
+    title: 'Módulos',
+    description: 'O usuário verá no menu e poderá usar apenas os módulos marcados. Sem nenhum módulo marcado, ele acessa todos os da organização.',
+    error: 'Não foi possível alterar os módulos do usuário.',
+  },
+};
+
+function accessIds(member: Member, kind: AccessKind): string[] {
+  return kind === 'stores' ? member.storeIds : member.moduleKeys;
+}
+
+function accessLabel(member: Member, kind: AccessKind, options: MemberAccessOption[]): string {
+  const ids = accessIds(member, kind);
+  if (ids.length === 0) return accessCopy[kind].all;
+  if (ids.length === 1) return options.find((option) => option.id === ids[0])?.name ?? `1 ${accessCopy[kind].plural}`;
+  return `${ids.length} ${accessCopy[kind].plural}`;
 }
 
 export function TeamTab({ canManage }: { canManage: boolean }) {
@@ -44,46 +72,61 @@ export function TeamTab({ canManage }: { canManage: boolean }) {
   const removeMember = useRemoveMember();
   const [formOpen, setFormOpen] = useState(false);
   const [pendingRemove, setPendingRemove] = useState<Member | null>(null);
-  const [editingStores, setEditingStores] = useState<Member | null>(null);
+  const [editingAccess, setEditingAccess] = useState<{ member: Member; kind: AccessKind } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const storesQuery = useQuery({
     queryKey: ['store-orders', 'manage-stores'],
-    queryFn: () => apiRequest<MemberStoreOption[]>('/store-orders/stores/manage'),
+    queryFn: () => apiRequest<MemberAccessOption[]>('/store-orders/stores/manage'),
     enabled: canManage,
     retry: false,
   });
-  const stores = storesQuery.data ?? [];
-  const showStores = canManage && stores.length > 0;
+  const modulesQuery = useQuery({
+    queryKey: ['modules', 'grantable'],
+    queryFn: async () =>
+      (await apiRequest<Array<{ key: string; name: string }>>('/modules/grantable'))
+        .map((module) => ({ id: module.key, name: module.name })),
+    enabled: canManage,
+    retry: false,
+  });
+  const accessOptions: Record<AccessKind, MemberAccessOption[]> = {
+    stores: storesQuery.data ?? [],
+    modules: modulesQuery.data ?? [],
+  };
+  const showStores = canManage && accessOptions.stores.length > 0;
+  const showModules = canManage && accessOptions.modules.length > 0;
 
   const handleError = (caught: unknown, fallback: string): void => {
     setError(caught instanceof ApiError ? caught.message : fallback);
   };
 
-  const handleStoresSave = async (member: Member, storeIds: string[]): Promise<void> => {
+  const handleAccessSave = async (member: Member, kind: AccessKind, selected: string[]): Promise<void> => {
     setError(null);
     try {
-      await updateMember.mutateAsync({ id: member.id, input: { storeIds } });
-      setEditingStores(null);
+      await updateMember.mutateAsync({
+        id: member.id,
+        input: kind === 'stores' ? { storeIds: selected } : { moduleKeys: selected },
+      });
+      setEditingAccess(null);
     } catch (caught) {
-      handleError(caught, 'Não foi possível alterar as lojas do usuário.');
+      handleError(caught, accessCopy[kind].error);
     }
   };
 
-  const storesButton = (member: Member, className: string) =>
+  const accessButton = (member: Member, kind: AccessKind, className: string) =>
     member.role === 'USER' ? (
       <Button
         variant="outline"
         size="sm"
         className={className}
-        onClick={() => setEditingStores(member)}
+        onClick={() => setEditingAccess({ member, kind })}
         disabled={updateMember.isPending}
-        aria-label={`Lojas de ${member.name}`}
+        aria-label={`${accessCopy[kind].title} de ${member.name}`}
       >
-        <Store />
-        {memberStoresLabel(member, stores)}
+        {kind === 'stores' ? <Store /> : <LayoutGrid />}
+        {accessLabel(member, kind, accessOptions[kind])}
       </Button>
     ) : (
-      <span className="text-xs text-muted-foreground">Todas as lojas</span>
+      <span className="text-xs text-muted-foreground">{accessCopy[kind].all}</span>
     );
 
   const handleRoleChange = async (member: Member, role: Role): Promise<void> => {
@@ -190,7 +233,8 @@ export function TeamTab({ canManage }: { canManage: boolean }) {
                       <StatusBadge tone="secondary">{roleLabel[member.role]}</StatusBadge>
                     )}
 
-                    {showStores ? storesButton(member, 'w-full justify-start') : null}
+                    {showStores ? accessButton(member, 'stores', 'w-full justify-start') : null}
+                    {showModules ? accessButton(member, 'modules', 'w-full justify-start') : null}
 
                     <div className="flex items-center justify-between gap-2">
                       <div className="flex items-center gap-2">
@@ -237,6 +281,7 @@ export function TeamTab({ canManage }: { canManage: boolean }) {
                     <TableHead>Usuário</TableHead>
                     <TableHead>Papel</TableHead>
                     {showStores ? <TableHead>Lojas</TableHead> : null}
+                    {showModules ? <TableHead>Módulos</TableHead> : null}
                     <TableHead className="hidden sm:table-cell">Ativo</TableHead>
                     {canManage ? <TableHead className="text-right">Ações</TableHead> : null}
                   </TableRow>
@@ -282,7 +327,8 @@ export function TeamTab({ canManage }: { canManage: boolean }) {
                           <StatusBadge tone="secondary">{roleLabel[member.role]}</StatusBadge>
                         )}
                       </TableCell>
-                      {showStores ? <TableCell>{storesButton(member, 'h-8')}</TableCell> : null}
+                      {showStores ? <TableCell>{accessButton(member, 'stores', 'h-8')}</TableCell> : null}
+                      {showModules ? <TableCell>{accessButton(member, 'modules', 'h-8')}</TableCell> : null}
                       <TableCell className="hidden sm:table-cell">
                         {canManage ? (
                           <Switch
@@ -322,13 +368,15 @@ export function TeamTab({ canManage }: { canManage: boolean }) {
 
       {canManage ? <MemberForm open={formOpen} onOpenChange={setFormOpen} /> : null}
 
-      {editingStores ? (
-        <MemberStoresDialog
-          member={editingStores}
-          stores={stores}
+      {editingAccess ? (
+        <MemberAccessDialog
+          title={`${accessCopy[editingAccess.kind].title} de ${editingAccess.member.name}`}
+          description={accessCopy[editingAccess.kind].description}
+          options={accessOptions[editingAccess.kind]}
+          initialSelected={accessIds(editingAccess.member, editingAccess.kind)}
           saving={updateMember.isPending}
-          onCancel={() => setEditingStores(null)}
-          onSave={(storeIds) => void handleStoresSave(editingStores, storeIds)}
+          onCancel={() => setEditingAccess(null)}
+          onSave={(selected) => void handleAccessSave(editingAccess.member, editingAccess.kind, selected)}
         />
       ) : null}
 

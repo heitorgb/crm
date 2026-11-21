@@ -3,6 +3,8 @@ import { MessageDirection, MessageType } from '@prisma/client';
 import { TenantContextService } from '../../common/tenant-context/tenant-context.service.js';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service.js';
 import { FcmClient, type PushMessage } from '../../infrastructure/push/fcm.client.js';
+import { MODULE_KEYS } from '../modules/modules.constants.js';
+import { ModulesService } from '../modules/modules.service.js';
 import { StoreAccessService } from '../store-access/store-access.service.js';
 import {
   JOB_NAMES,
@@ -41,6 +43,7 @@ export class MessagePushService implements OnModuleInit {
     private readonly tenantContext: TenantContextService,
     private readonly fcm: FcmClient,
     private readonly storeAccess: StoreAccessService,
+    private readonly modules: ModulesService,
   ) {}
 
   onModuleInit(): void {
@@ -103,7 +106,10 @@ export class MessagePushService implements OnModuleInit {
           tenantId: job.tenantId,
           active: true,
           user: { active: true },
-          AND: [this.storeAccess.membersReachingInstance(conversation.whatsappInstanceId)],
+          AND: [
+            this.storeAccess.membersReachingInstance(conversation.whatsappInstanceId),
+            this.modules.membersWithModule(MODULE_KEYS.ATTENDANCE),
+          ],
         },
       },
       select: { id: true, token: true },

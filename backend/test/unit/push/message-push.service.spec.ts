@@ -8,6 +8,7 @@ import {
   MessagePushService,
   type MessagePushInput,
 } from '../../../src/modules/push-notifications/message-push.service.js';
+import { ModulesService } from '../../../src/modules/modules/modules.service.js';
 import { StoreAccessService } from '../../../src/modules/store-access/store-access.service.js';
 
 const TENANT_ID = '11111111-1111-4111-8111-111111111111';
@@ -82,7 +83,8 @@ describe('MessagePushService', () => {
       prisma as unknown as PrismaService,
       tenantContext,
       fcm as unknown as FcmClient,
-      new StoreAccessService({} as never, {} as never, {} as never),
+      new StoreAccessService({} as never, {} as never, {} as never, {} as never),
+      new ModulesService({} as never),
     );
     return { service, prisma, fcm, queue, tenantContext };
   }
@@ -142,13 +144,22 @@ describe('MessagePushService', () => {
             tenantId: TENANT_ID,
             active: true,
             user: { active: true },
-            AND: [{
-              OR: [
-                { role: { not: 'USER' } },
-                { storeAccess: { none: {} } },
-                { storeAccess: { some: { store: { whatsappInstanceId: INSTANCE_ID } } } },
-              ],
-            }],
+            AND: [
+              {
+                OR: [
+                  { role: { not: 'USER' } },
+                  { storeAccess: { none: {} } },
+                  { storeAccess: { some: { store: { whatsappInstanceId: INSTANCE_ID } } } },
+                ],
+              },
+              {
+                OR: [
+                  { role: { not: 'USER' } },
+                  { moduleAccess: { none: {} } },
+                  { moduleAccess: { some: { module: { key: 'attendance' } } } },
+                ],
+              },
+            ],
           },
         },
       }),

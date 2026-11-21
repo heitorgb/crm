@@ -14,6 +14,7 @@ export interface Member {
   role: Role;
   active: boolean;
   storeIds: string[];
+  moduleKeys: string[];
 }
 
 export interface CreateMemberInput {
@@ -27,4 +28,5 @@ export interface UpdateMemberInput {
   role?: Role;
   active?: boolean;
   storeIds?: string[];
+  moduleKeys?: string[];
 }

@@ -30,6 +30,12 @@ export class MemberStoreNotFoundError extends AppException {
   }
 }
 
+export class MemberModuleNotFoundError extends AppException {
+  constructor() {
+    super('MEMBER_MODULE_NOT_FOUND', 'Um dos módulos selecionados não pode ser liberado para usuários.', 400);
+  }
+}
+
 export class LastOwnerRequiredError extends AppException {
   constructor() {
     super('LAST_OWNER_REQUIRED', 'A tenant must keep at least one active owner', 409);

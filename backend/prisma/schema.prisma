@@ -323,6 +323,7 @@ model TenantUser {
   createdFollowUps        LeadFollowUp[]       @relation("FollowUpCreatedBy")
   pushDevices             PushDevice[]
   storeAccess             TenantUserStore[]
+  moduleAccess            TenantUserModule[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, userId])
@@ -1336,9 +1337,24 @@ model Module {
   updatedAt    DateTime @updatedAt @map("updated_at")
 
   tenants TenantModule[]
+  members TenantUserModule[]
 
   @@index([sortOrder])
   @@map("modules")
+}
+
+model TenantUserModule {
+  tenantId     String   @map("tenant_id") @db.Uuid
+  tenantUserId String   @map("tenant_user_id") @db.Uuid
+  moduleId     String   @map("module_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  tenantUser TenantUser @relation(fields: [tenantId, tenantUserId], references: [tenantId, id], onDelete: Cascade)
+  module     Module     @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+
+  @@id([tenantUserId, moduleId])
+  @@index([tenantId, moduleId])
+  @@map("tenant_user_modules")
 }
 
 model TenantModule {

@@ -11,6 +11,7 @@ import { StoreAccessService } from '../store-access/store-access.service.js';
 import type { CreateMemberDto, UpdateMemberDto } from './dto/member.dto.js';
 import {
   LastOwnerRequiredError,
+  MemberModuleNotFoundError,
   MemberPasswordRequiredError,
   MemberStoreNotFoundError,
   MembershipAlreadyExistsError,
@@ -37,6 +38,7 @@ export interface MemberWithUser {
   role: Role;
   active: boolean;
   storeIds: string[];
+  moduleKeys: string[];
 }
 
 export interface UserMembership {
@@ -64,6 +66,7 @@ const MEMBER_WITH_USER_SELECT = {
   active: true,
   user: { select: { name: true, email: true, avatarUpdatedAt: true } },
   storeAccess: { select: { storeId: true } },
+  moduleAccess: { select: { module: { select: { key: true } } } },
 } satisfies Prisma.TenantUserSelect;
 
 type PrismaMemberWithUser = Prisma.TenantUserGetPayload<{
@@ -234,11 +237,29 @@ export class MembershipsService {
       }
     }
 
+    let moduleIds: string[] | undefined;
+    if (dto.moduleKeys) {
+      const modules = await this.prisma.module.findMany({
+        where: { key: { in: dto.moduleKeys }, controllable: true },
+        select: { id: true },
+      });
+      if (modules.length !== dto.moduleKeys.length) {
+        throw new MemberModuleNotFoundError();
+      }
+      moduleIds = modules.map((module) => module.id);
+    }
+
     const updated = await this.prisma.$transaction(async (tx) => {
       if (storeIds) {
         await tx.tenantUserStore.deleteMany({ where: { tenantId, tenantUserId: membershipId } });
         await tx.tenantUserStore.createMany({
           data: storeIds.map((storeId) => ({ tenantId, tenantUserId: membershipId, storeId })),
+        });
+      }
+      if (moduleIds) {
+        await tx.tenantUserModule.deleteMany({ where: { tenantId, tenantUserId: membershipId } });
+        await tx.tenantUserModule.createMany({
+          data: moduleIds.map((moduleId) => ({ tenantId, tenantUserId: membershipId, moduleId })),
         });
       }
       return tx.tenantUser.update({
@@ -251,7 +272,7 @@ export class MembershipsService {
       });
     });
 
-    if (storeIds !== undefined || dto.role !== undefined) {
+    if (storeIds !== undefined || moduleIds !== undefined || dto.role !== undefined) {
       await this.storeAccess.refreshRealtimeRooms(tenantId, updated.id, updated.userId, updated.role);
     }
 
@@ -320,5 +341,6 @@ function toMemberWithUser(member: PrismaMemberWithUser): MemberWithUser {
     role: member.role,
     active: member.active,
     storeIds: member.storeAccess.map((link) => link.storeId),
+    moduleKeys: member.moduleAccess.map((link) => link.module.key),
   };
 }

@@ -1,27 +1,36 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import type { Member } from '@/types/settings';
 
-export interface MemberStoreOption {
+export interface MemberAccessOption {
   id: string;
   name: string;
 }
 
-interface MemberStoresDialogProps {
-  member: Member;
-  stores: MemberStoreOption[];
+interface MemberAccessDialogProps {
+  title: string;
+  description: string;
+  options: MemberAccessOption[];
+  initialSelected: string[];
   saving: boolean;
   onCancel: () => void;
-  onSave: (storeIds: string[]) => void;
+  onSave: (selected: string[]) => void;
 }
 
-export function MemberStoresDialog({ member, stores, saving, onCancel, onSave }: MemberStoresDialogProps) {
-  const [selected, setSelected] = useState<string[]>(member.storeIds);
+export function MemberAccessDialog({
+  title,
+  description,
+  options,
+  initialSelected,
+  saving,
+  onCancel,
+  onSave,
+}: MemberAccessDialogProps) {
+  const [selected, setSelected] = useState<string[]>(initialSelected);
 
-  const toggle = (storeId: string): void => {
+  const toggle = (id: string): void => {
     setSelected((current) =>
-      current.includes(storeId) ? current.filter((id) => id !== storeId) : [...current, storeId],
+      current.includes(id) ? current.filter((value) => value !== id) : [...current, id],
     );
   };
 
@@ -29,25 +38,22 @@ export function MemberStoresDialog({ member, stores, saving, onCancel, onSave }:
     <Dialog open onOpenChange={(open) => { if (!open) onCancel(); }}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Lojas de {member.name}</DialogTitle>
+          <DialogTitle>{title}</DialogTitle>
         </DialogHeader>
-        <p className="text-sm text-muted-foreground">
-          O usuário verá apenas os pedidos dessas lojas e as conversas do WhatsApp vinculado a elas.
-          Sem nenhuma loja marcada, ele acessa todas.
-        </p>
+        <p className="text-sm text-muted-foreground">{description}</p>
         <div className="max-h-72 space-y-1 overflow-y-auto">
-          {stores.map((store) => (
+          {options.map((option) => (
             <label
-              key={store.id}
+              key={option.id}
               className="flex cursor-pointer items-center gap-3 rounded-md px-2 py-2 transition-colors hover:bg-surface-hover"
             >
               <input
                 type="checkbox"
-                checked={selected.includes(store.id)}
-                onChange={() => toggle(store.id)}
+                checked={selected.includes(option.id)}
+                onChange={() => toggle(option.id)}
                 className="size-4 shrink-0 cursor-pointer rounded border-border accent-primary"
               />
-              <span className="text-sm">{store.name}</span>
+              <span className="text-sm">{option.name}</span>
             </label>
           ))}
         </div>

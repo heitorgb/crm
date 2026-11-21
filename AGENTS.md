@@ -36,6 +36,8 @@ Status atual (ver `docs/architecture.md` para detalhes):
 - **Implementado:** acesso por loja dentro do tenant — usuários vinculados a lojas só veem os
   pedidos delas e as conversas do WhatsApp vinculado, inclusive em realtime e push. Ver
   `docs/multi-tenancy.md` ("Acesso por loja dentro do tenant").
+- **Implementado:** módulos por usuário — admins limitam o que cada usuário acessa no CRM (menu e
+  API). Ver `docs/modules.md` ("Módulos por usuário").
 - **Planejado:** autenticação/autorização, módulos de CRM, multi-tenancy com RLS, filas, realtime.
 - **Futuro:** frontend (React + Vite), integrações (WhatsApp/Evolution API), dashboards, relatórios.
 

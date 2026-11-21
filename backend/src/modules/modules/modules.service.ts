@@ -23,6 +23,12 @@ export interface TenantModuleView extends ModuleCatalogView {
   enabled: boolean;
 }
 
+export interface ModuleMember {
+  tenantId: string;
+  membershipId: string;
+  role: string;
+}
+
 /**
  * Central availability registry. A module is enabled for a tenant unless there
  * is an explicit `tenant_modules` row marking it disabled, so organizations
@@ -45,6 +51,54 @@ export class ModulesService {
   async listEnabledKeys(tenantId: string): Promise<string[]> {
     const states = await this.listForTenant(tenantId);
     return states.filter((state) => state.enabled).map((state) => state.key);
+  }
+
+  /** Modules the member can use: enabled for the tenant and, for restricted members, granted to them. */
+  async listAvailableKeysForMember(member: ModuleMember): Promise<string[]> {
+    const [states, granted] = await Promise.all([
+      this.listForTenant(member.tenantId),
+      this.grantedModuleKeys(member),
+    ]);
+    return states
+      .filter((state) => state.enabled && (!state.controllable || granted === null || granted.has(state.key)))
+      .map((state) => state.key);
+  }
+
+  /** Modules an admin can grant to members: enabled for the tenant and controllable. */
+  async listGrantableForTenant(tenantId: string): Promise<TenantModuleView[]> {
+    const states = await this.listForTenant(tenantId);
+    return states.filter((state) => state.enabled && state.controllable);
+  }
+
+  async isAllowedForMember(member: ModuleMember, moduleKey: string): Promise<boolean> {
+    const granted = await this.grantedModuleKeys(member);
+    if (granted === null || granted.has(moduleKey)) return true;
+    const module = await this.prisma.module.findUnique({
+      where: { key: moduleKey },
+      select: { controllable: true },
+    });
+    return !module || !module.controllable;
+  }
+
+  /** `null` means the member is not restricted to specific modules. */
+  async grantedModuleKeys(member: ModuleMember): Promise<Set<string> | null> {
+    if (member.role !== 'USER') return null;
+    const rows = await this.prisma.tenantUserModule.findMany({
+      where: { tenantId: member.tenantId, tenantUserId: member.membershipId },
+      select: { module: { select: { key: true } } },
+    });
+    return rows.length === 0 ? null : new Set(rows.map((row) => row.module.key));
+  }
+
+  /** Members allowed to use the module, for queries such as push device lookup. */
+  membersWithModule(moduleKey: string): Prisma.TenantUserWhereInput {
+    return {
+      OR: [
+        { role: { not: 'USER' } },
+        { moduleAccess: { none: {} } },
+        { moduleAccess: { some: { module: { key: moduleKey } } } },
+      ],
+    };
   }
 
   async listForTenant(tenantId: string): Promise<TenantModuleView[]> {

@@ -3,7 +3,7 @@ import { Reflector } from '@nestjs/core';
 import { TenantContextService } from '../../common/tenant-context/tenant-context.service.js';
 import { InvalidAccessTokenError } from '../auth/auth.errors.js';
 import { REQUIRED_MODULE_KEY } from './modules.constants.js';
-import { ModuleDisabledError } from './modules.errors.js';
+import { ModuleDisabledError, ModuleForbiddenError } from './modules.errors.js';
 import { ModulesService } from './modules.service.js';
 
 /**
@@ -37,6 +37,10 @@ export class ModuleEnabledGuard implements CanActivate {
     const enabled = await this.modules.isEnabled(tenant.tenantId, moduleKey);
     if (!enabled) {
       throw new ModuleDisabledError(moduleKey);
+    }
+
+    if (!(await this.modules.isAllowedForMember(tenant, moduleKey))) {
+      throw new ModuleForbiddenError(moduleKey);
     }
 
     return true;

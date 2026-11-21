@@ -2,6 +2,7 @@ import type { TenantContextService } from '../../../src/common/tenant-context/te
 import type { PrismaService } from '../../../src/infrastructure/prisma/prisma.service.js';
 import { RealtimeService } from '../../../src/infrastructure/realtime/realtime.service.js';
 import { ConversationNotFoundError } from '../../../src/modules/conversations/conversations.errors.js';
+import type { ModulesService } from '../../../src/modules/modules/modules.service.js';
 import { ConversationAccessGuard } from '../../../src/modules/store-access/conversation-access.guard.js';
 import { StoreAccessService } from '../../../src/modules/store-access/store-access.service.js';
 
@@ -15,12 +16,14 @@ function createService(role = 'USER') {
   const tenantContext = {
     requireContext: () => ({ tenantId: 'tenant-1', userId: 'user-1', membershipId: 'member-1', role }),
   } as unknown as TenantContextService;
+  const modules = { isAllowedForMember: vi.fn().mockResolvedValue(true) };
   const service = new StoreAccessService(
     prisma as unknown as PrismaService,
     tenantContext,
     new RealtimeService({} as PrismaService),
+    modules as unknown as ModulesService,
   );
-  return { service, prisma };
+  return { service, prisma, modules };
 }
 
 describe('StoreAccessService', () => {
@@ -68,6 +71,21 @@ describe('StoreAccessService', () => {
 
     prisma.conversation.count.mockResolvedValue(2);
     await expect(service.assertConversations(['c-1', 'c-2'])).resolves.toBeUndefined();
+  });
+
+  it('keeps members without the attendance module out of every conversation room', async () => {
+    const { service, prisma, modules } = createService();
+    prisma.tenantUserStore.findMany.mockResolvedValue([{ storeId: 'store-1', store: { whatsappInstanceId: 'instance-1' } }]);
+
+    await expect(service.conversationRoomsForMember('tenant-1', 'member-1', 'USER'))
+      .resolves.toEqual(['tenant:tenant-1:instance:instance-1']);
+
+    modules.isAllowedForMember.mockResolvedValue(false);
+    await expect(service.conversationRoomsForMember('tenant-1', 'member-1', 'USER')).resolves.toEqual([]);
+    expect(modules.isAllowedForMember).toHaveBeenLastCalledWith(
+      { tenantId: 'tenant-1', membershipId: 'member-1', role: 'USER' },
+      'attendance',
+    );
   });
 
   it('skips the conversation lookup for unrestricted members', async () => {

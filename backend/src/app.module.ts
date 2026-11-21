@@ -73,11 +73,12 @@ import { StoreAccessModule } from './modules/store-access/store-access.module.js
     MediaModule,
     QueueModule,
     RealtimeModule,
-    StoreAccessModule,
     HealthModule,
     MembershipsModule,
     AuthModule,
     ModulesModule,
+    // Imports ModulesModule, so it must come after AuthModule to keep JwtAuthGuard ahead of the module guard.
+    StoreAccessModule,
     AdminModule,
     TenantsModule,
     CustomersModule,

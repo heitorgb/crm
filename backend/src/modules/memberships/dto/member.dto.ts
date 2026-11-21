@@ -50,4 +50,12 @@ export class UpdateMemberDto {
   @ArrayUnique()
   @IsUUID('all', { each: true })
   storeIds?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(50)
+  @ArrayUnique()
+  @IsString({ each: true })
+  @MaxLength(60, { each: true })
+  moduleKeys?: string[];
 }

@@ -4,6 +4,8 @@ import { TenantContextService } from '../../common/tenant-context/tenant-context
 import { PrismaService } from '../../infrastructure/prisma/prisma.service.js';
 import { RealtimeService } from '../../infrastructure/realtime/realtime.service.js';
 import { ConversationNotFoundError } from '../conversations/conversations.errors.js';
+import { MODULE_KEYS } from '../modules/modules.constants.js';
+import { ModulesService } from '../modules/modules.service.js';
 
 export type StoreAccessScope =
   | { restricted: false }
@@ -26,6 +28,7 @@ export class StoreAccessService {
     private readonly prisma: PrismaService,
     private readonly tenantContext: TenantContextService,
     private readonly realtime: RealtimeService,
+    private readonly modules: ModulesService,
   ) {}
 
   current(): Promise<StoreAccessScope> {
@@ -86,9 +89,17 @@ export class StoreAccessService {
     return this.realtime.conversationRooms(tenantId, scope.restricted ? scope.instanceIds : 'all');
   }
 
+  /** Members without the attendance module receive no conversation events at all. */
+  async conversationRoomsForMember(tenantId: string, membershipId: string, role: string): Promise<string[]> {
+    const member = { tenantId, membershipId, role };
+    if (!(await this.modules.isAllowedForMember(member, MODULE_KEYS.ATTENDANCE))) return [];
+    return this.conversationRooms(tenantId, await this.forMembership(tenantId, membershipId, role));
+  }
+
   async refreshRealtimeRooms(tenantId: string, membershipId: string, userId: string, role: string): Promise<void> {
-    const scope = await this.forMembership(tenantId, membershipId, role);
-    await this.realtime.replaceConversationRooms(tenantId, userId, this.conversationRooms(tenantId, scope));
+    const rooms = await this.conversationRoomsForMember(tenantId, membershipId, role);
+    await this.realtime.replaceConversationRooms(tenantId, userId, rooms);
+    this.realtime.emitToUser(tenantId, userId, 'member.access-updated', {});
   }
 
   async refreshRealtimeRoomsForStore(tenantId: string, storeId: string): Promise<void> {

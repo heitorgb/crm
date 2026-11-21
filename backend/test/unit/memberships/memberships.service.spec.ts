@@ -4,6 +4,7 @@ import type { PasswordService } from '../../../src/modules/auth/password.service
 import type { PrismaService } from '../../../src/infrastructure/prisma/prisma.service.js';
 import {
   LastOwnerRequiredError,
+  MemberModuleNotFoundError,
   MemberPasswordRequiredError,
   MemberStoreNotFoundError,
   MembershipAlreadyExistsError,
@@ -36,7 +37,9 @@ interface PrismaMock {
     create: ReturnType<typeof vi.fn>;
   };
   store: { count: ReturnType<typeof vi.fn> };
+  module: { findMany: ReturnType<typeof vi.fn> };
   tenantUserStore: { deleteMany: ReturnType<typeof vi.fn>; createMany: ReturnType<typeof vi.fn> };
+  tenantUserModule: { deleteMany: ReturnType<typeof vi.fn>; createMany: ReturnType<typeof vi.fn> };
   $transaction: ReturnType<typeof vi.fn>;
 }
 
@@ -62,7 +65,9 @@ function createService(): {
       create: vi.fn(),
     },
     store: { count: vi.fn() },
+    module: { findMany: vi.fn() },
     tenantUserStore: { deleteMany: vi.fn().mockResolvedValue({}), createMany: vi.fn().mockResolvedValue({}) },
+    tenantUserModule: { deleteMany: vi.fn().mockResolvedValue({}), createMany: vi.fn().mockResolvedValue({}) },
     $transaction: vi.fn(),
   };
   prisma.$transaction.mockImplementation((callback: (tx: PrismaMock) => unknown) => callback(prisma));
@@ -168,6 +173,7 @@ describe('MembershipsService', () => {
       active: true,
       user: { name: 'New', email: 'new@x.com' },
       storeAccess: [],
+      moduleAccess: [],
     });
 
     const result = await service.createMember({
@@ -229,6 +235,7 @@ describe('MembershipsService', () => {
       active: true,
       user: { name: 'U', email: 'u@x.com' },
       storeAccess: [],
+      moduleAccess: [],
     });
 
     const result = await service.updateMember('member-1', { role: 'USER' });
@@ -244,6 +251,7 @@ describe('MembershipsService', () => {
       id: 'member-2', userId: 'user-2', role: 'USER', active: true,
       user: { name: 'U', email: 'u@x.com' },
       storeAccess: [{ storeId: 'store-1' }, { storeId: 'store-2' }],
+      moduleAccess: [],
     });
 
     const result = await service.updateMember('member-2', { storeIds: ['store-1', 'store-2'] });
@@ -256,6 +264,40 @@ describe('MembershipsService', () => {
     ] });
     expect(storeAccess.refreshRealtimeRooms).toHaveBeenCalledWith(context.tenantId, 'member-2', 'user-2', 'USER');
     expect(result.storeIds).toEqual(['store-1', 'store-2']);
+  });
+
+  it('replaces the member modules with controllable catalog modules', async () => {
+    const { service, prisma, storeAccess } = createService();
+    prisma.tenantUser.findFirst.mockResolvedValue({ id: 'member-2', role: 'USER', active: true });
+    prisma.module.findMany.mockResolvedValue([{ id: 'module-crm' }, { id: 'module-deliveries' }]);
+    prisma.tenantUser.update.mockResolvedValue({
+      id: 'member-2', userId: 'user-2', role: 'USER', active: true,
+      user: { name: 'U', email: 'u@x.com' }, storeAccess: [],
+      moduleAccess: [{ module: { key: 'crm' } }, { module: { key: 'deliveries' } }],
+    });
+
+    const result = await service.updateMember('member-2', { moduleKeys: ['crm', 'deliveries'] });
+
+    expect(prisma.module.findMany).toHaveBeenCalledWith({
+      where: { key: { in: ['crm', 'deliveries'] }, controllable: true }, select: { id: true },
+    });
+    expect(prisma.tenantUserModule.deleteMany).toHaveBeenCalledWith({ where: { tenantId: context.tenantId, tenantUserId: 'member-2' } });
+    expect(prisma.tenantUserModule.createMany).toHaveBeenCalledWith({ data: [
+      { tenantId: context.tenantId, tenantUserId: 'member-2', moduleId: 'module-crm' },
+      { tenantId: context.tenantId, tenantUserId: 'member-2', moduleId: 'module-deliveries' },
+    ] });
+    expect(storeAccess.refreshRealtimeRooms).toHaveBeenCalledWith(context.tenantId, 'member-2', 'user-2', 'USER');
+    expect(result.moduleKeys).toEqual(['crm', 'deliveries']);
+  });
+
+  it('rejects unknown or internal modules', async () => {
+    const { service, prisma } = createService();
+    prisma.tenantUser.findFirst.mockResolvedValue({ id: 'member-2', role: 'USER', active: true });
+    prisma.module.findMany.mockResolvedValue([{ id: 'module-crm' }]);
+
+    await expect(service.updateMember('member-2', { moduleKeys: ['crm', 'internal'] }))
+      .rejects.toBeInstanceOf(MemberModuleNotFoundError);
+    expect(prisma.tenantUserModule.deleteMany).not.toHaveBeenCalled();
   });
 
   it('rejects stores that belong to another tenant', async () => {

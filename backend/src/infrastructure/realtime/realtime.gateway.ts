@@ -51,11 +51,15 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
 
       const context = await this.memberships.resolveContext(payload.sub, payload.tenantId);
 
-      const scope = await this.storeAccess.forMembership(context.tenantId, context.membershipId, context.role);
+      const conversationRooms = await this.storeAccess.conversationRoomsForMember(
+        context.tenantId,
+        context.membershipId,
+        context.role,
+      );
 
       await socket.join(this.realtime.tenantRoom(context.tenantId));
       await socket.join(this.realtime.userRoom(context.tenantId, context.userId));
-      await socket.join(this.storeAccess.conversationRooms(context.tenantId, scope));
+      await socket.join(conversationRooms);
       if (context.role === 'OWNER' || context.role === 'ADMIN') {
         await socket.join(this.realtime.tenantAdminRoom(context.tenantId));
       }

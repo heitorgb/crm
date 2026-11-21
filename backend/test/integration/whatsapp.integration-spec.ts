@@ -54,6 +54,7 @@ class FakeEvolution {
   createInstancePayload?: unknown;
   connectPayload?: unknown;
   connectBarrier?: Promise<void>;
+  connectBarrierArrivals = 0;
   historyRecords: Record<string, unknown>[] = [];
   updateMessageError?: { status: number };
   mediaBase64?: string;
@@ -90,6 +91,7 @@ class FakeEvolution {
 
   async connect(instance: string) {
     if (this.connectBarrier) {
+      this.connectBarrierArrivals += 1;
       await this.connectBarrier;
     }
     if (this.connectPayload !== undefined) {
@@ -251,6 +253,7 @@ describe('WhatsApp attendance (integration)', () => {
     evolution.createInstancePayload = undefined;
     evolution.connectPayload = undefined;
     evolution.connectBarrier = undefined;
+    evolution.connectBarrierArrivals = 0;
     evolution.historyRecords = [];
     evolution.updateMessageError = undefined;
     evolution.mediaBase64 = undefined;
@@ -1179,7 +1182,19 @@ describe('WhatsApp attendance (integration)', () => {
         headers: authHeaders(ownerA),
       });
 
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      let settled = 0;
+      void first.then(() => (settled += 1));
+      void second.then(() => (settled += 1));
+
+      // Hold the barrier until the overlap has been decided: either one request
+      // holds the connection and the other already answered, or both reached the
+      // provider. A fixed delay could release before either request arrives.
+      await vi.waitFor(
+        () => {
+          expect(evolution.connectBarrierArrivals + settled).toBe(2);
+        },
+        { timeout: 10000, interval: 5 },
+      );
       release();
 
       const responses = await Promise.all([first, second]);
@@ -1189,6 +1204,7 @@ describe('WhatsApp attendance (integration)', () => {
         code: 'WHATSAPP_CONNECTION_IN_PROGRESS',
       });
       expect(evolution.instances.get(instanceName)).toBe('connecting');
+      expect(evolution.connectBarrierArrivals).toBe(1);
     });
 
     it('keeps events isolated between tenants', async () => {

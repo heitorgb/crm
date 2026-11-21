@@ -3,7 +3,7 @@ import { Reflector } from '@nestjs/core';
 import { TenantContextService } from '../../../src/common/tenant-context/tenant-context.service.js';
 import { InvalidAccessTokenError } from '../../../src/modules/auth/auth.errors.js';
 import { ModuleEnabledGuard } from '../../../src/modules/modules/module-enabled.guard.js';
-import { ModuleDisabledError } from '../../../src/modules/modules/modules.errors.js';
+import { ModuleDisabledError, ModuleForbiddenError } from '../../../src/modules/modules/modules.errors.js';
 import type { ModulesService } from '../../../src/modules/modules/modules.service.js';
 
 const tenant = {
@@ -15,7 +15,7 @@ const tenant = {
 
 function createHarness() {
   const reflector = { getAllAndOverride: vi.fn() };
-  const modules = { isEnabled: vi.fn() };
+  const modules = { isEnabled: vi.fn(), isAllowedForMember: vi.fn().mockResolvedValue(true) };
   const tenantContext = new TenantContextService();
 
   const guard = new ModuleEnabledGuard(
@@ -65,6 +65,18 @@ describe('ModuleEnabledGuard', () => {
     await tenantContext.run({ tenant }, async () => {
       await expect(guard.canActivate(context)).resolves.toBe(true);
       expect(modules.isEnabled).toHaveBeenCalledWith('tenant-1', 'billing.collection');
+      expect(modules.isAllowedForMember).toHaveBeenCalledWith(tenant, 'billing.collection');
+    });
+  });
+
+  it('rejects an enabled module the member was not granted', async () => {
+    const { guard, reflector, modules, tenantContext, context } = createHarness();
+    reflector.getAllAndOverride.mockReturnValue('crm');
+    modules.isEnabled.mockResolvedValue(true);
+    modules.isAllowedForMember.mockResolvedValue(false);
+
+    await tenantContext.run({ tenant: { ...tenant, role: 'USER' } }, async () => {
+      await expect(guard.canActivate(context)).rejects.toBeInstanceOf(ModuleForbiddenError);
     });
   });
 });

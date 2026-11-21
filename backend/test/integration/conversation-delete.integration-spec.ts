@@ -307,10 +307,10 @@ describe('Conversation deletion (integration)', () => {
       '5511910000009@s.whatsapp.net',
     );
 
-    const emit = vi.spyOn(harness.app.get(RealtimeService), 'emitToTenant');
+    const emit = vi.spyOn(harness.app.get(RealtimeService), 'emitToConversationAudience');
     await remove(ownerA, conversationId);
 
-    expect(emit).toHaveBeenCalledWith(ownerA.tenantId, 'conversation.deleted', {
+    expect(emit).toHaveBeenCalledWith(ownerA.tenantId, conversationId, 'conversation.deleted', {
       conversationId,
     });
     emit.mockRestore();

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Conversation, ConversationMessage } from '@/types/attendance';
@@ -46,9 +46,12 @@ vi.mock('./sender-avatar', () => ({
   SenderAvatar: () => null,
 }));
 
+const searchMock = vi.hoisted(() => ({ search: vi.fn() }));
+
 vi.mock('./queries', () => ({
   useDeleteMessageForEveryone: () => ({ isPending: false, mutateAsync: vi.fn() }),
   useDeleteMessageForMe: () => ({ isPending: false, mutateAsync: vi.fn() }),
+  useConversationMessageSearch: searchMock.search,
 }));
 
 const conversation: Conversation = {
@@ -135,6 +138,35 @@ function renderChat(
     </MemoryRouter>,
   );
 }
+
+describe('ChatPanel message search', () => {
+  it('lists matches and loads older pages until the chosen message is reached', async () => {
+    searchMock.search.mockImplementation((_id: string, query: string) => ({
+      isPending: false,
+      isError: false,
+      data: query === 'azul'
+        ? [{ id: 'old-message', direction: 'INBOUND', type: 'TEXT', text: 'Quero a peça azul',
+          senderName: 'Ana', occurredAt: '2026-10-01T12:00:00.000Z' }]
+        : [],
+    }));
+    const onLoadOlderMessages = vi.fn();
+    renderChat(conversation, [message({ occurredAt: '2026-10-20T12:00:00.000Z' })], {
+      hasOlderMessages: true,
+      onLoadOlderMessages,
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Pesquisar mensagens na conversa' }));
+    fireEvent.change(screen.getByLabelText('Pesquisar mensagens'), { target: { value: 'azul' } });
+
+    const results = await screen.findByRole('list', { name: 'Resultados da pesquisa' });
+    expect(within(results).getByText('azul', { selector: 'mark' })).toBeTruthy();
+    expect(within(results).getByText('Ana')).toBeTruthy();
+    fireEvent.click(within(results).getByRole('button'));
+
+    expect(onLoadOlderMessages).toHaveBeenCalledOnce();
+    expect(screen.queryByLabelText('Pesquisar mensagens')).toBeNull();
+  });
+});
 
 describe('ChatPanel layout', () => {
   it('keeps the composer outside the scrollable message history', () => {

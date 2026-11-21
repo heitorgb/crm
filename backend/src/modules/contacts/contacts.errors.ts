@@ -18,6 +18,12 @@ export class ContactPhoneConflictError extends AppException {
   }
 }
 
+export class ContactStoreNotFoundError extends AppException {
+  constructor() {
+    super('CONTACT_STORE_NOT_FOUND', 'Uma das lojas selecionadas não existe nesta organização.', 400);
+  }
+}
+
 export class ContactInvalidBirthDateError extends AppException {
   constructor() {
     super(

@@ -18,6 +18,7 @@ import {
   MoreVertical,
   RefreshCw,
   RotateCcw,
+  Search,
   UserRound,
   XCircle,
 } from 'lucide-react';
@@ -33,7 +34,12 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAttendanceStore } from '@/stores/attendance-store';
-import type { Conversation, ConversationMessage, QuotedMessage } from '@/types/attendance';
+import type {
+  Conversation,
+  ConversationMessage,
+  ConversationMessageSearchResult,
+  QuotedMessage,
+} from '@/types/attendance';
 import {
   areGrouped,
   computeMessageScrollTop,
@@ -47,6 +53,7 @@ import {
   QUOTE_HIGHLIGHT_MS,
   readQuotedMessage,
 } from './attendance-utils';
+import { ConversationMessageSearch } from './conversation-message-search';
 import { ConversationPresenceIndicator } from './conversation-presence';
 import { MessageBubble } from './message-bubble';
 import { MessageComposer, type ComposerInsertion } from './message-composer';
@@ -60,6 +67,13 @@ const LOAD_OLDER_THRESHOLD = 300;
 const BACK_SWIPE_EDGE = 32;
 const BACK_SWIPE_DISTANCE = 80;
 const BACK_SWIPE_VERTICAL_TOLERANCE = 72;
+const SEARCH_MAX_OLDER_LOADS = 50;
+
+interface SearchTarget {
+  conversationId: string;
+  messageId: string;
+  occurredAt: string;
+}
 
 interface ChatPanelProps {
   conversation: Conversation;
@@ -128,6 +142,10 @@ export function ChatPanel({
   const highlightTimerRef = useRef<number | null>(null);
   const noticeTimerRef = useRef<number | null>(null);
   const backSwipeStartRef = useRef<{ x: number; y: number } | null>(null);
+  const [searchOpenFor, setSearchOpenFor] = useState<string | null>(null);
+  const [searchTarget, setSearchTarget] = useState<SearchTarget | null>(null);
+  const searchLoadsRef = useRef(0);
+  const searchOpen = searchOpenFor === conversation.id;
 
   const handleTouchStart = (event: ReactTouchEvent<HTMLDivElement>): void => {
     if (
@@ -313,20 +331,13 @@ export function ChatPanel({
     }, QUOTE_HIGHLIGHT_MS);
   };
 
-  const handleNavigateToQuote = (quoted: QuotedMessage): void => {
-    const target = findQuotedMessage(messages, conversation.id, quoted);
+  const scrollToMessage = (messageId: string): boolean => {
     const container = scrollRef.current;
-    if (!target || !container) {
-      showNotice('Mensagem original não disponível');
-      return;
-    }
-
-    const element = container.querySelector<HTMLElement>(
-      `[data-message-id="${CSS.escape(target.id)}"]`,
+    const element = container?.querySelector<HTMLElement>(
+      `[data-message-id="${CSS.escape(messageId)}"]`,
     );
-    if (!element) {
-      showNotice('Mensagem original não disponível');
-      return;
+    if (!container || !element) {
+      return false;
     }
 
     const containerRect = container.getBoundingClientRect();
@@ -342,8 +353,58 @@ export function ChatPanel({
 
     atBottomRef.current = false;
     container.scrollTo({ top, behavior: 'smooth' });
-    highlightMessage(target.id);
+    highlightMessage(messageId);
+    return true;
   };
+
+  const handleNavigateToQuote = (quoted: QuotedMessage): void => {
+    const target = findQuotedMessage(messages, conversation.id, quoted);
+    if (!target || !scrollToMessage(target.id)) {
+      showNotice('Mensagem original não disponível');
+    }
+  };
+
+  const handleSelectSearchResult = (result: ConversationMessageSearchResult): void => {
+    searchLoadsRef.current = 0;
+    setSearchOpenFor(null);
+    setSearchTarget({ conversationId: conversation.id, messageId: result.id, occurredAt: result.occurredAt });
+  };
+
+  const activeSearchTarget = searchTarget?.conversationId === conversation.id ? searchTarget : null;
+
+  // The jump can only run after the older pages are rendered, because it scrolls to a DOM node.
+  /* eslint-disable react-hooks/set-state-in-effect */
+  useEffect(() => {
+    if (!activeSearchTarget || messagesPending) {
+      return;
+    }
+    if (messages.some((message) => message.id === activeSearchTarget.messageId)) {
+      if (!scrollToMessage(activeSearchTarget.messageId)) {
+        showNotice('Mensagem não disponível');
+      }
+      setSearchTarget(null);
+      return;
+    }
+    if (loadingOlderMessages) {
+      return;
+    }
+    const oldest = messages[0];
+    const targetIsOlder =
+      !oldest || new Date(activeSearchTarget.occurredAt).getTime() <= new Date(oldest.occurredAt).getTime();
+    if (hasOlderMessages && targetIsOlder && searchLoadsRef.current < SEARCH_MAX_OLDER_LOADS) {
+      searchLoadsRef.current += 1;
+      loadingOlderRef.current = true;
+      prependingRef.current = true;
+      previousScrollHeightRef.current = scrollRef.current?.scrollHeight ?? 0;
+      onLoadOlderMessages();
+      return;
+    }
+    showNotice('Mensagem não disponível');
+    setSearchTarget(null);
+    // scrollToMessage, showNotice and onLoadOlderMessages are recreated every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSearchTarget, messages, messagesPending, loadingOlderMessages, hasOlderMessages]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const handleStartReply = (message: ConversationMessage): void => {
     setEditing(null);
@@ -406,6 +467,16 @@ export function ChatPanel({
         >
           {conversationStatusLabel[conversation.status]}
         </StatusBadge>
+        <Button
+          variant="ghost"
+          size="icon"
+          type="button"
+          onClick={() => setSearchOpenFor(searchOpen ? null : conversation.id)}
+          aria-label="Pesquisar mensagens na conversa"
+          aria-pressed={searchOpen}
+        >
+          <Search />
+        </Button>
         {onToggleInfo ? (
           <Button variant="ghost" size="icon" onClick={onToggleInfo} aria-label="Informações">
             <Info />
@@ -453,6 +524,14 @@ export function ChatPanel({
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+
+      {searchOpen ? (
+        <ConversationMessageSearch
+          conversationId={conversation.id}
+          onClose={() => setSearchOpenFor(null)}
+          onSelect={handleSelectSearchResult}
+        />
+      ) : null}
 
       <div
         ref={scrollRef}

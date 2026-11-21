@@ -12,6 +12,7 @@ import type { Env } from '../../config/env.validation.js';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service.js';
 import { RealtimeService } from '../../infrastructure/realtime/realtime.service.js';
 import { LinkPreviewsService } from '../link-previews/link-previews.service.js';
+import { StoreAccessService } from '../store-access/store-access.service.js';
 import { EvolutionClient } from '../whatsapp/evolution/evolution.client.js';
 import { WhatsAppConversationSyncService } from '../whatsapp/whatsapp-conversation-sync.service.js';
 import { WhatsAppDirectoryService } from '../whatsapp/whatsapp-directory.service.js';
@@ -106,11 +107,17 @@ export class ConversationsService {
     private readonly realtime: RealtimeService,
     private readonly linkPreviews: LinkPreviewsService,
     private readonly config: ConfigService<Env, true>,
+    private readonly storeAccess: StoreAccessService,
   ) {}
 
   async list(query: ListConversationsQueryDto): Promise<PageResult<ConversationView>> {
     const { tenantId, userId } = this.tenantContext.requireContext();
-    const where: Prisma.ConversationWhereInput = { tenantId, deletedAt: null };
+    const scope = await this.storeAccess.current();
+    const where: Prisma.ConversationWhereInput = {
+      tenantId,
+      deletedAt: null,
+      AND: [this.storeAccess.conversationFilter(scope)],
+    };
 
     if (query.status) where.status = query.status;
     if (query.whatsappInstanceId) where.whatsappInstanceId = query.whatsappInstanceId;
@@ -206,9 +213,10 @@ export class ConversationsService {
    */
   async startFromContact(dto: StartConversationDto): Promise<ConversationView> {
     const { tenantId } = this.tenantContext.requireContext();
+    const scope = await this.storeAccess.current();
 
     const contact = await this.prisma.contact.findFirst({
-      where: { id: dto.contactId, tenantId },
+      where: { id: dto.contactId, tenantId, AND: [this.storeAccess.contactFilter(scope)] },
       select: { id: true, phone: true },
     });
     if (!contact) {
@@ -222,7 +230,7 @@ export class ConversationsService {
       where: { id: dto.whatsappInstanceId, tenantId },
       select: { id: true },
     });
-    if (!instance) {
+    if (!instance || !this.storeAccess.canAccessInstance(scope, instance.id)) {
       throw new WhatsAppInstanceNotFoundError();
     }
 
@@ -317,7 +325,7 @@ export class ConversationsService {
       data: { status: ConversationStatus.OPEN, closedAt: null },
     });
 
-    this.realtime.emitToTenant(tenantId, 'conversation.updated', {
+    await this.realtime.emitToConversationAudience(tenantId, id,'conversation.updated', {
       conversationId: id,
       status: ConversationStatus.OPEN,
     });
@@ -362,7 +370,7 @@ export class ConversationsService {
       await this.prisma.conversation.update({ where: { id }, data: { isPinned } });
     }
 
-    this.realtime.emitToTenant(tenantId, 'conversation.updated', { conversationId: id });
+    await this.realtime.emitToConversationAudience(tenantId, id,'conversation.updated', { conversationId: id });
 
     return this.findOne(id);
   }
@@ -392,7 +400,7 @@ export class ConversationsService {
       await this.prisma.conversation.update({ where: { id }, data: { isArchived } });
     }
 
-    this.realtime.emitToTenant(tenantId, 'conversation.updated', { conversationId: id });
+    await this.realtime.emitToConversationAudience(tenantId, id,'conversation.updated', { conversationId: id });
 
     return this.findOne(id);
   }
@@ -418,7 +426,7 @@ export class ConversationsService {
       data: { deletedAt: new Date() },
     });
 
-    this.realtime.emitToTenant(tenantId, 'conversation.deleted', { conversationId: id });
+    await this.realtime.emitToConversationAudience(tenantId, id,'conversation.deleted', { conversationId: id });
   }
 
   /**
@@ -450,7 +458,7 @@ export class ConversationsService {
         where: { id },
         data: { lastReadAt: marker },
       });
-      this.realtime.emitToTenant(tenantId, 'conversation.updated', { conversationId: id });
+      await this.realtime.emitToConversationAudience(tenantId, id,'conversation.updated', { conversationId: id });
     }
 
     return this.findOne(id);
@@ -459,11 +467,16 @@ export class ConversationsService {
   /** Total inbound messages still unread across the tenant inbox (archived excluded). */
   async unreadTotal(): Promise<{ total: number }> {
     const { tenantId, userId } = this.tenantContext.requireContext();
+    const scope = await this.storeAccess.current();
+    const instanceFilter = scope.restricted
+      ? Prisma.sql`AND c."whatsapp_instance_id" = ANY(${scope.instanceIds}::uuid[])`
+      : Prisma.empty;
     const rows = await this.prisma.$queryRaw<Array<{ total: bigint }>>`
       SELECT COUNT(*)::bigint AS "total"
       FROM "messages" m
       JOIN "conversations" c ON c."id" = m."conversation_id"
       WHERE c."tenant_id" = ${tenantId}::uuid
+        ${instanceFilter}
         AND c."is_archived" = false
         AND c."deleted_at" IS NULL
         AND m."direction" = 'INBOUND'
@@ -640,6 +653,7 @@ export class ConversationsService {
     const targets = [...new Set(conversationIds)];
     const count = await this.prisma.conversation.count({ where: { id: { in: targets }, tenantId, deletedAt: null } });
     if (count !== targets.length) throw new ConversationNotFoundError();
+    await this.storeAccess.assertConversations(targets);
     for (const target of targets) {
       if (source.type === MessageType.TEXT && source.content) {
         await this.sendHumanMessage(target, source.content, false);
@@ -682,7 +696,7 @@ export class ConversationsService {
     await this.messages.purgeMessageAttachments(tenantId, messageId);
     await this.prisma.messageTranscription.deleteMany({ where: { tenantId, messageId } });
     this.realtime.emitToConversation(tenantId, id, 'message.updated', { conversationId: id, messageId });
-    this.realtime.emitToTenant(tenantId, 'conversation.updated', { conversationId: id });
+    await this.realtime.emitToConversationAudience(tenantId, id,'conversation.updated', { conversationId: id });
   }
 
   async deleteMessageForMe(id: string, messageId: string): Promise<void> {
@@ -856,7 +870,7 @@ export class ConversationsService {
     if (info?.avatarUrl) data.avatarUrl = info.avatarUrl;
 
     await this.prisma.conversation.update({ where: { id }, data });
-    this.realtime.emitToTenant(tenantId, 'conversation.updated', { conversationId: id });
+    await this.realtime.emitToConversationAudience(tenantId, id,'conversation.updated', { conversationId: id });
 
     try {
       const participants = await this.evolution.findGroupParticipants(
@@ -898,7 +912,7 @@ export class ConversationsService {
       where: { id: instanceId, tenantId },
       select: { id: true },
     });
-    if (!instance) {
+    if (!instance || !this.storeAccess.canAccessInstance(await this.storeAccess.current(), instance.id)) {
       throw new ConversationNotFoundError();
     }
   }

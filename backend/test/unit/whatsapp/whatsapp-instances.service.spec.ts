@@ -132,6 +132,10 @@ function createHarness(env: Record<string, unknown>, evolutionConfigured = true)
     contactSync as unknown as WhatsAppContactSyncService,
     realtime as unknown as RealtimeService,
     config as unknown as ConfigService<Env, true>,
+    {
+      current: vi.fn().mockResolvedValue({ restricted: false }),
+      instanceFilter: () => ({}),
+    } as never,
   );
 
   return { service, prisma, evolution, realtime, config: configValues };

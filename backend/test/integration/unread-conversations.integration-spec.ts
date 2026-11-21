@@ -373,11 +373,12 @@ describe('Unread conversations (integration)', () => {
     );
     await createMessage({ tenantId: ownerA.tenantId, conversationId, direction: 'INBOUND' });
 
-    const emit = vi.spyOn(harness.app.get(RealtimeService), 'emitToTenant');
+    const emit = vi.spyOn(harness.app.get(RealtimeService), 'emitToConversationAudience');
     await markRead(ownerA, conversationId);
 
     expect(emit).toHaveBeenCalledWith(
       ownerA.tenantId,
+      conversationId,
       'conversation.updated',
       expect.objectContaining({ conversationId }),
     );

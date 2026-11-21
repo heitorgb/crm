@@ -6,7 +6,7 @@ import { RateLimitGuard } from '../../common/http/rate-limit/rate-limit.guard.js
 import { Public, Roles } from '../auth/decorators/auth.decorators.js';
 import { MODULE_KEYS } from '../modules/modules.constants.js';
 import { RequireModule } from '../modules/require-module.decorator.js';
-import { ApprovedOrderDto, CreateManualOrderDto, CreateStoreDto, UpdateDeliveryCardsDto, UpdateOrderStatusDto, UpdateStoreDto } from './store-orders.dto.js';
+import { ApprovedOrderDto, CreateManualOrderDto, CreateStoreDto, UpdateDeliveryCardsDto, UpdateOrderContactDto, UpdateOrderStatusDto, UpdateStoreDto } from './store-orders.dto.js';
 import { StoreOrdersService } from './store-orders.service.js';
 
 @Controller('store-orders')
@@ -124,6 +124,12 @@ export class StoreOrdersController {
   @Patch(':id/status')
   updateStatus(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateOrderStatusDto) {
     return this.orders.updateStatus(id, dto.status);
+  }
+
+  @RequireModule(MODULE_KEYS.DELIVERIES)
+  @Patch(':id/contact')
+  updateContact(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateOrderContactDto) {
+    return this.orders.updateContact(id, dto.contactId);
   }
 
   @Public()

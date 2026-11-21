@@ -1,4 +1,4 @@
-import { ArrayMaxSize, ArrayUnique, IsArray, IsEnum, IsISO8601, IsOptional, IsString, IsUUID, Matches, MaxLength, MinLength, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, ArrayUnique, IsArray, IsEnum, IsISO8601, IsInt, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min, MinLength, ValidateNested } from 'class-validator';
 import { DeliveryConfirmationMode, StoreOrderStatus } from '@prisma/client';
 import { IsBoolean } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -43,6 +43,10 @@ export class CreateStoreDto {
   @IsEnum(DeliveryConfirmationMode)
   @IsOptional()
   deliveryConfirmationMode?: DeliveryConfirmationMode;
+
+  @IsOptional()
+  @IsUUID()
+  whatsappInstanceId?: string | null;
 }
 
 export class UpdateStoreDto {
@@ -59,6 +63,16 @@ export class UpdateStoreDto {
   @IsOptional()
   @IsBoolean()
   active?: boolean;
+
+  @IsOptional()
+  @IsUUID()
+  whatsappInstanceId?: string | null;
+
+  @IsOptional()
+  @IsInt()
+  @Min(5)
+  @Max(1440)
+  separationReminderMinutes?: number | null;
 }
 
 export class ApprovedOrderDto {
@@ -113,6 +127,11 @@ export class CreateManualOrderDto {
 export class UpdateOrderStatusDto {
   @IsEnum(StoreOrderStatus)
   status!: StoreOrderStatus;
+}
+
+export class UpdateOrderContactDto {
+  @IsUUID()
+  contactId!: string;
 }
 
 export class UpdateDeliveryCardsDto {

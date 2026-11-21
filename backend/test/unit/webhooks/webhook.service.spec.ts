@@ -52,6 +52,8 @@ interface Harness {
   realtime: {
     emitToTenant: ReturnType<typeof vi.fn>;
     emitToConversation: ReturnType<typeof vi.fn>;
+    emitConversationEvent: ReturnType<typeof vi.fn>;
+    emitToConversationAudience: ReturnType<typeof vi.fn>;
   };
   queue: { enqueue: ReturnType<typeof vi.fn> };
 }
@@ -101,7 +103,12 @@ function createHarness(): Harness {
   const contacts = {
     syncFromWhatsAppEvent: vi.fn().mockResolvedValue(null),
   };
-  const realtime = { emitToTenant: vi.fn(), emitToConversation: vi.fn() };
+  const realtime = {
+    emitToTenant: vi.fn(),
+    emitToConversation: vi.fn(),
+    emitConversationEvent: vi.fn(),
+    emitToConversationAudience: vi.fn().mockResolvedValue(undefined),
+  };
   const queue = { enqueue: vi.fn().mockResolvedValue(undefined) };
 
   const service = new WebhookService(
@@ -169,6 +176,7 @@ describe('WebhookService messages.update', () => {
     );
     expect(realtime.emitToConversation).not.toHaveBeenCalled();
     expect(realtime.emitToTenant).not.toHaveBeenCalled();
+    expect(realtime.emitConversationEvent).not.toHaveBeenCalled();
   });
 
   it('falls back a failed outbound message to the alternate address', async () => {
@@ -720,8 +728,9 @@ describe('WebhookService presence.update', () => {
 
     expect(result).toEqual({ accepted: true });
     expect(prisma.conversation.update).not.toHaveBeenCalled();
-    expect(realtime.emitToTenant).toHaveBeenCalledWith(
+    expect(realtime.emitConversationEvent).toHaveBeenCalledWith(
       'tenant-1',
+      'instance-1',
       'conversation.presence',
       expect.objectContaining({
         conversationId: 'conversation-1',
@@ -758,8 +767,9 @@ describe('WebhookService presence.update', () => {
       },
     });
 
-    expect(realtime.emitToTenant).toHaveBeenCalledWith(
+    expect(realtime.emitConversationEvent).toHaveBeenCalledWith(
       'tenant-1',
+      'instance-1',
       'conversation.presence',
       expect.objectContaining({
         state: 'offline',
@@ -802,9 +812,10 @@ describe('WebhookService presence.update', () => {
       },
     });
 
-    expect(realtime.emitToTenant).toHaveBeenCalledTimes(2);
-    for (const call of realtime.emitToTenant.mock.calls) {
-      expect(call[2]).toEqual(expect.objectContaining({ lastSeenAt: null }));
+    expect(realtime.emitConversationEvent).toHaveBeenCalledTimes(2);
+    for (const call of realtime.emitConversationEvent.mock.calls) {
+      expect(call[1]).toBe('instance-1');
+      expect(call[3]).toEqual(expect.objectContaining({ lastSeenAt: null }));
     }
   });
 
@@ -833,15 +844,17 @@ describe('WebhookService presence.update', () => {
       },
     });
 
-    expect(realtime.emitToTenant).toHaveBeenNthCalledWith(
+    expect(realtime.emitConversationEvent).toHaveBeenNthCalledWith(
       1,
       'tenant-1',
+      'instance-1',
       'conversation.presence',
       expect.objectContaining({ state: 'composing' }),
     );
-    expect(realtime.emitToTenant).toHaveBeenNthCalledWith(
+    expect(realtime.emitConversationEvent).toHaveBeenNthCalledWith(
       2,
       'tenant-1',
+      'instance-1',
       'conversation.presence',
       expect.objectContaining({ state: 'recording' }),
     );
@@ -874,8 +887,9 @@ describe('WebhookService presence.update', () => {
       },
     });
 
-    expect(realtime.emitToTenant).toHaveBeenCalledWith(
+    expect(realtime.emitConversationEvent).toHaveBeenCalledWith(
       'tenant-1',
+      'instance-1',
       'conversation.presence',
       expect.objectContaining({
         participantName: 'Bruno',
@@ -919,8 +933,9 @@ describe('WebhookService presence.update', () => {
       where: { tenantId: 'tenant-1', phone: { in: ['5511888888888'] } },
       select: { phone: true, name: true },
     });
-    expect(realtime.emitToTenant).toHaveBeenCalledWith(
+    expect(realtime.emitConversationEvent).toHaveBeenCalledWith(
       'tenant-1',
+      'instance-1',
       'conversation.presence',
       expect.objectContaining({
         participantId: '63604221026389@lid',
@@ -958,8 +973,9 @@ describe('WebhookService presence.update', () => {
       },
     });
 
-    expect(realtime.emitToTenant).toHaveBeenCalledWith(
+    expect(realtime.emitConversationEvent).toHaveBeenCalledWith(
       'tenant-1',
+      'instance-1',
       'conversation.presence',
       expect.objectContaining({
         participantName: 'Ernandes Lourenço',
@@ -1001,8 +1017,9 @@ describe('WebhookService presence.update', () => {
         }),
       }),
     );
-    expect(realtime.emitToTenant).toHaveBeenCalledWith(
+    expect(realtime.emitConversationEvent).toHaveBeenCalledWith(
       'tenant-1',
+      'instance-1',
       'conversation.presence',
       expect.objectContaining({
         participantName: 'Ernandes Lourenço',
@@ -1031,8 +1048,9 @@ describe('WebhookService presence.update', () => {
       },
     });
 
-    expect(realtime.emitToTenant).toHaveBeenCalledWith(
+    expect(realtime.emitConversationEvent).toHaveBeenCalledWith(
       'tenant-1',
+      'instance-1',
       'conversation.presence',
       expect.objectContaining({
         participantId: '63604221026389@lid',
@@ -1073,9 +1091,10 @@ describe('WebhookService presence.update', () => {
     }
 
     expect(prisma.conversationParticipant.findMany).toHaveBeenCalledTimes(1);
-    expect(realtime.emitToTenant).toHaveBeenCalledTimes(2);
-    expect(realtime.emitToTenant).toHaveBeenLastCalledWith(
+    expect(realtime.emitConversationEvent).toHaveBeenCalledTimes(2);
+    expect(realtime.emitConversationEvent).toHaveBeenLastCalledWith(
       'tenant-1',
+      'instance-1',
       'conversation.presence',
       expect.objectContaining({
         participantName: 'Ernandes Lourenço',
@@ -1133,6 +1152,7 @@ describe('WebhookService presence.update', () => {
     });
 
     expect(realtime.emitToTenant).not.toHaveBeenCalled();
+    expect(realtime.emitConversationEvent).not.toHaveBeenCalled();
   });
 });
 

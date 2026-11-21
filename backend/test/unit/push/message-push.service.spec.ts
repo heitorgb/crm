@@ -8,10 +8,13 @@ import {
   MessagePushService,
   type MessagePushInput,
 } from '../../../src/modules/push-notifications/message-push.service.js';
+import { ModulesService } from '../../../src/modules/modules/modules.service.js';
+import { StoreAccessService } from '../../../src/modules/store-access/store-access.service.js';
 
 const TENANT_ID = '11111111-1111-4111-8111-111111111111';
 const MESSAGE_ID = '22222222-2222-4222-8222-222222222222';
 const CONVERSATION_ID = '33333333-3333-4333-8333-333333333333';
+const INSTANCE_ID = '44444444-4444-4444-8444-444444444444';
 
 function input(overrides: Partial<MessagePushInput> = {}): MessagePushInput {
   return {
@@ -80,6 +83,8 @@ describe('MessagePushService', () => {
       prisma as unknown as PrismaService,
       tenantContext,
       fcm as unknown as FcmClient,
+      new StoreAccessService({} as never, {} as never, {} as never, {} as never),
+      new ModulesService({} as never),
     );
     return { service, prisma, fcm, queue, tenantContext };
   }
@@ -91,6 +96,7 @@ describe('MessagePushService', () => {
       senderName: null,
       conversation: {
         id: CONVERSATION_ID,
+        whatsappInstanceId: INSTANCE_ID,
         isArchived: false,
         deletedAt: null,
         isGroup: false,
@@ -134,7 +140,27 @@ describe('MessagePushService', () => {
       expect.objectContaining({
         where: {
           tenantId: TENANT_ID,
-          tenantUser: { tenantId: TENANT_ID, active: true, user: { active: true } },
+          tenantUser: {
+            tenantId: TENANT_ID,
+            active: true,
+            user: { active: true },
+            AND: [
+              {
+                OR: [
+                  { role: { not: 'USER' } },
+                  { storeAccess: { none: {} } },
+                  { storeAccess: { some: { store: { whatsappInstanceId: INSTANCE_ID } } } },
+                ],
+              },
+              {
+                OR: [
+                  { role: { not: 'USER' } },
+                  { moduleAccess: { none: {} } },
+                  { moduleAccess: { some: { module: { key: 'attendance' } } } },
+                ],
+              },
+            ],
+          },
         },
       }),
     );

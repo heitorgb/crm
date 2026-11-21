@@ -77,6 +77,7 @@ export interface Contact {
   avatarUrl: string | null;
   isPrimary: boolean;
   isBlocked: boolean;
+  storeIds?: string[];
   createdAt: string;
   updatedAt: string;
 }

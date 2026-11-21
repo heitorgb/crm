@@ -1305,18 +1305,20 @@ describe('Billing (integration)', () => {
     it('publishes realtime events so the conversation list updates', async () => {
       const { chargeId } = await setup(ownerA);
       const realtime = app.get(RealtimeService);
-      const tenantSpy = vi.spyOn(realtime, 'emitToTenant');
+      const tenantSpy = vi.spyOn(realtime, 'emitConversationEvent');
       const conversationSpy = vi.spyOn(realtime, 'emitToConversation');
 
       await sendManual(ownerA, chargeId);
 
       expect(tenantSpy).toHaveBeenCalledWith(
         ownerA.tenantId,
+        expect.any(String),
         'message.created',
         expect.objectContaining({ direction: 'OUTBOUND' }),
       );
       expect(tenantSpy).toHaveBeenCalledWith(
         ownerA.tenantId,
+        expect.any(String),
         'conversation.updated',
         expect.anything(),
       );

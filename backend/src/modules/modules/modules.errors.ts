@@ -11,6 +11,17 @@ export class ModuleDisabledError extends AppException {
   }
 }
 
+export class ModuleForbiddenError extends AppException {
+  constructor(moduleKey: string) {
+    super(
+      'MODULE_FORBIDDEN',
+      'Você não tem acesso a esta funcionalidade. Fale com o administrador da organização.',
+      403,
+      { module: moduleKey },
+    );
+  }
+}
+
 export class ModuleNotFoundError extends AppException {
   constructor() {
     super('MODULE_NOT_FOUND', 'Module not found', 404);

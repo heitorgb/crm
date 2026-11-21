@@ -322,10 +322,41 @@ model TenantUser {
   ownedFollowUps          LeadFollowUp[]       @relation("FollowUpOwner")
   createdFollowUps        LeadFollowUp[]       @relation("FollowUpCreatedBy")
   pushDevices             PushDevice[]
+  storeAccess             TenantUserStore[]
+  moduleAccess            TenantUserModule[]
 
+  @@unique([tenantId, id])
   @@unique([tenantId, userId])
   @@index([userId])
   @@map("tenant_users")
+}
+
+model ContactStore {
+  tenantId  String   @map("tenant_id") @db.Uuid
+  contactId String   @map("contact_id") @db.Uuid
+  storeId   String   @map("store_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+
+  contact Contact @relation(fields: [tenantId, contactId], references: [tenantId, id], onDelete: Cascade)
+  store   Store   @relation(fields: [tenantId, storeId], references: [tenantId, id], onDelete: Cascade)
+
+  @@id([contactId, storeId])
+  @@index([tenantId, storeId])
+  @@map("contact_stores")
+}
+
+model TenantUserStore {
+  tenantId     String   @map("tenant_id") @db.Uuid
+  tenantUserId String   @map("tenant_user_id") @db.Uuid
+  storeId      String   @map("store_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  tenantUser TenantUser @relation(fields: [tenantId, tenantUserId], references: [tenantId, id], onDelete: Cascade)
+  store      Store      @relation(fields: [tenantId, storeId], references: [tenantId, id], onDelete: Cascade)
+
+  @@id([tenantUserId, storeId])
+  @@index([tenantId, storeId])
+  @@map("tenant_user_stores")
 }
 
 model RefreshToken {
@@ -429,6 +460,7 @@ model Contact {
   billingRecurrences BillingRecurrence[]
   leads              Lead[]
   storeOrders        StoreOrder[]
+  stores             ContactStore[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, phone])
@@ -446,12 +478,17 @@ model Store {
   logoStorageKey           String?                  @map("logo_storage_key")
   logoUpdatedAt            DateTime?                @map("logo_updated_at")
   deliveryConfirmationMode DeliveryConfirmationMode @default(AUTOMATIC) @map("delivery_confirmation_mode")
+  whatsappInstanceId       String?                  @map("whatsapp_instance_id") @db.Uuid
+  separationReminderMinutes Int?                    @map("separation_reminder_minutes")
   active                   Boolean                  @default(true)
   createdAt                DateTime                 @default(now()) @map("created_at")
   updatedAt                DateTime                 @updatedAt @map("updated_at")
 
-  tenant Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  orders StoreOrder[]
+  tenant   Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  instance WhatsAppInstance?    @relation(fields: [whatsappInstanceId], references: [id], onDelete: SetNull)
+  orders   StoreOrder[]
+  members  TenantUserStore[]
+  contacts ContactStore[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, externalCode])
@@ -475,6 +512,7 @@ model StoreOrder {
   enteredRouteAt             DateTime?                   @map("entered_route_at")
   deliveryDueAt              DateTime?                   @map("delivery_due_at")
   deliveredAt                DateTime?                   @map("delivered_at")
+  separationReminderSentAt   DateTime?                   @map("separation_reminder_sent_at")
   approvedAt                 DateTime                    @map("approved_at")
   createdAt                  DateTime                    @default(now()) @map("created_at")
   updatedAt                  DateTime                    @updatedAt @map("updated_at")
@@ -823,6 +861,7 @@ model WhatsAppInstance {
   avatars             WhatsAppAvatar[]
   billingSettings     BillingSettings[]
   webhookIntegrations WebhookIntegration[]
+  stores              Store[]
 
   @@index([tenantId, status])
   @@index([tenantId, createdAt])
@@ -1314,9 +1353,24 @@ model Module {
   updatedAt    DateTime @updatedAt @map("updated_at")
 
   tenants TenantModule[]
+  members TenantUserModule[]
 
   @@index([sortOrder])
   @@map("modules")
+}
+
+model TenantUserModule {
+  tenantId     String   @map("tenant_id") @db.Uuid
+  tenantUserId String   @map("tenant_user_id") @db.Uuid
+  moduleId     String   @map("module_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  tenantUser TenantUser @relation(fields: [tenantId, tenantUserId], references: [tenantId, id], onDelete: Cascade)
+  module     Module     @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+
+  @@id([tenantUserId, moduleId])
+  @@index([tenantId, moduleId])
+  @@map("tenant_user_modules")
 }
 
 model TenantModule {

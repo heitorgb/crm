@@ -9,6 +9,7 @@ import {
   ScheduledMessageType,
 } from '@prisma/client';
 import { TenantContextService } from '../../common/tenant-context/tenant-context.service.js';
+import { StoreAccessService } from '../store-access/store-access.service.js';
 import { pickDestination } from '../../common/whatsapp/destination.js';
 import type { Env } from '../../config/env.validation.js';
 import { MediaProcessingService } from '../../infrastructure/media/media-processing.service.js';
@@ -215,11 +216,12 @@ export class ScheduledMessagesService {
     private readonly media: MediaProcessingService,
     @Inject(STORAGE) private readonly storage: StorageService,
     @Inject(JOB_QUEUE) private readonly queue: JobQueue,
+    private readonly storeAccess: StoreAccessService,
   ) {}
 
   async list(query: ListScheduledMessagesParams): Promise<PageResult<ScheduledMessageView>> {
     const { tenantId } = this.tenantContext.requireContext();
-    const where: Prisma.ScheduledMessageWhereInput = { tenantId };
+    const where: Prisma.ScheduledMessageWhereInput = { tenantId, AND: [await this.readableFilter()] };
 
     if (query.status && query.status !== 'ALL') {
       where.status = query.status as ScheduledMessageStatus;
@@ -250,14 +252,7 @@ export class ScheduledMessagesService {
 
   async findOne(id: string): Promise<ScheduledMessageView> {
     const { tenantId } = this.tenantContext.requireContext();
-    const schedule = await this.prisma.scheduledMessage.findFirst({
-      where: { id, tenantId },
-      select: SCHEDULE_SELECT,
-    });
-    if (!schedule) {
-      throw new ScheduledMessageNotFoundError();
-    }
-    return toView(schedule);
+    return toView(await this.requireSchedule(tenantId, id));
   }
 
   async create(input: CreateScheduledMessageInput): Promise<ScheduledMessageView> {
@@ -772,13 +767,21 @@ export class ScheduledMessagesService {
 
   private async requireSchedule(tenantId: string, id: string): Promise<PrismaSchedule> {
     const schedule = await this.prisma.scheduledMessage.findFirst({
-      where: { id, tenantId },
+      where: { id, tenantId, AND: [await this.readableFilter()] },
       select: SCHEDULE_SELECT,
     });
     if (!schedule) {
       throw new ScheduledMessageNotFoundError();
     }
     return schedule;
+  }
+
+  /** Store-restricted members only see schedules whose recipients are all in their WhatsApp instances. */
+  private async readableFilter(): Promise<Prisma.ScheduledMessageWhereInput> {
+    const scope = await this.storeAccess.current();
+    return scope.restricted
+      ? { recipients: { every: { whatsappInstanceId: { in: scope.instanceIds } } } }
+      : {};
   }
 
   private get timeZone(): string {

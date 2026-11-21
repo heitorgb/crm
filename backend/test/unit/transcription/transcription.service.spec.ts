@@ -31,7 +31,12 @@ interface Harness {
   conversations: { ensureMediaStored: ReturnType<typeof vi.fn> };
   storage: { get: ReturnType<typeof vi.fn> };
   queue: { enqueue: ReturnType<typeof vi.fn>; registerProcessor: ReturnType<typeof vi.fn> };
-  realtime: { emitToConversation: ReturnType<typeof vi.fn>; emitToTenant: ReturnType<typeof vi.fn> };
+  realtime: {
+    emitToConversation: ReturnType<typeof vi.fn>;
+    emitToTenant: ReturnType<typeof vi.fn>;
+    emitConversationEvent: ReturnType<typeof vi.fn>;
+    emitToConversationAudience: ReturnType<typeof vi.fn>;
+  };
 }
 
 function createHarness(overrides: Record<string, unknown> = {}): Harness {
@@ -74,7 +79,12 @@ function createHarness(overrides: Record<string, unknown> = {}): Harness {
     enqueue: vi.fn().mockResolvedValue(undefined),
     registerProcessor: vi.fn(),
   };
-  const realtime = { emitToConversation: vi.fn(), emitToTenant: vi.fn() };
+  const realtime = {
+    emitToConversation: vi.fn(),
+    emitToTenant: vi.fn(),
+    emitConversationEvent: vi.fn(),
+    emitToConversationAudience: vi.fn().mockResolvedValue(undefined),
+  };
   const configValues: Record<string, unknown> = {
     TRANSCRIPTION_CONCURRENCY: 2,
     TRANSCRIPTION_TENANT_CONCURRENCY: 1,
@@ -188,6 +198,19 @@ describe('TranscriptionService', () => {
       'message.updated',
       { conversationId: 'conversation-1', messageId: 'message-1' },
     );
+    expect(harness.realtime.emitToConversationAudience).toHaveBeenCalledWith(
+      'tenant-1',
+      'conversation-1',
+      'message.updated',
+      { conversationId: 'conversation-1', messageId: 'message-1' },
+    );
+    expect(harness.realtime.emitToConversationAudience).toHaveBeenCalledWith(
+      'tenant-1',
+      'conversation-1',
+      'conversation.updated',
+      { conversationId: 'conversation-1', messageId: 'message-1' },
+    );
+    expect(harness.realtime.emitToTenant).not.toHaveBeenCalled();
   });
 
   it('uses the exact provider and model saved for the tenant', async () => {

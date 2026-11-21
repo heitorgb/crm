@@ -8,9 +8,17 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { StoreLogo } from './store-logo';
 import { DeliveryCardsSettings } from './delivery-cards-settings';
+import { useWhatsAppInstances } from '@/features/whatsapp/queries';
 
 type Mode = 'AUTOMATIC' | 'MANUAL';
-type Store = { id: string; name: string; externalCode: string; deliveryConfirmationMode: Mode; active: boolean; logoUpdatedAt: string | null };
+type Store = { id: string; name: string; externalCode: string; deliveryConfirmationMode: Mode; whatsappInstanceId: string | null; separationReminderMinutes: number | null; active: boolean; logoUpdatedAt: string | null };
+
+function parseReminderMinutes(value: string): number | null | undefined {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const minutes = Number(trimmed);
+  return Number.isInteger(minutes) && minutes >= 5 && minutes <= 1440 ? minutes : undefined;
+}
 type CreatedStore = Store & { secret: string };
 
 export function StoresSettingsTab({ canManage }: { canManage: boolean }) {
@@ -18,12 +26,14 @@ export function StoresSettingsTab({ canManage }: { canManage: boolean }) {
   const [name, setName] = useState('');
   const [externalCode, setExternalCode] = useState('');
   const [mode, setMode] = useState<Mode>('AUTOMATIC');
+  const [newInstanceId, setNewInstanceId] = useState<string>('');
   const [newLogo, setNewLogo] = useState<File | null>(null);
   const [secret, setSecret] = useState<{ storeId: string; value: string } | null>(null);
   const [error, setError] = useState('');
   const [rotating, setRotating] = useState<string | null>(null);
   const [editing, setEditing] = useState<Store | null>(null);
   const [editName, setEditName] = useState('');
+  const instances = useWhatsAppInstances({ active: true });
   const stores = useQuery({
     queryKey: ['store-orders', 'manage-stores'],
     queryFn: () => apiRequest<Store[]>('/store-orders/stores/manage'),
@@ -37,10 +47,10 @@ export function StoresSettingsTab({ canManage }: { canManage: boolean }) {
   };
   const create = useMutation({
     mutationFn: () => apiRequest<CreatedStore>('/store-orders/stores', {
-      method: 'POST', body: { name, externalCode, deliveryConfirmationMode: mode },
+      method: 'POST', body: { name, externalCode, deliveryConfirmationMode: mode, whatsappInstanceId: newInstanceId || null },
     }),
     onSuccess: async (store) => {
-      setName(''); setExternalCode(''); setMode('AUTOMATIC'); setError('');
+      setName(''); setExternalCode(''); setMode('AUTOMATIC'); setNewInstanceId(''); setError('');
       setSecret({ storeId: store.id, value: store.secret });
       if (newLogo) {
         try {
@@ -92,6 +102,14 @@ export function StoresSettingsTab({ canManage }: { canManage: boolean }) {
         <div className="space-y-2"><Label htmlFor="store-name">Nome da loja</Label><Input id="store-name" required maxLength={120} value={name} onChange={(event) => setName(event.target.value)} placeholder="Ex.: JP Peças"/></div>
         <div className="space-y-2"><Label htmlFor="store-code">Código da loja</Label><Input id="store-code" required maxLength={120} value={externalCode} onChange={(event) => setExternalCode(event.target.value)} placeholder="Ex.: jp-pecas"/><p className="text-xs text-muted-foreground">Identificador único dentro da organização. Não poderá ser alterado depois.</p></div>
         <div className="space-y-2"><Label htmlFor="store-mode">Confirmação de entrega</Label><select id="store-mode" value={mode} onChange={(event) => setMode(event.target.value as Mode)} className="h-10 w-full rounded-md border bg-background px-3 text-sm"><option value="AUTOMATIC">Automática após 2 horas</option><option value="MANUAL">Manual no CRM</option></select><p className="text-xs text-muted-foreground">No modo automático, pedidos ainda em rota serão marcados como entregues após 2 horas, sem confirmação do destinatário.</p></div>
+        <div className="space-y-2">
+          <Label htmlFor="store-instance">WhatsApp (opcional)</Label>
+          <select id="store-instance" value={newInstanceId} onChange={(event) => setNewInstanceId(event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm">
+            <option value="">Nenhuma instância vinculada</option>
+            {instances.data?.data.map((inst) => <option key={inst.id} value={inst.id}>{inst.name}</option>)}
+          </select>
+          <p className="text-xs text-muted-foreground">Instância usada ao criar pedidos manuais nesta loja.</p>
+        </div>
         <div className="space-y-2"><Label htmlFor="store-logo">Logo da loja (opcional)</Label><Input key={secret?.storeId ?? 'new'} id="store-logo" type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => setNewLogo(event.target.files?.[0] ?? null)} /><p className="text-xs text-muted-foreground">JPEG, PNG ou WebP, até 5 MB.</p></div>
       </div>
       <Button disabled={create.isPending || !name.trim() || !externalCode.trim()} type="submit">Cadastrar loja</Button>
@@ -101,7 +119,21 @@ export function StoresSettingsTab({ canManage }: { canManage: boolean }) {
       {stores.isPending ? <p className="text-sm text-muted-foreground">Carregando lojas…</p> : stores.isError ? <p role="alert" className="text-sm text-danger">Não foi possível carregar as lojas.</p> : stores.data?.length === 0 ? <p className="rounded-lg border bg-card p-5 text-sm text-muted-foreground">Nenhuma loja cadastrada.</p> : stores.data?.map((store) =>
         <div key={store.id} className="rounded-xl border bg-card p-4 sm:p-5">
           <div className="flex flex-wrap items-start justify-between gap-3"><div className="flex items-center gap-3"><StoreLogo key={store.logoUpdatedAt ?? 'empty'} store={store} /><div><h3 className="font-semibold">{store.name}</h3><p className="text-xs text-muted-foreground">Código: {store.externalCode}</p></div></div><span className={`rounded-full px-2 py-1 text-xs ${store.active ? 'bg-emerald-500/10 text-emerald-700' : 'bg-muted text-muted-foreground'}`}>{store.active ? 'Ativa' : 'Inativa'}</span></div>
-          <div className="mt-4 grid gap-3 sm:grid-cols-2"><div><p className="text-xs text-muted-foreground">ID para configurar na loja</p><code className="break-all text-xs">{store.id}</code></div><div><Label htmlFor={`mode-${store.id}`}>Confirmação de entrega</Label><select id={`mode-${store.id}`} value={store.deliveryConfirmationMode} disabled={update.isPending} onChange={(event) => update.mutate({ id: store.id, data: { deliveryConfirmationMode: event.target.value as Mode } })} className="mt-1 h-9 w-full rounded-md border bg-background px-2 text-sm"><option value="AUTOMATIC">Automática após 2 horas</option><option value="MANUAL">Manual</option></select></div></div>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <div><p className="text-xs text-muted-foreground">ID para configurar na loja</p><code className="break-all text-xs">{store.id}</code></div>
+            <div><Label htmlFor={`mode-${store.id}`}>Confirmação de entrega</Label><select id={`mode-${store.id}`} value={store.deliveryConfirmationMode} disabled={update.isPending} onChange={(event) => update.mutate({ id: store.id, data: { deliveryConfirmationMode: event.target.value as Mode } })} className="mt-1 h-9 w-full rounded-md border bg-background px-2 text-sm"><option value="AUTOMATIC">Automática após 2 horas</option><option value="MANUAL">Manual</option></select></div>
+            <div><Label htmlFor={`instance-${store.id}`}>WhatsApp vinculado</Label><select id={`instance-${store.id}`} value={store.whatsappInstanceId ?? ''} disabled={update.isPending} onChange={(event) => update.mutate({ id: store.id, data: { whatsappInstanceId: event.target.value || null } })} className="mt-1 h-9 w-full rounded-md border bg-background px-2 text-sm"><option value="">Nenhuma</option>{instances.data?.data.map((inst) => <option key={inst.id} value={inst.id}>{inst.name}</option>)}</select></div>
+            <div>
+              <Label htmlFor={`reminder-${store.id}`}>Lembrete de separação (minutos)</Label>
+              <Input key={store.separationReminderMinutes ?? 'off'} id={`reminder-${store.id}`} type="number" inputMode="numeric" min={5} max={1440} step={1} placeholder="Desativado" defaultValue={store.separationReminderMinutes ?? ''} disabled={update.isPending} className="mt-1 h-9"
+                onBlur={(event) => {
+                  const minutes = parseReminderMinutes(event.target.value);
+                  if (minutes === undefined) { setError('Informe o lembrete em minutos inteiros, entre 5 e 1440, ou deixe vazio para desativar.'); return; }
+                  if (minutes !== store.separationReminderMinutes) update.mutate({ id: store.id, data: { separationReminderMinutes: minutes } });
+                }} />
+              <p className="mt-1 text-xs text-muted-foreground">Avisa a equipe quando um pedido passa desse tempo sem ser separado. Deixe vazio para desativar.</p>
+            </div>
+          </div>
           <div className="mt-4 flex flex-wrap gap-2"><Button variant="outline" size="sm" onClick={() => { setEditing(store); setEditName(store.name); }}>Editar nome</Button><Button variant="outline" size="sm" onClick={() => update.mutate({ id: store.id, data: { active: !store.active } })}>{store.active ? 'Desativar' : 'Ativar'}</Button><Button variant="outline" size="sm" onClick={() => setRotating(store.id)}><KeyRound className="mr-2 size-4"/>Renovar credencial</Button><label className="inline-flex cursor-pointer items-center rounded-md border px-3 text-sm font-medium hover:bg-surface-hover">{uploadLogo.isPending ? 'Enviando logo…' : 'Alterar logo'}<input type="file" accept="image/jpeg,image/png,image/webp" className="sr-only" disabled={uploadLogo.isPending} onChange={(event) => { const file = event.target.files?.[0]; if (file) uploadLogo.mutate({ id: store.id, file }); event.target.value = ''; }} /></label>{store.logoUpdatedAt && <Button variant="outline" size="sm" disabled={removeLogo.isPending} onClick={() => removeLogo.mutate(store.id)}>Remover logo</Button>}</div>
         </div>) }
     </div>

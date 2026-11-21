@@ -14,7 +14,11 @@ interface Harness {
     };
     conversation: { findMany: ReturnType<typeof vi.fn> };
   };
-  realtime: { emitToTenant: ReturnType<typeof vi.fn> };
+  realtime: {
+    emitToTenant: ReturnType<typeof vi.fn>;
+    emitConversationEvent: ReturnType<typeof vi.fn>;
+    emitToConversationAudience: ReturnType<typeof vi.fn>;
+  };
 }
 
 function contact(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -48,11 +52,16 @@ function createHarness(): Harness {
     },
     conversation: { findMany: vi.fn().mockResolvedValue([]) },
   };
-  const realtime = { emitToTenant: vi.fn() };
+  const realtime = {
+    emitToTenant: vi.fn(),
+    emitConversationEvent: vi.fn(),
+    emitToConversationAudience: vi.fn().mockResolvedValue(undefined),
+  };
   const service = new ContactsService(
     prisma as unknown as PrismaService,
     {} as unknown as TenantContextService,
     realtime as unknown as RealtimeService,
+    {} as never,
   );
   return { service, prisma, realtime };
 }
@@ -105,9 +114,12 @@ describe('ContactsService.syncFromWhatsAppEvent', () => {
       contactId: 'contact-1',
       conversationIds: ['conversation-1'],
     });
-    expect(realtime.emitToTenant).toHaveBeenCalledWith('tenant-1', 'conversation.updated', {
-      conversationId: 'conversation-1',
-    });
+    expect(realtime.emitToConversationAudience).toHaveBeenCalledWith(
+      'tenant-1',
+      'conversation-1',
+      'conversation.updated',
+      { conversationId: 'conversation-1' },
+    );
     expect(result).toEqual({
       contactId: 'contact-1',
       changed: true,
@@ -133,6 +145,7 @@ describe('ContactsService.syncFromWhatsAppEvent', () => {
 
     expect(prisma.contact.update).not.toHaveBeenCalled();
     expect(realtime.emitToTenant).not.toHaveBeenCalled();
+    expect(realtime.emitToConversationAudience).not.toHaveBeenCalled();
     expect(result).toEqual({ contactId: 'contact-1', changed: false, conversationIds: [] });
   });
 

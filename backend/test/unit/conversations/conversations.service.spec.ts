@@ -38,6 +38,8 @@ interface PrismaMock {
 interface RealtimeMock {
   emitToTenant: ReturnType<typeof vi.fn>;
   emitToConversation: ReturnType<typeof vi.fn>;
+  emitConversationEvent: ReturnType<typeof vi.fn>;
+  emitToConversationAudience: ReturnType<typeof vi.fn>;
 }
 
 interface ProcessingMock {
@@ -78,6 +80,8 @@ function createService(): {
   const realtime: RealtimeMock = {
     emitToTenant: vi.fn(),
     emitToConversation: vi.fn(),
+    emitConversationEvent: vi.fn(),
+    emitToConversationAudience: vi.fn().mockResolvedValue(undefined),
   };
 
   const tenantContext = {
@@ -107,6 +111,13 @@ function createService(): {
     realtime as never,
     linkPreviews as never,
     {} as never,
+    {
+      current: vi.fn().mockResolvedValue({ restricted: false }),
+      conversationFilter: () => ({}),
+      contactFilter: () => ({}),
+      canAccessInstance: () => true,
+      assertConversations: vi.fn().mockResolvedValue(undefined),
+    } as never,
   );
 
   return {
@@ -255,9 +266,13 @@ describe('ConversationsService.markAsRead', () => {
       where: { id: 'conv-1' },
       data: { lastReadAt: latest },
     });
-    expect(realtime.emitToTenant).toHaveBeenCalledWith('tenant-1', 'conversation.updated', {
-      conversationId: 'conv-1',
-    });
+    expect(realtime.emitToConversationAudience).toHaveBeenCalledWith(
+      'tenant-1',
+      'conv-1',
+      'conversation.updated',
+      { conversationId: 'conv-1' },
+    );
+    expect(realtime.emitToTenant).not.toHaveBeenCalled();
     expect(result).toBe(view);
   });
 
@@ -272,6 +287,7 @@ describe('ConversationsService.markAsRead', () => {
 
     expect(prisma.conversation.update).not.toHaveBeenCalled();
     expect(realtime.emitToTenant).not.toHaveBeenCalled();
+    expect(realtime.emitToConversationAudience).not.toHaveBeenCalled();
   });
 
   it('rejects a conversation from another tenant', async () => {
@@ -315,9 +331,13 @@ describe('ConversationsService.softDelete', () => {
       where: { id: 'conv-1' },
       data: { deletedAt: expect.any(Date) },
     });
-    expect(realtime.emitToTenant).toHaveBeenCalledWith('tenant-1', 'conversation.deleted', {
-      conversationId: 'conv-1',
-    });
+    expect(realtime.emitToConversationAudience).toHaveBeenCalledWith(
+      'tenant-1',
+      'conv-1',
+      'conversation.deleted',
+      { conversationId: 'conv-1' },
+    );
+    expect(realtime.emitToTenant).not.toHaveBeenCalled();
   });
 
   it('rejects a conversation from another tenant without deleting or emitting', async () => {
@@ -327,6 +347,7 @@ describe('ConversationsService.softDelete', () => {
     await expect(service.softDelete('conv-1')).rejects.toBeInstanceOf(ConversationNotFoundError);
     expect(prisma.conversation.update).not.toHaveBeenCalled();
     expect(realtime.emitToTenant).not.toHaveBeenCalled();
+    expect(realtime.emitToConversationAudience).not.toHaveBeenCalled();
   });
 });
 

@@ -189,6 +189,15 @@ export function StoreOrdersPage() {
     },
     onError: (cause: Error) => setError(cause.message),
   });
+  const [linkContactId, setLinkContactId] = useState('');
+  const linkContact = useMutation({
+    mutationFn: (contactId: string) => apiRequest<Order>(`/store-orders/${selected?.id}/contact`, { method: 'PATCH', body: { contactId } }),
+    onSuccess: async (updated) => {
+      setSelected(updated); setLinkContactId(''); setError('');
+      await queryClient.invalidateQueries({ queryKey: ['store-orders', 'list'] });
+    },
+    onError: (cause: Error) => setError(cause.message),
+  });
   const visibleGroups = cards.data ? groups.filter((item) => cards.data.statuses.includes(item.statuses[0])) : groups;
   const activeGroup = group !== 'all' && !visibleGroups.some((item) => item.key === group) ? 'all' : group;
   const visible = (orders.data?.data ?? []).filter((order) =>
@@ -241,6 +250,10 @@ export function StoreOrdersPage() {
         {selected.status === 'EM_ROTA' && selected.deliveryConfirmationMode === 'MANUAL' && <p className="text-muted-foreground">A entrega precisa ser confirmada manualmente.</p>}
         {selected.status === 'ENTREGUE' && selected.deliveryConfirmationSource === 'AUTOMATIC' && <p className="text-muted-foreground">Entrega presumida automaticamente, sem confirmação do destinatário.</p>}
         {selected.contact?.address && <p className="flex gap-2"><MapPin className="size-4"/>{selected.contact.address}</p>}
+        {!selected.contact && <div className="flex items-end gap-2 rounded-md border bg-muted/30 p-3">
+          <div className="flex-1 space-y-1"><p className="text-xs text-muted-foreground">Nenhum contato vinculado — vincule para habilitar mensagens automáticas.</p><ContactPicker id="link-contact" value={linkContactId} onValueChange={setLinkContactId} disabled={linkContact.isPending}/></div>
+          <Button size="sm" disabled={!linkContactId || linkContact.isPending} onClick={() => linkContact.mutate(linkContactId)}>Vincular</Button>
+        </div>}
         <p className="flex gap-2 text-muted-foreground"><Clock3 className="size-4"/>Aprovado em {new Date(selected.approvedAt).toLocaleString('pt-BR')}</p>
         {detail.isPending ? <p className="text-muted-foreground">Carregando itens…</p> : detail.isError ? <p role="alert" className="text-danger">Não foi possível carregar os itens deste pedido.</p> : detail.data?.items?.length ? <OrderItems items={detail.data.items} totalAmount={detail.data.totalAmount} /> : detail.data?.items === null ? <p className="text-muted-foreground">Itens indisponíveis para este pedido.</p> : null}
         {selected.orderText && <div className="whitespace-pre-wrap rounded-md border bg-muted/40 p-3">{selected.orderText}</div>}

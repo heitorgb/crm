@@ -123,6 +123,11 @@ export class UpdateOrderStatusDto {
   status!: StoreOrderStatus;
 }
 
+export class UpdateOrderContactDto {
+  @IsUUID()
+  contactId!: string;
+}
+
 export class UpdateDeliveryCardsDto {
   @IsArray()
   @ArrayMaxSize(6)

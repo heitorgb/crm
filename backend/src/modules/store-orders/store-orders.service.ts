@@ -297,6 +297,21 @@ export class StoreOrdersService {
     return order;
   }
 
+  async updateContact(id: string, contactId: string) {
+    const { tenantId } = this.tenantContext.requireContext();
+    const [order, contact] = await Promise.all([
+      this.prisma.storeOrder.findFirst({ where: { id, tenantId }, select: { id: true } }),
+      this.prisma.contact.findFirst({ where: { id: contactId, tenantId }, select: { id: true, name: true } }),
+    ]);
+    if (!order) throw new AppException('ORDER_NOT_FOUND', 'Pedido não encontrado.', 404);
+    if (!contact) throw new AppException('CONTACT_NOT_FOUND', 'Contato não encontrado.', 404);
+    return this.prisma.storeOrder.update({
+      where: { id },
+      data: { contactId: contact.id, customerName: contact.name },
+      include: { store: { select: { id: true, name: true, logoUpdatedAt: true } }, contact: { select: { id: true, name: true, address: true } } },
+    });
+  }
+
   private async sendStatusMessage(tenantId: string, contactId: string, instanceId: string, text: string) {
     const conversation = await this.conversations.startFromContact({ contactId, whatsappInstanceId: instanceId });
     await this.processing.deliverText(tenantId, conversation.id, text, { senderId: null, senderName: null, showAgentName: false });

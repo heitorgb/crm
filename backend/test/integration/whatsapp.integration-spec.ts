@@ -1974,13 +1974,14 @@ describe('WhatsApp attendance (integration)', () => {
 
     it('publishes inbound message events with their direction', async () => {
       const instanceName = `dir-in-${randomUUID()}`;
-      await createInstance(ownerA, instanceName);
-      const emit = vi.spyOn(app.get(RealtimeService), 'emitToTenant');
+      const instanceId = await createInstance(ownerA, instanceName);
+      const emit = vi.spyOn(app.get(RealtimeService), 'emitConversationEvent');
 
       await postWebhook(evolutionPayload(instanceName, randomUUID(), 'Cheguei'));
 
       expect(emit).toHaveBeenCalledWith(
         ownerA.tenantId,
+        instanceId,
         'message.created',
         expect.objectContaining({ direction: 'INBOUND' }),
       );
@@ -3029,8 +3030,8 @@ describe('WhatsApp attendance (integration)', () => {
 
     it('syncs a message sent from the phone as OUTBOUND', async () => {
       const instanceName = `out-phone-${randomUUID()}`;
-      await createInstance(ownerA, instanceName);
-      const emit = vi.spyOn(app.get(RealtimeService), 'emitToTenant');
+      const instanceId = await createInstance(ownerA, instanceName);
+      const emit = vi.spyOn(app.get(RealtimeService), 'emitConversationEvent');
 
       try {
         const response = await postWebhook(
@@ -3061,6 +3062,7 @@ describe('WhatsApp attendance (integration)', () => {
 
         expect(emit).toHaveBeenCalledWith(
           ownerA.tenantId,
+          instanceId,
           'message.created',
           expect.objectContaining({ direction: 'OUTBOUND', messageId: message.id }),
         );
@@ -4224,7 +4226,7 @@ describe('WhatsApp attendance (integration)', () => {
 
     it('attaches a reaction to the original message without creating a message or unread item', async () => {
       const instanceName = `reaction-direct-${randomUUID()}`;
-      await createInstance(ownerA, instanceName);
+      const instanceId = await createInstance(ownerA, instanceName);
       const targetId = randomUUID();
 
       await postWebhook(evolutionPayload(instanceName, targetId, 'Mensagem original'));
@@ -4244,7 +4246,7 @@ describe('WhatsApp attendance (integration)', () => {
         where: { id: conversation.id },
       });
 
-      const emit = vi.spyOn(app.get(RealtimeService), 'emitToTenant');
+      const emit = vi.spyOn(app.get(RealtimeService), 'emitConversationEvent');
       try {
         const response = await postWebhook(
           reactionPayload(instanceName, randomUUID(), '❤️', {
@@ -4300,6 +4302,7 @@ describe('WhatsApp attendance (integration)', () => {
 
         expect(emit).toHaveBeenCalledWith(
           ownerA.tenantId,
+          instanceId,
           'message.reaction',
           expect.objectContaining({
             conversationId: conversation.id,
@@ -4309,6 +4312,7 @@ describe('WhatsApp attendance (integration)', () => {
         );
         expect(emit).not.toHaveBeenCalledWith(
           ownerA.tenantId,
+          expect.anything(),
           'message.created',
           expect.anything(),
         );
@@ -4525,12 +4529,12 @@ describe('WhatsApp attendance (integration)', () => {
   it('relays repeated presence transitions only to the owning tenant without persisting events', async () => {
     const instanceName = `presence-${randomUUID()}`;
     const jid = '5511999999999@s.whatsapp.net';
-    await createInstance(ownerA, instanceName);
+    const instanceId = await createInstance(ownerA, instanceName);
     await postWebhook(evolutionPayload(instanceName, randomUUID(), 'Olá', jid));
     const conversation = await prisma.conversation.findFirstOrThrow({
       where: { tenantId: ownerA.tenantId },
     });
-    const emit = vi.spyOn(app.get(RealtimeService), 'emitToTenant');
+    const emit = vi.spyOn(app.get(RealtimeService), 'emitConversationEvent');
     try {
       for (const [providerState, expectedState] of [
         ['composing', 'composing'],
@@ -4547,6 +4551,7 @@ describe('WhatsApp attendance (integration)', () => {
         expect(response.statusCode).toBe(200);
         expect(emit).toHaveBeenLastCalledWith(
           ownerA.tenantId,
+          instanceId,
           'conversation.presence',
           expect.objectContaining({
             conversationId: conversation.id,
@@ -4584,14 +4589,14 @@ describe('WhatsApp attendance (integration)', () => {
     const instanceName = `presence-lid-${randomUUID()}`;
     const groupJid = '120363444444444444@g.us';
     const participant = '63604221026389@lid';
-    await createInstance(ownerA, instanceName);
+    const instanceId = await createInstance(ownerA, instanceName);
     await postWebhook(
       groupPayload(instanceName, randomUUID(), 'Olá', groupJid, participant, 'Ernandes Lourenço'),
     );
     const conversation = await prisma.conversation.findFirstOrThrow({
       where: { tenantId: ownerA.tenantId, isGroup: true },
     });
-    const emit = vi.spyOn(app.get(RealtimeService), 'emitToTenant');
+    const emit = vi.spyOn(app.get(RealtimeService), 'emitConversationEvent');
     try {
       const response = await postWebhook({
         event: 'presence.update',
@@ -4605,6 +4610,7 @@ describe('WhatsApp attendance (integration)', () => {
       expect(response.statusCode).toBe(200);
       expect(emit).toHaveBeenLastCalledWith(
         ownerA.tenantId,
+        instanceId,
         'conversation.presence',
         expect.objectContaining({
           conversationId: conversation.id,
@@ -4767,7 +4773,8 @@ describe('WhatsApp attendance (integration)', () => {
 
     it('publishes outbound message events with their direction', async () => {
       const { conversationId } = await seedConversation();
-      const emit = vi.spyOn(app.get(RealtimeService), 'emitToTenant');
+      const { whatsappInstanceId } = await prisma.conversation.findUniqueOrThrow({ where: { id: conversationId } });
+      const emit = vi.spyOn(app.get(RealtimeService), 'emitConversationEvent');
 
       await app.inject({
         method: 'POST',
@@ -4778,6 +4785,7 @@ describe('WhatsApp attendance (integration)', () => {
 
       expect(emit).toHaveBeenCalledWith(
         ownerA.tenantId,
+        whatsappInstanceId,
         'message.created',
         expect.objectContaining({ conversationId, direction: 'OUTBOUND' }),
       );
@@ -5525,7 +5533,7 @@ describe('WhatsApp attendance (integration)', () => {
         instanceName,
         '5511900000006@s.whatsapp.net',
       );
-      const emit = vi.spyOn(app.get(RealtimeService), 'emitToTenant');
+      const emit = vi.spyOn(app.get(RealtimeService), 'emitToConversationAudience');
 
       await app.inject({
         method: 'POST',
@@ -5535,6 +5543,7 @@ describe('WhatsApp attendance (integration)', () => {
 
       expect(emit).toHaveBeenCalledWith(
         ownerA.tenantId,
+        conversationId,
         'conversation.updated',
         expect.objectContaining({ conversationId }),
       );
@@ -5855,12 +5864,13 @@ describe('WhatsApp attendance (integration)', () => {
     it('publishes conversation.updated when the archived state changes', async () => {
       const instanceName = await seedInstance();
       const conversationId = await createConversation(instanceName, '5511901000080@s.whatsapp.net');
-      const emit = vi.spyOn(app.get(RealtimeService), 'emitToTenant');
+      const emit = vi.spyOn(app.get(RealtimeService), 'emitToConversationAudience');
 
       await archive(conversationId);
 
       expect(emit).toHaveBeenCalledWith(
         ownerA.tenantId,
+        conversationId,
         'conversation.updated',
         expect.objectContaining({ conversationId }),
       );

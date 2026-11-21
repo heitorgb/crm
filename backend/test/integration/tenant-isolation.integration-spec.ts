@@ -7,6 +7,8 @@ import type { TenantContext } from '../../src/common/tenant-context/tenant-conte
 import { validateEnv } from '../../src/config/env.validation.js';
 import { PrismaModule } from '../../src/infrastructure/prisma/prisma.module.js';
 import { PrismaService } from '../../src/infrastructure/prisma/prisma.service.js';
+import { RealtimeModule } from '../../src/infrastructure/realtime/realtime.module.js';
+import { StoreAccessModule } from '../../src/modules/store-access/store-access.module.js';
 import {
   MembershipNotFoundError,
   TenantAccessDeniedError,
@@ -38,6 +40,8 @@ describe('Tenant isolation (integration)', () => {
         ConfigModule.forRoot({ isGlobal: true, validate: validateEnv }),
         PrismaModule,
         TenantContextModule,
+        RealtimeModule,
+        StoreAccessModule,
         MembershipsModule,
       ],
     }).compile();

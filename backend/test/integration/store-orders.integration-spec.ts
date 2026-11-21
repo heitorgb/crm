@@ -134,20 +134,20 @@ describe('Store order approval (integration)', () => {
       payload: { storeId: store.id, contactId: contact.id, orderText: 'Pedido recebido por telefone' },
     });
     expect(created.statusCode).toBe(201);
-    expect(created.json()).toMatchObject({ status: 'PENDENTE_SEPARACAO', contactId: contact.id });
+    expect(created.json()).toMatchObject({ status: 'SEPARANDO', contactId: contact.id });
     expect(created.json().externalOrderId).toMatch(/^manual:/);
 
     const moved = await app.inject({
       method: 'PATCH', url: `/api/store-orders/${created.json().id}/status`,
-      headers: authHeaders(ownerA), payload: { status: 'SEPARANDO' },
+      headers: authHeaders(ownerA), payload: { status: 'SEPARADO' },
     });
     expect(moved.statusCode).toBe(200);
-    expect(moved.json().status).toBe('SEPARANDO');
+    expect(moved.json().status).toBe('SEPARADO');
     expect(await prisma.storeOrderStatusChange.count({ where: { orderId: created.json().id } })).toBe(2);
 
     const foreign = await app.inject({
       method: 'PATCH', url: `/api/store-orders/${created.json().id}/status`,
-      headers: authHeaders(ownerB), payload: { status: 'SEPARADO' },
+      headers: authHeaders(ownerB), payload: { status: 'EM_ROTA' },
     });
     expect(foreign.statusCode).toBe(404);
   });

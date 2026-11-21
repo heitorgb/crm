@@ -13,6 +13,7 @@ export interface Member {
   avatarUrl: string | null;
   role: Role;
   active: boolean;
+  storeIds: string[];
 }
 
 export interface CreateMemberInput {
@@ -25,4 +26,5 @@ export interface CreateMemberInput {
 export interface UpdateMemberInput {
   role?: Role;
   active?: boolean;
+  storeIds?: string[];
 }

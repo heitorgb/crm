@@ -15,6 +15,7 @@ import { MODULE_KEYS } from '../modules/modules.constants.js';
 import { extractWebhookSecret, generateWebhookSecret, webhookSecretMatches } from '../integrations/webhooks/webhook-secret.js';
 import { ConversationProcessingService } from '../conversations/conversation-processing.service.js';
 import { ConversationsService } from '../conversations/conversations.service.js';
+import { StoreAccessService } from '../store-access/store-access.service.js';
 import type { ApprovedOrderDto, CreateManualOrderDto, CreateStoreDto, UpdateStoreDto } from './store-orders.dto.js';
 
 const STATUS_MESSAGES: Partial<Record<StoreOrderStatus, string>> = {
@@ -45,6 +46,7 @@ export class StoreOrdersService {
     @Inject(STORAGE) private readonly storage: StorageService,
     private readonly conversations: ConversationsService,
     private readonly processing: ConversationProcessingService,
+    private readonly storeAccess: StoreAccessService,
   ) {}
 
   async createStore(dto: CreateStoreDto) {
@@ -54,6 +56,7 @@ export class StoreOrdersService {
     if (!name || !externalCode) {
       throw new AppException('STORE_FIELDS_REQUIRED', 'Informe o nome e o código da loja.', 400);
     }
+    await this.assertTenantInstance(tenantId, dto.whatsappInstanceId ?? null);
     const generated = generateWebhookSecret();
     const store = await this.prisma.store.create({
       data: {
@@ -84,7 +87,9 @@ export class StoreOrdersService {
     if (!store) throw new AppException('STORE_NOT_FOUND', 'Loja não encontrada.', 404);
     const name = dto.name?.trim();
     if (dto.name !== undefined && !name) throw new AppException('STORE_NAME_REQUIRED', 'Informe o nome da loja.', 400);
-    return this.prisma.store.update({
+    const changesInstance = 'whatsappInstanceId' in dto && (dto.whatsappInstanceId ?? null) !== store.whatsappInstanceId;
+    if (changesInstance) await this.assertTenantInstance(tenantId, dto.whatsappInstanceId ?? null);
+    const updated = await this.prisma.store.update({
       where: { id: storeId },
       data: { ...(name ? { name } : {}),
         ...(dto.deliveryConfirmationMode ? { deliveryConfirmationMode: dto.deliveryConfirmationMode } : {}),
@@ -93,6 +98,14 @@ export class StoreOrdersService {
         ...('separationReminderMinutes' in dto ? { separationReminderMinutes: dto.separationReminderMinutes ?? null } : {}) },
       select: { id: true, name: true, externalCode: true, deliveryConfirmationMode: true, whatsappInstanceId: true, separationReminderMinutes: true, active: true, createdAt: true, logoUpdatedAt: true },
     });
+    if (changesInstance) await this.storeAccess.refreshRealtimeRoomsForStore(tenantId, storeId);
+    return updated;
+  }
+
+  private async assertTenantInstance(tenantId: string, instanceId: string | null): Promise<void> {
+    if (!instanceId) return;
+    const instance = await this.prisma.whatsAppInstance.findFirst({ where: { id: instanceId, tenantId }, select: { id: true } });
+    if (!instance) throw new AppException('WHATSAPP_INSTANCE_NOT_FOUND', 'WhatsApp não encontrado nesta organização.', 404);
   }
 
   async rotateStoreSecret(storeId: string) {
@@ -148,10 +161,11 @@ export class StoreOrdersService {
     return this.storage.get(store.logoStorageKey);
   }
 
-  listStores() {
+  async listStores() {
     const { tenantId } = this.tenantContext.requireContext();
+    const scope = await this.storeAccess.current();
     return this.prisma.store.findMany({
-      where: { tenantId, active: true },
+      where: { tenantId, active: true, AND: [this.storeAccess.storeFilter(scope)] },
       select: { id: true, name: true, externalCode: true, deliveryConfirmationMode: true, whatsappInstanceId: true, logoUpdatedAt: true },
       orderBy: { name: 'asc' },
     });
@@ -181,8 +195,10 @@ export class StoreOrdersService {
       throw new AppException('STORE_ID_INVALID', 'Loja inválida.', 400);
     }
     const term = search?.trim().slice(0, 120);
+    const scope = await this.storeAccess.current();
     const where: Prisma.StoreOrderWhereInput = {
       tenantId,
+      AND: [this.storeAccess.storeOrderFilter(scope)],
       ...(storeId ? { storeId } : {}),
       ...(term ? { OR: [
         { externalOrderId: { contains: term, mode: 'insensitive' } },
@@ -205,8 +221,9 @@ export class StoreOrdersService {
 
   async getOrder(id: string) {
     const { tenantId } = this.tenantContext.requireContext();
+    const scope = await this.storeAccess.current();
     const order = await this.prisma.storeOrder.findFirst({
-      where: { id, tenantId },
+      where: { id, tenantId, AND: [this.storeAccess.storeOrderFilter(scope)] },
       include: { store: { select: { id: true, name: true, logoUpdatedAt: true } }, contact: { select: { id: true, name: true, address: true } } },
     });
     if (!order) throw new AppException('ORDER_NOT_FOUND', 'Pedido não encontrado.', 404);
@@ -217,8 +234,9 @@ export class StoreOrdersService {
     const { tenantId, membershipId } = this.tenantContext.requireContext();
     const text = dto.orderText.trim();
     if (!text) throw new AppException('ORDER_TEXT_REQUIRED', 'Informe o texto do pedido.', 400);
+    const scope = await this.storeAccess.current();
     const [store, contact] = await Promise.all([
-      this.prisma.store.findFirst({ where: { id: dto.storeId, tenantId, active: true } }),
+      this.prisma.store.findFirst({ where: { id: dto.storeId, tenantId, active: true, AND: [this.storeAccess.storeFilter(scope)] } }),
       this.prisma.contact.findFirst({ where: { id: dto.contactId, tenantId } }),
     ]);
     if (!store || !contact) throw new AppException('ORDER_PARTY_NOT_FOUND', 'Loja ou contato não encontrado.', 404);
@@ -253,8 +271,12 @@ export class StoreOrdersService {
 
   async updateStatus(id: string, status: StoreOrderStatus) {
     const { tenantId, membershipId } = this.tenantContext.requireContext();
+    const scope = await this.storeAccess.current();
     const { order, contactId, instanceId } = await this.prisma.$transaction(async (tx) => {
-      const found = await tx.storeOrder.findFirst({ where: { id, tenantId }, include: { store: true } });
+      const found = await tx.storeOrder.findFirst({
+        where: { id, tenantId, AND: [this.storeAccess.storeOrderFilter(scope)] },
+        include: { store: true },
+      });
       if (!found) throw new AppException('ORDER_NOT_FOUND', 'Pedido não encontrado.', 404);
       if (!STATUS_TRANSITIONS[found.status].includes(status)) {
         throw new AppException('ORDER_STATUS_INVALID', 'Mudança de status não permitida.', 409);
@@ -300,8 +322,9 @@ export class StoreOrdersService {
 
   async updateContact(id: string, contactId: string) {
     const { tenantId } = this.tenantContext.requireContext();
+    const scope = await this.storeAccess.current();
     const [order, contact] = await Promise.all([
-      this.prisma.storeOrder.findFirst({ where: { id, tenantId }, select: { id: true } }),
+      this.prisma.storeOrder.findFirst({ where: { id, tenantId, AND: [this.storeAccess.storeOrderFilter(scope)] }, select: { id: true } }),
       this.prisma.contact.findFirst({ where: { id: contactId, tenantId }, select: { id: true, name: true } }),
     ]);
     if (!order) throw new AppException('ORDER_NOT_FOUND', 'Pedido não encontrado.', 404);

@@ -101,6 +101,28 @@ Por isso, o item 5: todo job deve carregar `tenantId` e chamar
 - Cache sempre com namespace: `tenant:{tenantId}:...`.
 - Testes de isolamento (A→A permitido, A→B negado) são obrigatórios para novos módulos.
 
+## Acesso por loja dentro do tenant (implementado)
+
+Um membro `USER` pode ser vinculado a uma ou mais lojas (`tenant_user_stores`, gerido por admins em
+**Configurações → Equipe**). A regra fica em `StoreAccessService` (`src/modules/store-access/`):
+
+- `OWNER`, `ADMIN`, jobs do sistema e membros `USER` **sem** loja vinculada têm acesso total ao tenant.
+  Assim nenhum usuário existente perdeu acesso quando o recurso entrou.
+- Membro vinculado vê apenas os pedidos das suas lojas e as conversas da instância de WhatsApp
+  vinculada a essas lojas. Instância sem loja fica oculta para ele.
+- Rotas de conversa por id passam pelo `ConversationAccessGuard`, que responde 404, sem revelar
+  que a conversa existe. Listas, contadores, envio em massa, mensagens agendadas, Copiloto e a lista
+  de instâncias aplicam o mesmo filtro no service.
+- **Realtime:** eventos de conversa/mensagem usam `RealtimeService.emitConversationEvent`
+  (ou `emitToConversationAudience` quando só há o id da conversa) e vão para a sala
+  `tenant:{id}:conversations` (acesso total) e `tenant:{id}:instance:{instanceId}`. Ao conectar, o
+  socket entra nas salas do seu escopo; mudar as lojas de um membro, ou a instância de uma loja,
+  troca as salas dos sockets já conectados. **Novos eventos de conversa não devem usar
+  `emitToTenant`.**
+- **Push:** mensagens recebidas e lembretes de separação só vão para aparelhos de membros com acesso
+  à instância/loja.
+- Contatos continuam compartilhados no tenant.
+
 ## RLS — decisões para a implementação futura
 
 - **Role da aplicação:** sem `BYPASSRLS` e não owner das tabelas (owner/superuser ignoram RLS por

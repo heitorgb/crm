@@ -45,7 +45,12 @@ function createHarness(): Harness {
     markOutboundStatus: vi.fn().mockResolvedValue(undefined),
     markOutboundFailed: vi.fn().mockResolvedValue(undefined),
   };
-  const realtime = { emitToTenant: vi.fn(), emitToConversation: vi.fn() };
+  const realtime = {
+    emitToTenant: vi.fn(),
+    emitToConversation: vi.fn(),
+    emitConversationEvent: vi.fn(),
+    emitToConversationAudience: vi.fn().mockResolvedValue(undefined),
+  };
   const instances = { ensureConnectedForSend: vi.fn().mockResolvedValue(true) };
   const queue = { enqueue: vi.fn().mockResolvedValue(undefined) };
   const transcriptionSettings = { isAutoEnabled: vi.fn().mockResolvedValue(false) };

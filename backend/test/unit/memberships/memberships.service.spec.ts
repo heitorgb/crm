@@ -5,11 +5,13 @@ import type { PrismaService } from '../../../src/infrastructure/prisma/prisma.se
 import {
   LastOwnerRequiredError,
   MemberPasswordRequiredError,
+  MemberStoreNotFoundError,
   MembershipAlreadyExistsError,
   MembershipNotFoundError,
   TenantAccessDeniedError,
 } from '../../../src/modules/memberships/memberships.errors.js';
 import { MembershipsService } from '../../../src/modules/memberships/memberships.service.js';
+import type { StoreAccessService } from '../../../src/modules/store-access/store-access.service.js';
 
 const context: TenantContext = {
   tenantId: 'tenant-a',
@@ -33,12 +35,16 @@ interface PrismaMock {
     findUnique: ReturnType<typeof vi.fn>;
     create: ReturnType<typeof vi.fn>;
   };
+  store: { count: ReturnType<typeof vi.fn> };
+  tenantUserStore: { deleteMany: ReturnType<typeof vi.fn>; createMany: ReturnType<typeof vi.fn> };
+  $transaction: ReturnType<typeof vi.fn>;
 }
 
 function createService(): {
   service: MembershipsService;
   prisma: PrismaMock;
   passwords: { hash: ReturnType<typeof vi.fn> };
+  storeAccess: { refreshRealtimeRooms: ReturnType<typeof vi.fn> };
 } {
   const prisma: PrismaMock = {
     tenantUser: {
@@ -55,7 +61,12 @@ function createService(): {
       findUnique: vi.fn(),
       create: vi.fn(),
     },
+    store: { count: vi.fn() },
+    tenantUserStore: { deleteMany: vi.fn().mockResolvedValue({}), createMany: vi.fn().mockResolvedValue({}) },
+    $transaction: vi.fn(),
   };
+  prisma.$transaction.mockImplementation((callback: (tx: PrismaMock) => unknown) => callback(prisma));
+  const storeAccess = { refreshRealtimeRooms: vi.fn().mockResolvedValue(undefined) };
 
   const tenantContext = {
     requireContext: vi.fn(() => context),
@@ -69,9 +80,11 @@ function createService(): {
       tenantContext,
       passwords as unknown as PasswordService,
       { get: vi.fn(), put: vi.fn(), exists: vi.fn(), delete: vi.fn() },
+      storeAccess as unknown as StoreAccessService,
     ),
     prisma,
     passwords,
+    storeAccess,
   };
 }
 
@@ -154,6 +167,7 @@ describe('MembershipsService', () => {
       role: 'ADMIN',
       active: true,
       user: { name: 'New', email: 'new@x.com' },
+      storeAccess: [],
     });
 
     const result = await service.createMember({
@@ -214,11 +228,44 @@ describe('MembershipsService', () => {
       role: 'USER',
       active: true,
       user: { name: 'U', email: 'u@x.com' },
+      storeAccess: [],
     });
 
     const result = await service.updateMember('member-1', { role: 'USER' });
 
     expect(result.role).toBe('USER');
+  });
+
+  it('replaces the member stores inside the tenant and refreshes their realtime rooms', async () => {
+    const { service, prisma, storeAccess } = createService();
+    prisma.tenantUser.findFirst.mockResolvedValue({ id: 'member-2', role: 'USER', active: true });
+    prisma.store.count.mockResolvedValue(2);
+    prisma.tenantUser.update.mockResolvedValue({
+      id: 'member-2', userId: 'user-2', role: 'USER', active: true,
+      user: { name: 'U', email: 'u@x.com' },
+      storeAccess: [{ storeId: 'store-1' }, { storeId: 'store-2' }],
+    });
+
+    const result = await service.updateMember('member-2', { storeIds: ['store-1', 'store-2'] });
+
+    expect(prisma.store.count).toHaveBeenCalledWith({ where: { tenantId: context.tenantId, id: { in: ['store-1', 'store-2'] } } });
+    expect(prisma.tenantUserStore.deleteMany).toHaveBeenCalledWith({ where: { tenantId: context.tenantId, tenantUserId: 'member-2' } });
+    expect(prisma.tenantUserStore.createMany).toHaveBeenCalledWith({ data: [
+      { tenantId: context.tenantId, tenantUserId: 'member-2', storeId: 'store-1' },
+      { tenantId: context.tenantId, tenantUserId: 'member-2', storeId: 'store-2' },
+    ] });
+    expect(storeAccess.refreshRealtimeRooms).toHaveBeenCalledWith(context.tenantId, 'member-2', 'user-2', 'USER');
+    expect(result.storeIds).toEqual(['store-1', 'store-2']);
+  });
+
+  it('rejects stores that belong to another tenant', async () => {
+    const { service, prisma } = createService();
+    prisma.tenantUser.findFirst.mockResolvedValue({ id: 'member-2', role: 'USER', active: true });
+    prisma.store.count.mockResolvedValue(1);
+
+    await expect(service.updateMember('member-2', { storeIds: ['store-1', 'foreign-store'] }))
+      .rejects.toBeInstanceOf(MemberStoreNotFoundError);
+    expect(prisma.tenantUserStore.deleteMany).not.toHaveBeenCalled();
   });
 
   it('blocks removing the last active owner', async () => {

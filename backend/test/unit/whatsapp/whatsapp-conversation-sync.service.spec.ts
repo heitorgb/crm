@@ -18,7 +18,11 @@ interface Harness {
     };
     $transaction: ReturnType<typeof vi.fn>;
   };
-  realtime: { emitToTenant: ReturnType<typeof vi.fn> };
+  realtime: {
+    emitToTenant: ReturnType<typeof vi.fn>;
+    emitConversationEvent: ReturnType<typeof vi.fn>;
+    emitToConversationAudience: ReturnType<typeof vi.fn>;
+  };
 }
 
 const instance = { id: 'instance-1', tenantId: 'tenant-1', instanceName: 'inst-1' };
@@ -39,7 +43,11 @@ function createHarness(): Harness {
     },
     $transaction: vi.fn((operations: Promise<unknown>[]) => Promise.all(operations)),
   };
-  const realtime = { emitToTenant: vi.fn() };
+  const realtime = {
+    emitToTenant: vi.fn(),
+    emitConversationEvent: vi.fn(),
+    emitToConversationAudience: vi.fn().mockResolvedValue(undefined),
+  };
   const service = new WhatsAppConversationSyncService(
     prisma as unknown as PrismaService,
     realtime as unknown as RealtimeService,
@@ -67,7 +75,7 @@ describe('WhatsAppConversationSyncService chat metadata', () => {
       where: { id: 'conversation-1' },
       data: { groupName: 'Grupo novo' },
     });
-    expect(realtime.emitToTenant).toHaveBeenCalledWith('tenant-1', 'conversation.updated', {
+    expect(realtime.emitConversationEvent).toHaveBeenCalledWith('tenant-1', 'instance-1', 'conversation.updated', {
       conversationId: 'conversation-1',
     });
   });
@@ -79,7 +87,7 @@ describe('WhatsAppConversationSyncService chat metadata', () => {
 
     expect(changed).toBe(false);
     expect(prisma.conversation.create).not.toHaveBeenCalled();
-    expect(realtime.emitToTenant).not.toHaveBeenCalled();
+    expect(realtime.emitConversationEvent).not.toHaveBeenCalled();
   });
 
   it('does not use an individual chat push name to overwrite the CRM contact name', async () => {
@@ -116,7 +124,7 @@ describe('WhatsAppConversationSyncService chat metadata', () => {
     });
 
     expect(changed).toBe(false);
-    expect(realtime.emitToTenant).not.toHaveBeenCalled();
+    expect(realtime.emitConversationEvent).not.toHaveBeenCalled();
   });
 });
 
@@ -168,7 +176,7 @@ describe('WhatsAppConversationSyncService groups', () => {
         active: true,
       }),
     });
-    expect(realtime.emitToTenant).toHaveBeenCalledWith('tenant-1', 'conversation.updated', {
+    expect(realtime.emitConversationEvent).toHaveBeenCalledWith('tenant-1', 'instance-1', 'conversation.updated', {
       conversationId: 'conversation-1',
     });
   });
@@ -272,7 +280,7 @@ describe('WhatsAppConversationSyncService group participants', () => {
         avatarUrl: 'https://cdn/b.jpg',
       }),
     });
-    expect(realtime.emitToTenant).toHaveBeenCalledWith('tenant-1', 'conversation.updated', {
+    expect(realtime.emitConversationEvent).toHaveBeenCalledWith('tenant-1', 'instance-1', 'conversation.updated', {
       conversationId: 'conversation-1',
     });
   });
@@ -300,7 +308,7 @@ describe('WhatsAppConversationSyncService group participants', () => {
 
     expect(changed).toBe(false);
     expect(prisma.$transaction).not.toHaveBeenCalled();
-    expect(realtime.emitToTenant).not.toHaveBeenCalled();
+    expect(realtime.emitConversationEvent).not.toHaveBeenCalled();
   });
 
   it('marks a removed participant as inactive and preserves the row', async () => {
@@ -367,6 +375,6 @@ describe('WhatsAppConversationSyncService group participants', () => {
 
     expect(changed).toBe(false);
     expect(prisma.conversationParticipant.findMany).not.toHaveBeenCalled();
-    expect(realtime.emitToTenant).not.toHaveBeenCalled();
+    expect(realtime.emitConversationEvent).not.toHaveBeenCalled();
   });
 });

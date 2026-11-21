@@ -322,10 +322,26 @@ model TenantUser {
   ownedFollowUps          LeadFollowUp[]       @relation("FollowUpOwner")
   createdFollowUps        LeadFollowUp[]       @relation("FollowUpCreatedBy")
   pushDevices             PushDevice[]
+  storeAccess             TenantUserStore[]
 
+  @@unique([tenantId, id])
   @@unique([tenantId, userId])
   @@index([userId])
   @@map("tenant_users")
+}
+
+model TenantUserStore {
+  tenantId     String   @map("tenant_id") @db.Uuid
+  tenantUserId String   @map("tenant_user_id") @db.Uuid
+  storeId      String   @map("store_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  tenantUser TenantUser @relation(fields: [tenantId, tenantUserId], references: [tenantId, id], onDelete: Cascade)
+  store      Store      @relation(fields: [tenantId, storeId], references: [tenantId, id], onDelete: Cascade)
+
+  @@id([tenantUserId, storeId])
+  @@index([tenantId, storeId])
+  @@map("tenant_user_stores")
 }
 
 model RefreshToken {
@@ -455,6 +471,7 @@ model Store {
   tenant   Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   instance WhatsAppInstance?    @relation(fields: [whatsappInstanceId], references: [id], onDelete: SetNull)
   orders   StoreOrder[]
+  members  TenantUserStore[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, externalCode])

@@ -57,6 +57,7 @@ export class WhatsAppDirectoryService implements OnModuleInit {
         select: {
           id: true,
           tenantId: true,
+          whatsappInstanceId: true,
           externalContactId: true,
           instance: { select: { instanceName: true } },
         },
@@ -78,7 +79,7 @@ export class WhatsAppDirectoryService implements OnModuleInit {
         if (info?.avatarUrl) data.avatarUrl = info.avatarUrl;
 
         await this.prisma.conversation.update({ where: { id: conversation.id }, data });
-        this.realtime.emitToTenant(conversation.tenantId, 'conversation.updated', {
+        this.realtime.emitConversationEvent(conversation.tenantId, conversation.whatsappInstanceId, 'conversation.updated', {
           conversationId: conversation.id,
         });
       }

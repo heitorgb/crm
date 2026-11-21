@@ -130,3 +130,11 @@ export class EditConversationMessageDto {
   @MaxLength(4000)
   content!: string;
 }
+
+export class SearchConversationMessagesQueryDto {
+  @Transform(({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value))
+  @IsString()
+  @MinLength(2)
+  @MaxLength(120)
+  q!: string;
+}

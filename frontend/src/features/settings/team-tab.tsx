@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Plus, Trash2, Users } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { Plus, Store, Trash2, Users } from 'lucide-react';
 import { ConfirmDialog } from '@/components/common/confirm-dialog';
 import { EmptyState } from '@/components/common/empty-state';
 import { StatusBadge } from '@/components/common/status-badge';
@@ -16,10 +17,11 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { ApiError } from '@/lib/api-client';
+import { ApiError, apiRequest } from '@/lib/api-client';
 import type { Role } from '@/types/auth';
 import type { Member } from '@/types/settings';
 import { MemberForm } from './member-form';
+import { MemberStoresDialog, type MemberStoreOption } from './member-stores-dialog';
 import { useMembers, useRemoveMember, useUpdateMember } from './queries';
 
 const roleLabel: Record<Role, string> = {
@@ -28,17 +30,61 @@ const roleLabel: Record<Role, string> = {
   USER: 'Usuário',
 };
 
+function memberStoresLabel(member: Member, stores: MemberStoreOption[]): string {
+  if (member.storeIds.length === 0) return 'Todas as lojas';
+  if (member.storeIds.length === 1) {
+    return stores.find((store) => store.id === member.storeIds[0])?.name ?? '1 loja';
+  }
+  return `${member.storeIds.length} lojas`;
+}
+
 export function TeamTab({ canManage }: { canManage: boolean }) {
   const query = useMembers();
   const updateMember = useUpdateMember();
   const removeMember = useRemoveMember();
   const [formOpen, setFormOpen] = useState(false);
   const [pendingRemove, setPendingRemove] = useState<Member | null>(null);
+  const [editingStores, setEditingStores] = useState<Member | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const storesQuery = useQuery({
+    queryKey: ['store-orders', 'manage-stores'],
+    queryFn: () => apiRequest<MemberStoreOption[]>('/store-orders/stores/manage'),
+    enabled: canManage,
+    retry: false,
+  });
+  const stores = storesQuery.data ?? [];
+  const showStores = canManage && stores.length > 0;
 
   const handleError = (caught: unknown, fallback: string): void => {
     setError(caught instanceof ApiError ? caught.message : fallback);
   };
+
+  const handleStoresSave = async (member: Member, storeIds: string[]): Promise<void> => {
+    setError(null);
+    try {
+      await updateMember.mutateAsync({ id: member.id, input: { storeIds } });
+      setEditingStores(null);
+    } catch (caught) {
+      handleError(caught, 'Não foi possível alterar as lojas do usuário.');
+    }
+  };
+
+  const storesButton = (member: Member, className: string) =>
+    member.role === 'USER' ? (
+      <Button
+        variant="outline"
+        size="sm"
+        className={className}
+        onClick={() => setEditingStores(member)}
+        disabled={updateMember.isPending}
+        aria-label={`Lojas de ${member.name}`}
+      >
+        <Store />
+        {memberStoresLabel(member, stores)}
+      </Button>
+    ) : (
+      <span className="text-xs text-muted-foreground">Todas as lojas</span>
+    );
 
   const handleRoleChange = async (member: Member, role: Role): Promise<void> => {
     setError(null);
@@ -144,6 +190,8 @@ export function TeamTab({ canManage }: { canManage: boolean }) {
                       <StatusBadge tone="secondary">{roleLabel[member.role]}</StatusBadge>
                     )}
 
+                    {showStores ? storesButton(member, 'w-full justify-start') : null}
+
                     <div className="flex items-center justify-between gap-2">
                       <div className="flex items-center gap-2">
                         {canManage ? (
@@ -188,6 +236,7 @@ export function TeamTab({ canManage }: { canManage: boolean }) {
                   <TableRow>
                     <TableHead>Usuário</TableHead>
                     <TableHead>Papel</TableHead>
+                    {showStores ? <TableHead>Lojas</TableHead> : null}
                     <TableHead className="hidden sm:table-cell">Ativo</TableHead>
                     {canManage ? <TableHead className="text-right">Ações</TableHead> : null}
                   </TableRow>
@@ -233,6 +282,7 @@ export function TeamTab({ canManage }: { canManage: boolean }) {
                           <StatusBadge tone="secondary">{roleLabel[member.role]}</StatusBadge>
                         )}
                       </TableCell>
+                      {showStores ? <TableCell>{storesButton(member, 'h-8')}</TableCell> : null}
                       <TableCell className="hidden sm:table-cell">
                         {canManage ? (
                           <Switch
@@ -271,6 +321,16 @@ export function TeamTab({ canManage }: { canManage: boolean }) {
       </CardContent>
 
       {canManage ? <MemberForm open={formOpen} onOpenChange={setFormOpen} /> : null}
+
+      {editingStores ? (
+        <MemberStoresDialog
+          member={editingStores}
+          stores={stores}
+          saving={updateMember.isPending}
+          onCancel={() => setEditingStores(null)}
+          onSave={(storeIds) => void handleStoresSave(editingStores, storeIds)}
+        />
+      ) : null}
 
       <ConfirmDialog
         open={Boolean(pendingRemove)}

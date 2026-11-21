@@ -468,7 +468,7 @@ export class ContactsService {
       conversationIds,
     });
     for (const conversationId of conversationIds) {
-      this.realtime.emitToTenant(tenantId, 'conversation.updated', {
+      await this.realtime.emitToConversationAudience(tenantId, conversationId, 'conversation.updated', {
         conversationId,
       });
     }

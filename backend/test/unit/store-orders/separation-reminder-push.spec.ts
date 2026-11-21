@@ -2,7 +2,7 @@ import { buildSeparationReminderPush } from '../../../src/modules/store-orders/s
 
 describe('buildSeparationReminderPush', () => {
   it('describes a single overdue order with customer, store and waiting time', () => {
-    const push = buildSeparationReminderPush([{ customer: 'Ana', store: 'JP Peças', waitingMinutes: 42 }]);
+    const push = buildSeparationReminderPush([{ storeId: 'store-1', customer: 'Ana', store: 'JP Peças', waitingMinutes: 42 }]);
 
     expect(push).toEqual({
       title: 'Pedido aguardando separação',
@@ -14,8 +14,8 @@ describe('buildSeparationReminderPush', () => {
 
   it('groups several overdue orders into one notification', () => {
     const push = buildSeparationReminderPush([
-      { customer: 'Ana', store: 'JP Peças', waitingMinutes: 42 },
-      { customer: 'Bruno', store: 'Loja 2', waitingMinutes: 31 },
+      { storeId: 'store-1', customer: 'Ana', store: 'JP Peças', waitingMinutes: 42 },
+      { storeId: 'store-2', customer: 'Bruno', store: 'Loja 2', waitingMinutes: 31 },
     ]);
 
     expect(push.title).toBe('2 pedidos aguardando separação');

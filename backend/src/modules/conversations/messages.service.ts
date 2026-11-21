@@ -47,6 +47,17 @@ export interface MessageView {
   reactions: MessageReactionView[];
 }
 
+export interface MessageSearchResultView {
+  id: string;
+  direction: MessageDirection;
+  type: MessageType;
+  text: string;
+  senderName: string | null;
+  occurredAt: Date;
+}
+
+const MESSAGE_SEARCH_LIMIT = 50;
+
 export interface PersistInboundInput {
   tenantId: string;
   conversationId: string;
@@ -180,6 +191,44 @@ export class MessagesService {
     await this.requireConversation(tenantId, conversationId);
 
     return this.listByConversationId(tenantId, conversationId, page, perPage, userId);
+  }
+
+  async searchInConversation(conversationId: string, term: string): Promise<MessageSearchResultView[]> {
+    const { tenantId, userId } = this.tenantContext.requireContext();
+    await this.requireConversation(tenantId, conversationId);
+
+    const messages = await this.prisma.message.findMany({
+      where: {
+        tenantId,
+        conversationId,
+        hiddenForUsers: { none: { userId } },
+        NOT: { metadata: { path: ['deletedForEveryone'], equals: true } },
+        OR: [
+          { content: { contains: term, mode: 'insensitive' } },
+          { transcription: { text: { contains: term, mode: 'insensitive' } } },
+        ],
+      },
+      orderBy: { occurredAt: 'desc' },
+      take: MESSAGE_SEARCH_LIMIT,
+      select: {
+        id: true,
+        direction: true,
+        type: true,
+        content: true,
+        senderName: true,
+        occurredAt: true,
+        transcription: { select: { text: true } },
+      },
+    });
+
+    return messages.map((message) => ({
+      id: message.id,
+      direction: message.direction,
+      type: message.type,
+      text: message.content ?? message.transcription?.text ?? '',
+      senderName: message.senderName,
+      occurredAt: message.occurredAt,
+    }));
   }
 
   /** System variant used by the webhook/processing where no tenant context exists. */

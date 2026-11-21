@@ -24,6 +24,12 @@ export class MemberPasswordRequiredError extends AppException {
   }
 }
 
+export class MemberStoreNotFoundError extends AppException {
+  constructor() {
+    super('MEMBER_STORE_NOT_FOUND', 'Uma das lojas selecionadas não existe nesta organização.', 400);
+  }
+}
+
 export class LastOwnerRequiredError extends AppException {
   constructor() {
     super('LAST_OWNER_REQUIRED', 'A tenant must keep at least one active owner', 409);

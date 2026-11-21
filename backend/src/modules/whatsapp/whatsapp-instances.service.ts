@@ -16,6 +16,7 @@ import type { Env } from '../../config/env.validation.js';
 import { EncryptionService } from '../../infrastructure/crypto/encryption.service.js';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service.js';
 import { RealtimeService } from '../../infrastructure/realtime/realtime.service.js';
+import { StoreAccessService } from '../store-access/store-access.service.js';
 import {
   EvolutionClient,
   EvolutionRequestError,
@@ -267,6 +268,7 @@ export class WhatsAppInstancesService implements OnModuleInit {
     private readonly contactSync: WhatsAppContactSyncService,
     private readonly realtime: RealtimeService,
     private readonly config: ConfigService<Env, true>,
+    private readonly storeAccess: StoreAccessService,
   ) {}
 
   onModuleInit(): void {
@@ -339,7 +341,11 @@ export class WhatsAppInstancesService implements OnModuleInit {
 
   async list(query: ListWhatsAppInstancesQueryDto): Promise<PageResult<WhatsAppInstanceView>> {
     const { tenantId } = this.tenantContext.requireContext();
-    const where: Prisma.WhatsAppInstanceWhereInput = { tenantId };
+    const scope = await this.storeAccess.current();
+    const where: Prisma.WhatsAppInstanceWhereInput = {
+      tenantId,
+      AND: [this.storeAccess.instanceFilter(scope)],
+    };
 
     if (query.status) where.status = query.status;
     if (query.active !== undefined) where.active = query.active;
@@ -383,7 +389,10 @@ export class WhatsAppInstancesService implements OnModuleInit {
 
   async findOne(id: string): Promise<WhatsAppInstanceView> {
     const { tenantId } = this.tenantContext.requireContext();
-    const instance = await this.prisma.whatsAppInstance.findFirst({ where: { id, tenantId } });
+    const scope = await this.storeAccess.current();
+    const instance = await this.prisma.whatsAppInstance.findFirst({
+      where: { id, tenantId, AND: [this.storeAccess.instanceFilter(scope)] },
+    });
 
     if (!instance) {
       throw new WhatsAppInstanceNotFoundError();

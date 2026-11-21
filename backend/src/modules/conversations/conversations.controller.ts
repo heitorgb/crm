@@ -11,6 +11,7 @@ import {
   Query,
   Req,
   Res,
+  UseGuards,
 } from '@nestjs/common';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { AppException } from '../../common/errors/app.exception.js';
@@ -22,12 +23,14 @@ import {
 import { ConversationsService } from './conversations.service.js';
 import { MessagesService } from './messages.service.js';
 import { RequireModule } from '../modules/require-module.decorator.js';
+import { ConversationAccessGuard } from '../store-access/conversation-access.guard.js';
 import { MODULE_KEYS } from '../modules/modules.constants.js';
 import {
   CreateConversationDto,
   EditConversationMessageDto,
   ForwardConversationMessageDto,
   ListConversationsQueryDto,
+  SearchConversationMessagesQueryDto,
   SendConversationMessageDto,
   StartConversationDto,
   UpdateConversationDto,
@@ -35,6 +38,7 @@ import {
 
 @Controller('conversations')
 @RequireModule(MODULE_KEYS.ATTENDANCE)
+@UseGuards(ConversationAccessGuard)
 export class ConversationsController {
   constructor(
     private readonly conversations: ConversationsService,
@@ -133,6 +137,14 @@ export class ConversationsController {
       query.page ?? DEFAULT_PAGE,
       query.perPage ?? DEFAULT_PER_PAGE,
     );
+  }
+
+  @Get(':id/messages/search')
+  searchMessages(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query() query: SearchConversationMessagesQueryDto,
+  ) {
+    return this.messages.searchInConversation(id, query.q);
   }
 
   @Get(':id/participant-avatar')

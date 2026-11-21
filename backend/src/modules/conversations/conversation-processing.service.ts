@@ -350,12 +350,12 @@ export class ConversationProcessingService implements OnModuleInit {
       messageId: message.id,
       direction: 'OUTBOUND',
     });
-    this.realtime.emitToTenant(input.tenantId, 'message.created', {
+    this.realtime.emitConversationEvent(input.tenantId, input.whatsappInstanceId, 'message.created', {
       conversationId: conversation.id,
       messageId: message.id,
       direction: 'OUTBOUND',
     });
-    this.realtime.emitToTenant(input.tenantId, 'conversation.updated', {
+    this.realtime.emitConversationEvent(input.tenantId, input.whatsappInstanceId, 'conversation.updated', {
       conversationId: conversation.id,
     });
 
@@ -472,12 +472,12 @@ export class ConversationProcessingService implements OnModuleInit {
       messageId,
       direction: 'OUTBOUND',
     });
-    this.realtime.emitToTenant(input.tenantId, 'message.created', {
+    this.realtime.emitConversationEvent(input.tenantId, input.whatsappInstanceId, 'message.created', {
       conversationId,
       messageId,
       direction: 'OUTBOUND',
     });
-    this.realtime.emitToTenant(input.tenantId, 'conversation.updated', {
+    this.realtime.emitConversationEvent(input.tenantId, input.whatsappInstanceId, 'conversation.updated', {
       conversationId,
     });
 
@@ -570,7 +570,7 @@ export class ConversationProcessingService implements OnModuleInit {
       );
 
       await this.touchConversation(conversation.id);
-      this.emitMessageEvents(input.tenantId, conversation.id, outbound.id);
+      this.emitMessageEvents(input.tenantId, conversation, outbound.id);
 
       return {
         messageId: outbound.id,
@@ -583,7 +583,7 @@ export class ConversationProcessingService implements OnModuleInit {
       await this.messages.markOutboundFailed(outbound.id, failure.code);
 
       await this.touchConversation(conversation.id);
-      this.emitMessageEvents(input.tenantId, conversation.id, outbound.id);
+      this.emitMessageEvents(input.tenantId, conversation, outbound.id);
 
       return {
         messageId: outbound.id,
@@ -664,7 +664,7 @@ export class ConversationProcessingService implements OnModuleInit {
       );
 
       await this.touchConversation(conversation.id);
-      this.emitMessageEvents(input.tenantId, conversation.id, outbound.id);
+      this.emitMessageEvents(input.tenantId, conversation, outbound.id);
 
       return {
         messageId: outbound.id,
@@ -677,7 +677,7 @@ export class ConversationProcessingService implements OnModuleInit {
       await this.messages.markOutboundFailed(outbound.id, failure.code);
 
       await this.touchConversation(conversation.id);
-      this.emitMessageEvents(input.tenantId, conversation.id, outbound.id);
+      this.emitMessageEvents(input.tenantId, conversation, outbound.id);
 
       return {
         messageId: outbound.id,
@@ -689,18 +689,23 @@ export class ConversationProcessingService implements OnModuleInit {
     }
   }
 
-  private emitMessageEvents(tenantId: string, conversationId: string, messageId: string): void {
+  private emitMessageEvents(
+    tenantId: string,
+    conversation: { id: string; whatsappInstanceId: string },
+    messageId: string,
+  ): void {
+    const conversationId = conversation.id;
     this.realtime.emitToConversation(tenantId, conversationId, 'message.created', {
       conversationId,
       messageId,
       direction: 'OUTBOUND',
     });
-    this.realtime.emitToTenant(tenantId, 'message.created', {
+    this.realtime.emitConversationEvent(tenantId, conversation.whatsappInstanceId, 'message.created', {
       conversationId,
       messageId,
       direction: 'OUTBOUND',
     });
-    this.realtime.emitToTenant(tenantId, 'conversation.updated', { conversationId });
+    this.realtime.emitConversationEvent(tenantId, conversation.whatsappInstanceId, 'conversation.updated', { conversationId });
   }
 
   /** Edits a message already delivered to WhatsApp, in place. */
@@ -755,7 +760,7 @@ export class ConversationProcessingService implements OnModuleInit {
       conversationId: conversation.id,
       messageId: updated.messageId,
     });
-    this.realtime.emitToTenant(tenantId, 'conversation.updated', {
+    this.realtime.emitConversationEvent(tenantId, conversation.whatsappInstanceId, 'conversation.updated', {
       conversationId: conversation.id,
     });
   }
@@ -831,7 +836,7 @@ export class ConversationProcessingService implements OnModuleInit {
     if (!externalId || !remoteJid) {
       await this.markMediaError(
         tenantId,
-        conversation.id,
+        conversation,
         messageId,
         message.metadata,
         'missing_media_key',
@@ -854,7 +859,7 @@ export class ConversationProcessingService implements OnModuleInit {
       );
       await this.markMediaError(
         tenantId,
-        conversation.id,
+        conversation,
         messageId,
         message.metadata,
         'fetch_failed',
@@ -866,7 +871,7 @@ export class ConversationProcessingService implements OnModuleInit {
     if ((content.size ?? 0) > maxBytes) {
       await this.markMediaError(
         tenantId,
-        conversation.id,
+        conversation,
         messageId,
         message.metadata,
         'too_large',
@@ -876,7 +881,7 @@ export class ConversationProcessingService implements OnModuleInit {
     if (content.base64.length > maxBytes * 2) {
       await this.markMediaError(
         tenantId,
-        conversation.id,
+        conversation,
         messageId,
         message.metadata,
         'too_large',
@@ -886,13 +891,13 @@ export class ConversationProcessingService implements OnModuleInit {
 
     const buffer = decodeBase64(content.base64);
     if (!buffer || buffer.length === 0) {
-      await this.markMediaError(tenantId, conversation.id, messageId, message.metadata, 'empty');
+      await this.markMediaError(tenantId, conversation, messageId, message.metadata, 'empty');
       return 'empty';
     }
     if (buffer.length > maxBytes) {
       await this.markMediaError(
         tenantId,
-        conversation.id,
+        conversation,
         messageId,
         message.metadata,
         'too_large',
@@ -931,7 +936,7 @@ export class ConversationProcessingService implements OnModuleInit {
       });
     }
 
-    this.realtime.emitToTenant(tenantId, 'conversation.updated', {
+    this.realtime.emitConversationEvent(tenantId, conversation.whatsappInstanceId, 'conversation.updated', {
       conversationId: conversation.id,
       messageId,
     });
@@ -1211,7 +1216,7 @@ export class ConversationProcessingService implements OnModuleInit {
       messageId,
       direction: 'OUTBOUND',
     });
-    this.realtime.emitToTenant(tenantId, 'message.created', {
+    this.realtime.emitConversationEvent(tenantId, conversation.whatsappInstanceId, 'message.created', {
       conversationId: conversation.id,
       messageId,
       direction: 'OUTBOUND',
@@ -1293,7 +1298,7 @@ export class ConversationProcessingService implements OnModuleInit {
 
   private async markMediaError(
     tenantId: string,
-    conversationId: string,
+    conversation: { id: string; whatsappInstanceId: string },
     messageId: string,
     currentMetadata: Prisma.JsonValue,
     errorCode: string,
@@ -1303,8 +1308,8 @@ export class ConversationProcessingService implements OnModuleInit {
       where: { id: messageId },
       data: { metadata: { ...metadata, mediaError: errorCode } as Prisma.InputJsonValue },
     });
-    this.realtime.emitToTenant(tenantId, 'conversation.updated', {
-      conversationId,
+    this.realtime.emitConversationEvent(tenantId, conversation.whatsappInstanceId, 'conversation.updated', {
+      conversationId: conversation.id,
       messageId,
     });
   }

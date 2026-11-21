@@ -10,6 +10,7 @@ import { RealtimeService } from '../../infrastructure/realtime/realtime.service.
 import { JOB_NAMES, JOB_QUEUE, type JobQueue } from '../../infrastructure/queue/job-queue.types.js';
 import { MODULE_KEYS } from '../modules/modules.constants.js';
 import { ModulesService } from '../modules/modules.service.js';
+import { hasFullStoreAccess } from '../store-access/store-access.service.js';
 
 const SCAN_INTERVAL_MS = 60_000;
 const SYSTEM_USER_ID = '00000000-0000-4000-8000-000000000001';
@@ -18,6 +19,7 @@ const UNSEPARATED_STATUSES: StoreOrderStatus[] = ['PENDENTE_SEPARACAO', 'SEPARAN
 const REMINDER_BATCH_SIZE = 100;
 
 interface SeparationReminder {
+  storeId: string;
   customer: string;
   store: string;
   waitingMinutes: number;
@@ -113,6 +115,7 @@ export class StoreOrderDeliverySchedulerService implements OnModuleInit {
         if (marked.count === 0) continue;
         this.realtime.emitToTenant(tenantId, 'store-order.updated', { orderId: order.id });
         reminders.push({
+          storeId: store.id,
           customer: order.customerName?.trim()
             || (order.externalOrderId.startsWith('manual:') ? 'Pedido manual' : `Pedido #${order.externalOrderId}`),
           store: store.name,
@@ -127,12 +130,16 @@ export class StoreOrderDeliverySchedulerService implements OnModuleInit {
     if (!this.fcm.isConfigured()) return;
     const devices = await this.prisma.pushDevice.findMany({
       where: { tenantId, tenantUser: { tenantId, active: true, user: { active: true } } },
-      select: { id: true, token: true },
+      select: { id: true, token: true, tenantUser: { select: { role: true, storeAccess: { select: { storeId: true } } } } },
     });
-    if (devices.length === 0) return;
-    const push = buildSeparationReminderPush(reminders);
     const invalidDeviceIds: string[] = [];
     for (const device of devices) {
+      const linkedStoreIds = device.tenantUser.storeAccess.map((link) => link.storeId);
+      const visible = hasFullStoreAccess(device.tenantUser.role, linkedStoreIds.length)
+        ? reminders
+        : reminders.filter((reminder) => linkedStoreIds.includes(reminder.storeId));
+      if (visible.length === 0) continue;
+      const push = buildSeparationReminderPush(visible);
       if ((await this.fcm.send(device.token, push)) === 'invalid-token') invalidDeviceIds.push(device.id);
     }
     if (invalidDeviceIds.length > 0) {

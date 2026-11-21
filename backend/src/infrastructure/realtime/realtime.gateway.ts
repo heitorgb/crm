@@ -11,6 +11,7 @@ import {
 import type { Server, Socket } from 'socket.io';
 import type { Env } from '../../config/env.validation.js';
 import { MembershipsService } from '../../modules/memberships/memberships.service.js';
+import { StoreAccessService } from '../../modules/store-access/store-access.service.js';
 import { RealtimeService } from './realtime.service.js';
 
 interface SocketAuthPayload {
@@ -30,6 +31,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     private readonly jwt: JwtService,
     private readonly config: ConfigService<Env, true>,
     private readonly memberships: MembershipsService,
+    private readonly storeAccess: StoreAccessService,
   ) {}
 
   afterInit(server: Server): void {
@@ -49,8 +51,11 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
 
       const context = await this.memberships.resolveContext(payload.sub, payload.tenantId);
 
+      const scope = await this.storeAccess.forMembership(context.tenantId, context.membershipId, context.role);
+
       await socket.join(this.realtime.tenantRoom(context.tenantId));
       await socket.join(this.realtime.userRoom(context.tenantId, context.userId));
+      await socket.join(this.storeAccess.conversationRooms(context.tenantId, scope));
       if (context.role === 'OWNER' || context.role === 'ADMIN') {
         await socket.join(this.realtime.tenantAdminRoom(context.tenantId));
       }

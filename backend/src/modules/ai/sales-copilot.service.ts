@@ -12,6 +12,7 @@ import { PrismaService } from '../../infrastructure/prisma/prisma.service.js';
 import { ModuleDisabledError } from '../modules/modules.errors.js';
 import { MODULE_KEYS } from '../modules/modules.constants.js';
 import { ModulesService } from '../modules/modules.service.js';
+import { StoreAccessService } from '../store-access/store-access.service.js';
 import { LeadNotFoundError } from '../leads/leads.errors.js';
 import { ConversationNotFoundError } from '../conversations/conversations.errors.js';
 import { AiSalesConversationMismatchError, AiSalesRequestInProgressError } from './ai.errors.js';
@@ -113,6 +114,7 @@ export class SalesCopilotService {
     private readonly tenantContext: TenantContextService,
     private readonly execution: AiExecutionService,
     private readonly modules: ModulesService,
+    private readonly storeAccess: StoreAccessService,
   ) {}
 
   async analyze(dto: AnalyzeSalesOpportunityDto): Promise<SalesAnalysisView> {
@@ -543,6 +545,7 @@ export class SalesCopilotService {
     if (!conversation) {
       throw new ConversationNotFoundError();
     }
+    await this.storeAccess.assertConversations([conversation.id]);
     if (!conversation.contactId || conversation.contactId !== lead.contactId) {
       throw new AiSalesConversationMismatchError();
     }

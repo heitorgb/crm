@@ -12,7 +12,9 @@ import { formatDateOnly, formatDateTime } from '@/lib/format';
 import { useConversations } from '@/features/attendance/queries';
 import { StartConversationDialog } from '@/features/attendance/start-conversation-dialog';
 import type { ConversationStatus } from '@/types/attendance';
+import { useAuthStore } from '@/stores/auth-store';
 import { ContactForm } from './contact-form';
+import { ContactStoresRow } from './contact-stores-row';
 import { useContact } from './queries';
 
 const statusTone: Record<ConversationStatus, StatusTone> = {
@@ -31,6 +33,8 @@ export function ContactDetailPage() {
   const conversationsQuery = useConversations({ contactId: id, perPage: 50 });
   const [editOpen, setEditOpen] = useState(false);
   const [startOpen, setStartOpen] = useState(false);
+  const role = useAuthStore((state) => state.session?.role);
+  const canManage = role === 'OWNER' || role === 'ADMIN';
 
   if (query.isPending) {
     return <PageLoader label="Carregando contato…" />;
@@ -144,6 +148,7 @@ export function ContactDetailPage() {
               <span className="text-muted-foreground">Criado em</span>
               <span>{formatDateTime(contact.createdAt)}</span>
             </div>
+            <ContactStoresRow contact={contact} canManage={canManage} />
           </CardContent>
         </Card>
 

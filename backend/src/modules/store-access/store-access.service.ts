@@ -66,6 +66,33 @@ export class StoreAccessService {
     return scope.restricted ? { id: { in: scope.instanceIds } } : {};
   }
 
+  /**
+   * A contact belongs to a store when it was linked to it explicitly, has an
+   * order there, or talks through the store's WhatsApp instance.
+   */
+  contactFilter(scope: StoreAccessScope): Prisma.ContactWhereInput {
+    return scope.restricted
+      ? {
+          OR: [
+            { stores: { some: { storeId: { in: scope.storeIds } } } },
+            { storeOrders: { some: { storeId: { in: scope.storeIds } } } },
+            { conversations: { some: { whatsappInstanceId: { in: scope.instanceIds } } } },
+          ],
+        }
+      : {};
+  }
+
+  /** Links a contact a store-restricted member created or resolved to that member's stores. */
+  async linkContactToCurrentStores(contactId: string): Promise<void> {
+    const scope = await this.current();
+    if (!scope.restricted) return;
+    const { tenantId } = this.tenantContext.requireContext();
+    await this.prisma.contactStore.createMany({
+      data: scope.storeIds.map((storeId) => ({ tenantId, contactId, storeId })),
+      skipDuplicates: true,
+    });
+  }
+
   /** Members who may see conversations of the instance, for queries such as push device lookup. */
   membersReachingInstance(instanceId: string): Prisma.TenantUserWhereInput {
     return {

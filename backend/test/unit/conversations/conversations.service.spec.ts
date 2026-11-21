@@ -114,6 +114,7 @@ function createService(): {
     {
       current: vi.fn().mockResolvedValue({ restricted: false }),
       conversationFilter: () => ({}),
+      contactFilter: () => ({}),
       canAccessInstance: () => true,
       assertConversations: vi.fn().mockResolvedValue(undefined),
     } as never,

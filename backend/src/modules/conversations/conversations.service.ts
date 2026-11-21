@@ -213,9 +213,10 @@ export class ConversationsService {
    */
   async startFromContact(dto: StartConversationDto): Promise<ConversationView> {
     const { tenantId } = this.tenantContext.requireContext();
+    const scope = await this.storeAccess.current();
 
     const contact = await this.prisma.contact.findFirst({
-      where: { id: dto.contactId, tenantId },
+      where: { id: dto.contactId, tenantId, AND: [this.storeAccess.contactFilter(scope)] },
       select: { id: true, phone: true },
     });
     if (!contact) {
@@ -229,7 +230,7 @@ export class ConversationsService {
       where: { id: dto.whatsappInstanceId, tenantId },
       select: { id: true },
     });
-    if (!instance || !this.storeAccess.canAccessInstance(await this.storeAccess.current(), instance.id)) {
+    if (!instance || !this.storeAccess.canAccessInstance(scope, instance.id)) {
       throw new WhatsAppInstanceNotFoundError();
     }
 

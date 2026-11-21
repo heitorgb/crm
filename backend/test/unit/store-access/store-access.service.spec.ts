@@ -57,6 +57,14 @@ describe('StoreAccessService', () => {
     expect(service.conversationFilter(scope)).toEqual({ whatsappInstanceId: { in: ['instance-1'] } });
     expect(service.storeOrderFilter(scope)).toEqual({ storeId: { in: ['store-1', 'store-2', 'store-3'] } });
     expect(service.canAccessInstance(scope, 'instance-2')).toBe(false);
+    expect(service.contactFilter(scope)).toEqual({
+      OR: [
+        { stores: { some: { storeId: { in: ['store-1', 'store-2', 'store-3'] } } } },
+        { storeOrders: { some: { storeId: { in: ['store-1', 'store-2', 'store-3'] } } } },
+        { conversations: { some: { whatsappInstanceId: { in: ['instance-1'] } } } },
+      ],
+    });
+    expect(service.contactFilter({ restricted: false })).toEqual({});
   });
 
   it('answers not found for conversations outside the member stores', async () => {

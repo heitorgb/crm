@@ -121,7 +121,11 @@ Um membro `USER` pode ser vinculado a uma ou mais lojas (`tenant_user_stores`, g
   `emitToTenant`.**
 - **Push:** mensagens recebidas e lembretes de separação só vão para aparelhos de membros com acesso
   à instância/loja.
-- Contatos continuam compartilhados no tenant.
+- **Contatos:** o membro vinculado vê o contato quando ele tem conversa no WhatsApp de uma das suas
+  lojas, pedido numa delas ou vínculo explícito (`contact_stores`). O vínculo explícito nasce quando
+  esse membro cria ou resolve o contato, e o admin pode ajustá-lo no detalhe do contato
+  (`PATCH /api/contacts/:id/stores`). Pedido manual, vínculo de contato ao pedido e início de
+  conversa usam o mesmo filtro. Leads, cobranças e clientes ainda não filtram contatos por loja.
 
 ## RLS — decisões para a implementação futura
 

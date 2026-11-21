@@ -10,11 +10,13 @@ import { TenantContextService } from '../../common/tenant-context/tenant-context
 import { isGroupJid, phoneFromJid } from '../../common/whatsapp/jid.js';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service.js';
 import { RealtimeService } from '../../infrastructure/realtime/realtime.service.js';
+import { StoreAccessService } from '../store-access/store-access.service.js';
 import {
   ContactCustomerNotFoundError,
   ContactInvalidBirthDateError,
   ContactNotFoundError,
   ContactPhoneConflictError,
+  ContactStoreNotFoundError,
 } from './contacts.errors.js';
 import type {
   CreateContactDto,
@@ -36,6 +38,7 @@ export interface ContactView {
   avatarUrl: string | null;
   isPrimary: boolean;
   isBlocked: boolean;
+  storeIds: string[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -92,6 +95,7 @@ const INCOMPLETE_CONTACT_CONDITIONS: Prisma.ContactWhereInput[] = [
 
 const CONTACT_INCLUDE = {
   customer: { select: { name: true } },
+  stores: { select: { storeId: true } },
 } satisfies Prisma.ContactInclude;
 
 type PrismaContact = Prisma.ContactGetPayload<{ include: typeof CONTACT_INCLUDE }>;
@@ -102,12 +106,14 @@ export class ContactsService {
     private readonly prisma: PrismaService,
     private readonly tenantContext: TenantContextService,
     private readonly realtime: RealtimeService,
+    private readonly storeAccess: StoreAccessService,
   ) {}
 
   async list(query: ListContactsQueryDto): Promise<ContactListResult> {
     const { tenantId } = this.tenantContext.requireContext();
     const summaryWhere = buildContactListWhere({
       tenantId,
+      access: this.storeAccess.contactFilter(await this.storeAccess.current()),
       customerId: query.customerId,
       search: query.search,
       extraFilter: query.extraFilter,
@@ -160,8 +166,9 @@ export class ContactsService {
 
   async findOne(id: string): Promise<ContactView> {
     const { tenantId } = this.tenantContext.requireContext();
+    const scope = await this.storeAccess.current();
     const contact = await this.prisma.contact.findFirst({
-      where: { id, tenantId },
+      where: { id, tenantId, AND: [this.storeAccess.contactFilter(scope)] },
       include: CONTACT_INCLUDE,
     });
 
@@ -172,14 +179,38 @@ export class ContactsService {
     return toContactView(contact);
   }
 
-  /** Idempotent lookup/creation by phone, used by shared-contact messages. */
+  /**
+   * Idempotent lookup/creation by phone, used by shared-contact messages. A
+   * store-restricted member who resolves a number gets it linked to their stores.
+   */
   async resolveByPhone(input: ResolveContactDto): Promise<ContactView> {
     const { tenantId } = this.tenantContext.requireContext();
-    return this.findOrCreateByPhone({
+    const contact = await this.findOrCreateByPhone({
       tenantId,
       phone: input.phone,
       name: input.name ?? null,
     });
+    await this.storeAccess.linkContactToCurrentStores(contact.id);
+    return this.findOne(contact.id);
+  }
+
+  async setStores(id: string, storeIds: string[]): Promise<ContactView> {
+    const { tenantId } = this.tenantContext.requireContext();
+    await this.requireContact(tenantId, id);
+    const unique = [...new Set(storeIds)];
+    if (unique.length > 0) {
+      const found = await this.prisma.store.count({ where: { tenantId, id: { in: unique } } });
+      if (found !== unique.length) {
+        throw new ContactStoreNotFoundError();
+      }
+    }
+    await this.prisma.$transaction([
+      this.prisma.contactStore.deleteMany({ where: { tenantId, contactId: id } }),
+      this.prisma.contactStore.createMany({
+        data: unique.map((storeId) => ({ tenantId, contactId: id, storeId })),
+      }),
+    ]);
+    return this.findOne(id);
   }
 
   async create(dto: CreateContactDto): Promise<ContactView> {
@@ -205,7 +236,11 @@ export class ContactsService {
         include: CONTACT_INCLUDE,
       });
 
-      return toContactView(contact);
+      if (!(await this.storeAccess.current()).restricted) {
+        return toContactView(contact);
+      }
+      await this.storeAccess.linkContactToCurrentStores(contact.id);
+      return this.findOne(contact.id);
     } catch (error) {
       throw mapPhoneConflict(error);
     }
@@ -488,8 +523,9 @@ export class ContactsService {
   }
 
   private async requireContact(tenantId: string, id: string): Promise<void> {
+    const scope = await this.storeAccess.current();
     const existing = await this.prisma.contact.findFirst({
-      where: { id, tenantId },
+      where: { id, tenantId, AND: [this.storeAccess.contactFilter(scope)] },
       select: { id: true },
     });
 
@@ -512,11 +548,12 @@ export class ContactsService {
 
 function buildContactListWhere(input: {
   tenantId: string;
+  access: Prisma.ContactWhereInput;
   customerId?: string;
   search?: string;
   extraFilter?: ListContactsQueryDto['extraFilter'];
 }): Prisma.ContactWhereInput {
-  const where: Prisma.ContactWhereInput = { tenantId: input.tenantId };
+  const where: Prisma.ContactWhereInput = { tenantId: input.tenantId, AND: [input.access] };
 
   if (input.customerId) {
     where.customerId = input.customerId;
@@ -583,6 +620,7 @@ function toContactView(contact: PrismaContact): ContactView {
     avatarUrl: contact.avatarUrl,
     isPrimary: contact.isPrimary,
     isBlocked: contact.isBlocked,
+    storeIds: contact.stores.map((link) => link.storeId),
     createdAt: contact.createdAt,
     updatedAt: contact.updatedAt,
   };

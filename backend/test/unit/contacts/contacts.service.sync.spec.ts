@@ -61,6 +61,7 @@ function createHarness(): Harness {
     prisma as unknown as PrismaService,
     {} as unknown as TenantContextService,
     realtime as unknown as RealtimeService,
+    {} as never,
   );
   return { service, prisma, realtime };
 }

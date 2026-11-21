@@ -1,5 +1,8 @@
 import { Transform } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  ArrayUnique,
+  IsArray,
   IsBoolean,
   IsEmail,
   IsIn,
@@ -139,6 +142,14 @@ export class ListContactsQueryDto extends PaginationQueryDto {
   @Transform(({ value }) => (value === 'true' ? true : value === 'false' ? false : value))
   @IsBoolean()
   includeSummary?: boolean;
+}
+
+export class SetContactStoresDto {
+  @IsArray()
+  @ArrayMaxSize(100)
+  @ArrayUnique()
+  @IsUUID('all', { each: true })
+  storeIds!: string[];
 }
 
 export class ResolveContactDto {

@@ -237,7 +237,7 @@ export class StoreOrdersService {
     const scope = await this.storeAccess.current();
     const [store, contact] = await Promise.all([
       this.prisma.store.findFirst({ where: { id: dto.storeId, tenantId, active: true, AND: [this.storeAccess.storeFilter(scope)] } }),
-      this.prisma.contact.findFirst({ where: { id: dto.contactId, tenantId } }),
+      this.prisma.contact.findFirst({ where: { id: dto.contactId, tenantId, AND: [this.storeAccess.contactFilter(scope)] } }),
     ]);
     if (!store || !contact) throw new AppException('ORDER_PARTY_NOT_FOUND', 'Loja ou contato não encontrado.', 404);
     const externalOrderId = `manual:${dto.requestId ?? randomUUID()}`;
@@ -325,7 +325,10 @@ export class StoreOrdersService {
     const scope = await this.storeAccess.current();
     const [order, contact] = await Promise.all([
       this.prisma.storeOrder.findFirst({ where: { id, tenantId, AND: [this.storeAccess.storeOrderFilter(scope)] }, select: { id: true } }),
-      this.prisma.contact.findFirst({ where: { id: contactId, tenantId }, select: { id: true, name: true } }),
+      this.prisma.contact.findFirst({
+        where: { id: contactId, tenantId, AND: [this.storeAccess.contactFilter(scope)] },
+        select: { id: true, name: true },
+      }),
     ]);
     if (!order) throw new AppException('ORDER_NOT_FOUND', 'Pedido não encontrado.', 404);
     if (!contact) throw new AppException('CONTACT_NOT_FOUND', 'Contato não encontrado.', 404);

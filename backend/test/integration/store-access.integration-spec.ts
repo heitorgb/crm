@@ -100,6 +100,46 @@ describe('Store-restricted member access (integration)', () => {
     expect(createWithForeignInstance.statusCode).toBe(404);
   });
 
+  it('shows a linked member only the contacts of their stores', async () => {
+    const mine = await seedStoreWithConversation(owner.tenantId, 'Loja A');
+    const theirs = await seedStoreWithConversation(owner.tenantId, 'Loja B');
+    const contact = (name: string) => prisma.contact.create({
+      data: { tenantId: owner.tenantId, name, phone: `5511${Math.floor(Math.random() * 1e9)}` },
+    });
+    const viaConversation = await contact('Conversa A');
+    await prisma.conversation.update({ where: { id: mine.conversation.id }, data: { contactId: viaConversation.id } });
+    const viaOrder = await contact('Pedido A');
+    await prisma.storeOrder.update({ where: { id: mine.order.id }, data: { contactId: viaOrder.id } });
+    const viaLink = await contact('Vinculado A');
+    const otherStore = await contact('Conversa B');
+    await prisma.conversation.update({ where: { id: theirs.conversation.id }, data: { contactId: otherStore.id } });
+    const unrelated = await contact('Sem loja');
+
+    await app.inject({ method: 'PATCH', url: `/api/members/${clerk.membershipId}`, headers: authHeaders(owner), payload: { storeIds: [mine.store.id] } });
+    expect((await app.inject({ method: 'PATCH', url: `/api/contacts/${viaLink.id}/stores`,
+      headers: authHeaders(owner), payload: { storeIds: [mine.store.id] } })).statusCode).toBe(200);
+
+    const listed = await app.inject({ method: 'GET', url: '/api/contacts?perPage=100', headers: authHeaders(clerk) });
+    expect(listed.json().data.map((item: { id: string }) => item.id).sort())
+      .toEqual([viaConversation.id, viaOrder.id, viaLink.id].sort());
+    expect((await app.inject({ method: 'GET', url: `/api/contacts/${otherStore.id}`, headers: authHeaders(clerk) })).statusCode).toBe(404);
+    expect((await app.inject({ method: 'PATCH', url: `/api/contacts/${unrelated.id}`,
+      headers: authHeaders(clerk), payload: { name: 'Novo nome' } })).statusCode).toBe(404);
+    expect((await app.inject({ method: 'POST', url: '/api/store-orders/manual', headers: authHeaders(clerk),
+      payload: { storeId: mine.store.id, contactId: otherStore.id, orderText: 'Pedido' } })).statusCode).toBe(404);
+
+    const created = await app.inject({ method: 'POST', url: '/api/contacts', headers: authHeaders(clerk),
+      payload: { name: 'Novo cliente', phone: '5511912345678' } });
+    expect(created.statusCode).toBe(201);
+    expect(created.json()).toMatchObject({ storeIds: [mine.store.id] });
+    expect((await app.inject({ method: 'GET', url: `/api/contacts/${created.json().id}`, headers: authHeaders(clerk) })).statusCode).toBe(200);
+
+    const ownerList = await app.inject({ method: 'GET', url: '/api/contacts?perPage=100', headers: authHeaders(owner) });
+    expect(ownerList.json().data).toHaveLength(6);
+    expect((await app.inject({ method: 'PATCH', url: `/api/contacts/${unrelated.id}/stores`,
+      headers: authHeaders(clerk), payload: { storeIds: [mine.store.id] } })).statusCode).toBe(403);
+  });
+
   it('only lets admins change member stores', async () => {
     const mine = await seedStoreWithConversation(owner.tenantId, 'Loja A');
     const response = await app.inject({ method: 'PATCH', url: `/api/members/${clerk.membershipId}`,

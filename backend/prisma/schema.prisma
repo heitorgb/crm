@@ -331,6 +331,20 @@ model TenantUser {
   @@map("tenant_users")
 }
 
+model ContactStore {
+  tenantId  String   @map("tenant_id") @db.Uuid
+  contactId String   @map("contact_id") @db.Uuid
+  storeId   String   @map("store_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+
+  contact Contact @relation(fields: [tenantId, contactId], references: [tenantId, id], onDelete: Cascade)
+  store   Store   @relation(fields: [tenantId, storeId], references: [tenantId, id], onDelete: Cascade)
+
+  @@id([contactId, storeId])
+  @@index([tenantId, storeId])
+  @@map("contact_stores")
+}
+
 model TenantUserStore {
   tenantId     String   @map("tenant_id") @db.Uuid
   tenantUserId String   @map("tenant_user_id") @db.Uuid
@@ -446,6 +460,7 @@ model Contact {
   billingRecurrences BillingRecurrence[]
   leads              Lead[]
   storeOrders        StoreOrder[]
+  stores             ContactStore[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, phone])
@@ -473,6 +488,7 @@ model Store {
   instance WhatsAppInstance?    @relation(fields: [whatsappInstanceId], references: [id], onDelete: SetNull)
   orders   StoreOrder[]
   members  TenantUserStore[]
+  contacts ContactStore[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, externalCode])

@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Prisma, StoreOrderStatus } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
@@ -13,7 +13,14 @@ import { ModuleDisabledError } from '../modules/modules.errors.js';
 import { ModulesService } from '../modules/modules.service.js';
 import { MODULE_KEYS } from '../modules/modules.constants.js';
 import { extractWebhookSecret, generateWebhookSecret, webhookSecretMatches } from '../integrations/webhooks/webhook-secret.js';
+import { ConversationProcessingService } from '../conversations/conversation-processing.service.js';
+import { ConversationsService } from '../conversations/conversations.service.js';
 import type { ApprovedOrderDto, CreateManualOrderDto, CreateStoreDto, UpdateStoreDto } from './store-orders.dto.js';
+
+const STATUS_MESSAGES: Partial<Record<StoreOrderStatus, string>> = {
+  SEPARADO: 'Seu pedido está separado e pronto para envio! 📦',
+  EM_ROTA: 'Seu pedido saiu para entrega! 🛵',
+};
 
 const STATUS_TRANSITIONS: Record<StoreOrderStatus, StoreOrderStatus[]> = {
   PENDENTE_SEPARACAO: ['SEPARANDO', 'OBSERVACAO'],
@@ -26,6 +33,8 @@ const STATUS_TRANSITIONS: Record<StoreOrderStatus, StoreOrderStatus[]> = {
 
 @Injectable()
 export class StoreOrdersService {
+  private readonly logger = new Logger(StoreOrdersService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly tenantContext: TenantContextService,
@@ -34,6 +43,8 @@ export class StoreOrdersService {
     private readonly media: MediaProcessingService,
     private readonly config: ConfigService<Env, true>,
     @Inject(STORAGE) private readonly storage: StorageService,
+    private readonly conversations: ConversationsService,
+    private readonly processing: ConversationProcessingService,
   ) {}
 
   async createStore(dto: CreateStoreDto) {
@@ -241,23 +252,23 @@ export class StoreOrdersService {
 
   async updateStatus(id: string, status: StoreOrderStatus) {
     const { tenantId, membershipId } = this.tenantContext.requireContext();
-    const order = await this.prisma.$transaction(async (tx) => {
-      const order = await tx.storeOrder.findFirst({ where: { id, tenantId }, include: { store: true } });
-      if (!order) throw new AppException('ORDER_NOT_FOUND', 'Pedido não encontrado.', 404);
-      if (!STATUS_TRANSITIONS[order.status].includes(status)) {
+    const { order, contactId, instanceId } = await this.prisma.$transaction(async (tx) => {
+      const found = await tx.storeOrder.findFirst({ where: { id, tenantId }, include: { store: true } });
+      if (!found) throw new AppException('ORDER_NOT_FOUND', 'Pedido não encontrado.', 404);
+      if (!STATUS_TRANSITIONS[found.status].includes(status)) {
         throw new AppException('ORDER_STATUS_INVALID', 'Mudança de status não permitida.', 409);
       }
       const now = new Date();
-      const enteringRoute = status === 'EM_ROTA' && order.status !== 'EM_ROTA';
+      const enteringRoute = status === 'EM_ROTA' && found.status !== 'EM_ROTA';
       const delivered = status === 'ENTREGUE';
       const updated = await tx.storeOrder.updateMany({
-        where: { id, tenantId, status: order.status },
+        where: { id, tenantId, status: found.status },
         data: {
           status,
           ...(enteringRoute ? {
             enteredRouteAt: now,
-            deliveryConfirmationMode: order.store.deliveryConfirmationMode,
-            deliveryDueAt: order.store.deliveryConfirmationMode === 'AUTOMATIC'
+            deliveryConfirmationMode: found.store.deliveryConfirmationMode,
+            deliveryDueAt: found.store.deliveryConfirmationMode === 'AUTOMATIC'
               ? new Date(now.getTime() + 2 * 60 * 60 * 1000) : null,
           } : {}),
           ...(delivered ? { deliveredAt: now, deliveryDueAt: null,
@@ -267,13 +278,28 @@ export class StoreOrdersService {
       });
       if (updated.count !== 1) throw new AppException('ORDER_STATUS_CONFLICT', 'O pedido foi alterado por outro usuário.', 409);
       await tx.storeOrderStatusChange.create({
-        data: { tenantId, orderId: id, previousStatus: order.status, status,
+        data: { tenantId, orderId: id, previousStatus: found.status, status,
           actorMembershipId: membershipId, origin: 'CRM_USER' },
       });
-      return tx.storeOrder.findUniqueOrThrow({ where: { id } });
+      return {
+        order: await tx.storeOrder.findUniqueOrThrow({ where: { id } }),
+        contactId: found.contactId,
+        instanceId: found.store.whatsappInstanceId,
+      };
     });
     this.realtime.emitToTenant(tenantId, 'store-order.updated', { orderId: id });
+    const message = STATUS_MESSAGES[status];
+    if (message && contactId && instanceId) {
+      void this.sendStatusMessage(tenantId, contactId, instanceId, message).catch((error: unknown) => {
+        this.logger.warn('store-order.status-message.failed', { orderId: id, status, error });
+      });
+    }
     return order;
+  }
+
+  private async sendStatusMessage(tenantId: string, contactId: string, instanceId: string, text: string) {
+    const conversation = await this.conversations.startFromContact({ contactId, whatsappInstanceId: instanceId });
+    await this.processing.deliverText(tenantId, conversation.id, text, { senderId: null, senderName: null, showAgentName: false });
   }
 
   async receiveApproved(storeId: string, authorization: string | undefined, dto: ApprovedOrderDto) {

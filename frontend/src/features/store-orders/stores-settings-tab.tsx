@@ -11,7 +11,14 @@ import { DeliveryCardsSettings } from './delivery-cards-settings';
 import { useWhatsAppInstances } from '@/features/whatsapp/queries';
 
 type Mode = 'AUTOMATIC' | 'MANUAL';
-type Store = { id: string; name: string; externalCode: string; deliveryConfirmationMode: Mode; whatsappInstanceId: string | null; active: boolean; logoUpdatedAt: string | null };
+type Store = { id: string; name: string; externalCode: string; deliveryConfirmationMode: Mode; whatsappInstanceId: string | null; separationReminderMinutes: number | null; active: boolean; logoUpdatedAt: string | null };
+
+function parseReminderMinutes(value: string): number | null | undefined {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const minutes = Number(trimmed);
+  return Number.isInteger(minutes) && minutes >= 5 && minutes <= 1440 ? minutes : undefined;
+}
 type CreatedStore = Store & { secret: string };
 
 export function StoresSettingsTab({ canManage }: { canManage: boolean }) {
@@ -116,6 +123,16 @@ export function StoresSettingsTab({ canManage }: { canManage: boolean }) {
             <div><p className="text-xs text-muted-foreground">ID para configurar na loja</p><code className="break-all text-xs">{store.id}</code></div>
             <div><Label htmlFor={`mode-${store.id}`}>Confirmação de entrega</Label><select id={`mode-${store.id}`} value={store.deliveryConfirmationMode} disabled={update.isPending} onChange={(event) => update.mutate({ id: store.id, data: { deliveryConfirmationMode: event.target.value as Mode } })} className="mt-1 h-9 w-full rounded-md border bg-background px-2 text-sm"><option value="AUTOMATIC">Automática após 2 horas</option><option value="MANUAL">Manual</option></select></div>
             <div><Label htmlFor={`instance-${store.id}`}>WhatsApp vinculado</Label><select id={`instance-${store.id}`} value={store.whatsappInstanceId ?? ''} disabled={update.isPending} onChange={(event) => update.mutate({ id: store.id, data: { whatsappInstanceId: event.target.value || null } })} className="mt-1 h-9 w-full rounded-md border bg-background px-2 text-sm"><option value="">Nenhuma</option>{instances.data?.data.map((inst) => <option key={inst.id} value={inst.id}>{inst.name}</option>)}</select></div>
+            <div>
+              <Label htmlFor={`reminder-${store.id}`}>Lembrete de separação (minutos)</Label>
+              <Input key={store.separationReminderMinutes ?? 'off'} id={`reminder-${store.id}`} type="number" inputMode="numeric" min={5} max={1440} step={1} placeholder="Desativado" defaultValue={store.separationReminderMinutes ?? ''} disabled={update.isPending} className="mt-1 h-9"
+                onBlur={(event) => {
+                  const minutes = parseReminderMinutes(event.target.value);
+                  if (minutes === undefined) { setError('Informe o lembrete em minutos inteiros, entre 5 e 1440, ou deixe vazio para desativar.'); return; }
+                  if (minutes !== store.separationReminderMinutes) update.mutate({ id: store.id, data: { separationReminderMinutes: minutes } });
+                }} />
+              <p className="mt-1 text-xs text-muted-foreground">Avisa a equipe quando um pedido passa desse tempo sem ser separado. Deixe vazio para desativar.</p>
+            </div>
           </div>
           <div className="mt-4 flex flex-wrap gap-2"><Button variant="outline" size="sm" onClick={() => { setEditing(store); setEditName(store.name); }}>Editar nome</Button><Button variant="outline" size="sm" onClick={() => update.mutate({ id: store.id, data: { active: !store.active } })}>{store.active ? 'Desativar' : 'Ativar'}</Button><Button variant="outline" size="sm" onClick={() => setRotating(store.id)}><KeyRound className="mr-2 size-4"/>Renovar credencial</Button><label className="inline-flex cursor-pointer items-center rounded-md border px-3 text-sm font-medium hover:bg-surface-hover">{uploadLogo.isPending ? 'Enviando logo…' : 'Alterar logo'}<input type="file" accept="image/jpeg,image/png,image/webp" className="sr-only" disabled={uploadLogo.isPending} onChange={(event) => { const file = event.target.files?.[0]; if (file) uploadLogo.mutate({ id: store.id, file }); event.target.value = ''; }} /></label>{store.logoUpdatedAt && <Button variant="outline" size="sm" disabled={removeLogo.isPending} onClick={() => removeLogo.mutate(store.id)}>Remover logo</Button>}</div>
         </div>) }

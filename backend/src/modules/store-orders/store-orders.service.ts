@@ -73,7 +73,7 @@ export class StoreOrdersService {
     const { tenantId } = this.tenantContext.requireContext();
     return this.prisma.store.findMany({
       where: { tenantId },
-      select: { id: true, name: true, externalCode: true, deliveryConfirmationMode: true, whatsappInstanceId: true, active: true, createdAt: true, logoUpdatedAt: true },
+      select: { id: true, name: true, externalCode: true, deliveryConfirmationMode: true, whatsappInstanceId: true, separationReminderMinutes: true, active: true, createdAt: true, logoUpdatedAt: true },
       orderBy: { name: 'asc' },
     });
   }
@@ -89,8 +89,9 @@ export class StoreOrdersService {
       data: { ...(name ? { name } : {}),
         ...(dto.deliveryConfirmationMode ? { deliveryConfirmationMode: dto.deliveryConfirmationMode } : {}),
         ...(dto.active !== undefined ? { active: dto.active } : {}),
-        ...('whatsappInstanceId' in dto ? { whatsappInstanceId: dto.whatsappInstanceId ?? null } : {}) },
-      select: { id: true, name: true, externalCode: true, deliveryConfirmationMode: true, whatsappInstanceId: true, active: true, createdAt: true, logoUpdatedAt: true },
+        ...('whatsappInstanceId' in dto ? { whatsappInstanceId: dto.whatsappInstanceId ?? null } : {}),
+        ...('separationReminderMinutes' in dto ? { separationReminderMinutes: dto.separationReminderMinutes ?? null } : {}) },
+      select: { id: true, name: true, externalCode: true, deliveryConfirmationMode: true, whatsappInstanceId: true, separationReminderMinutes: true, active: true, createdAt: true, logoUpdatedAt: true },
     });
   }
 

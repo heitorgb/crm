@@ -114,6 +114,22 @@ it('shows quantities, prices and the order total when opening an order', async (
   expect(screen.getByText('Total do pedido:').parentElement?.textContent).toMatch(/R\$\s*51,00/);
 });
 
+it('flags orders that are still waiting for separation after the reminder', async () => {
+  const base = {
+    customerName: 'Ana', orderText: null, approvedAt: '2026-11-05T12:00:00.000Z', enteredRouteAt: null,
+    deliveryDueAt: null, deliveryConfirmationMode: null, deliveryConfirmationSource: null,
+    store: { id: 'store-1', name: 'Loja', logoUpdatedAt: null }, contact: null,
+  };
+  mocks.listOrders.mockResolvedValue({ data: [
+    { ...base, id: 'order-1', externalOrderId: '1', status: 'PENDENTE_SEPARACAO', separationReminderSentAt: '2026-11-05T12:31:00.000Z' },
+    { ...base, id: 'order-2', externalOrderId: '2', customerName: 'Bia', status: 'SEPARADO', separationReminderSentAt: '2026-11-05T12:31:00.000Z' },
+  ], counts: { PENDENTE_SEPARACAO: 1, SEPARADO: 1 } });
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(<MemoryRouter><QueryClientProvider client={queryClient}><StoreOrdersPage /></QueryClientProvider></MemoryRouter>);
+  expect(within(await screen.findByRole('button', { name: /Ana/ })).getByText('Atrasado')).toBeTruthy();
+  expect(within(screen.getByRole('button', { name: /Bia/ })).queryByText('Atrasado')).toBeNull();
+});
+
 it('hides selected cards without hiding their orders from the list', async () => {
   mocks.getCards.mockResolvedValue({ statuses: ['PENDENTE_SEPARACAO'] });
   mocks.listOrders.mockResolvedValue({ data: [{

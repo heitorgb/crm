@@ -341,4 +341,31 @@ describe('Store order approval (integration)', () => {
     await deliveryScheduler.scan(new Date(dueAt.getTime() + 1));
     expect((await prisma.storeOrder.findUniqueOrThrow({ where: { id: orderId } })).status).toBe('ENTREGUE');
   });
+
+  it('reminds once about orders left unseparated past the store limit, scoped by tenant', async () => {
+    const store = await createStore(ownerA);
+    expect((await app.inject({ method: 'PATCH', url: `/api/store-orders/stores/${store.id}`,
+      headers: authHeaders(ownerA), payload: { separationReminderMinutes: 30 } })).statusCode).toBe(200);
+    const pendingId = (await approve(store.id, store.secret, 'late-1')).json().id as string;
+    const separatedId = (await approve(store.id, store.secret, 'late-2')).json().id as string;
+    for (const status of ['SEPARANDO', 'SEPARADO']) {
+      await app.inject({ method: 'PATCH', url: `/api/store-orders/${separatedId}/status`, headers: authHeaders(ownerA), payload: { status } });
+    }
+    const otherStore = await createStore(ownerB);
+    const otherId = (await approve(otherStore.id, otherStore.secret, 'late-3')).json().id as string;
+    const approvedAt = new Date('2026-11-05T12:00:00.000Z').getTime();
+
+    await deliveryScheduler.scan(new Date(approvedAt + 29 * 60_000));
+    expect((await prisma.storeOrder.findUniqueOrThrow({ where: { id: pendingId } })).separationReminderSentAt).toBeNull();
+
+    const emitted = vi.spyOn(realtime, 'emitToTenant');
+    const late = new Date(approvedAt + 31 * 60_000);
+    await deliveryScheduler.scan(late);
+    await deliveryScheduler.scan(new Date(approvedAt + 60 * 60_000));
+    expect((await prisma.storeOrder.findUniqueOrThrow({ where: { id: pendingId } })).separationReminderSentAt).toEqual(late);
+    expect((await prisma.storeOrder.findUniqueOrThrow({ where: { id: separatedId } })).separationReminderSentAt).toBeNull();
+    expect((await prisma.storeOrder.findUniqueOrThrow({ where: { id: otherId } })).separationReminderSentAt).toBeNull();
+    expect(emitted).toHaveBeenCalledExactlyOnceWith(ownerA.tenantId, 'store-order.updated', { orderId: pendingId });
+    emitted.mockRestore();
+  });
 });

@@ -22,8 +22,11 @@ type Order = {
   status: Status; approvedAt: string; enteredRouteAt: string | null;
   deliveryDueAt: string | null; deliveryConfirmationMode: 'AUTOMATIC' | 'MANUAL' | null;
   deliveryConfirmationSource: 'AUTOMATIC' | 'MANUAL' | null;
+  separationReminderSentAt?: string | null;
   store: { id: string; name: string; logoUpdatedAt: string | null }; contact: { id: string; name: string; address: string | null } | null;
 };
+const isSeparationLate = (order: Order) =>
+  Boolean(order.separationReminderSentAt) && (order.status === 'PENDENTE_SEPARACAO' || order.status === 'SEPARANDO');
 type OrderItem = { productCode: string; description: string; quantity: string; unitPrice: string; lineTotal: string };
 type OrderDetail = Order & { items: OrderItem[] | null; totalAmount: string | null };
 type OrdersResult = { data: Order[]; counts: Partial<Record<Status, number>> };
@@ -225,7 +228,7 @@ export function StoreOrdersPage() {
     {orders.isPending ? <p className="text-sm text-muted-foreground">Carregando pedidos…</p> : orders.isError ? <p role="alert" className="text-sm text-danger">Não foi possível carregar os pedidos.</p> : visible.length === 0 ? <div className="rounded-xl border bg-card p-8 text-center text-muted-foreground">Nenhum pedido encontrado.</div> :
       <div className="max-h-[60vh] space-y-2 overflow-y-auto pr-1 scrollbar-thin">{visible.map((order) => <button key={order.id} type="button" onClick={() => { setError(''); setSelected(order); }} className="flex w-full items-center gap-3 rounded-xl border bg-card p-4 text-left shadow-sm transition hover:bg-surface-hover">
         <StoreLogo key={order.store.logoUpdatedAt ?? 'empty'} store={order.store} />
-        <span className="min-w-0 flex-1"><span className="flex flex-wrap items-center gap-2"><strong className="truncate text-base">{order.contact?.name ?? order.customerName ?? `Pedido ${order.externalOrderId}`}</strong><span className={`${statusBackground[order.status]} rounded px-2 py-0.5 text-xs font-semibold text-white`}>{labels[order.status]}</span></span>
+        <span className="min-w-0 flex-1"><span className="flex flex-wrap items-center gap-2"><strong className="truncate text-base">{order.contact?.name ?? order.customerName ?? `Pedido ${order.externalOrderId}`}</strong><span className={`${statusBackground[order.status]} rounded px-2 py-0.5 text-xs font-semibold text-white`}>{labels[order.status]}</span>{isSeparationLate(order) && <span className="rounded bg-red-700 px-2 py-0.5 text-xs font-semibold text-white">Atrasado</span>}</span>
           <span className="block text-xs text-muted-foreground">{order.store.name} · {order.externalOrderId.startsWith('manual:') ? 'Manual' : `#${order.externalOrderId}`}</span>
           {order.contact?.address && <span className="mt-1 flex items-center gap-1 truncate text-xs text-muted-foreground"><MapPin className="size-3"/>{order.contact.address}</span>}</span>
         <ArrowRight className="size-4 shrink-0 text-muted-foreground"/>

@@ -447,6 +447,7 @@ model Store {
   logoUpdatedAt            DateTime?                @map("logo_updated_at")
   deliveryConfirmationMode DeliveryConfirmationMode @default(AUTOMATIC) @map("delivery_confirmation_mode")
   whatsappInstanceId       String?                  @map("whatsapp_instance_id") @db.Uuid
+  separationReminderMinutes Int?                    @map("separation_reminder_minutes")
   active                   Boolean                  @default(true)
   createdAt                DateTime                 @default(now()) @map("created_at")
   updatedAt                DateTime                 @updatedAt @map("updated_at")
@@ -477,6 +478,7 @@ model StoreOrder {
   enteredRouteAt             DateTime?                   @map("entered_route_at")
   deliveryDueAt              DateTime?                   @map("delivery_due_at")
   deliveredAt                DateTime?                   @map("delivered_at")
+  separationReminderSentAt   DateTime?                   @map("separation_reminder_sent_at")
   approvedAt                 DateTime                    @map("approved_at")
   createdAt                  DateTime                    @default(now()) @map("created_at")
   updatedAt                  DateTime                    @updatedAt @map("updated_at")

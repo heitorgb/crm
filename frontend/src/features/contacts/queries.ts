@@ -61,6 +61,18 @@ export function useUpdateContact() {
   });
 }
 
+export function useSetContactStores() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ id, storeIds }: { id: string; storeIds: string[] }) =>
+      contactsService.setStores(id, storeIds),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: contactKeys.all });
+    },
+  });
+}
+
 export function useDeleteContact() {
   const queryClient = useQueryClient();
 

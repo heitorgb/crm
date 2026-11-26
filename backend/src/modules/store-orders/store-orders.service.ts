@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Prisma, StoreOrderStatus } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
@@ -13,7 +13,15 @@ import { ModuleDisabledError } from '../modules/modules.errors.js';
 import { ModulesService } from '../modules/modules.service.js';
 import { MODULE_KEYS } from '../modules/modules.constants.js';
 import { extractWebhookSecret, generateWebhookSecret, webhookSecretMatches } from '../integrations/webhooks/webhook-secret.js';
+import { ConversationProcessingService } from '../conversations/conversation-processing.service.js';
+import { ConversationsService } from '../conversations/conversations.service.js';
+import { StoreAccessService } from '../store-access/store-access.service.js';
 import type { ApprovedOrderDto, CreateManualOrderDto, CreateStoreDto, UpdateStoreDto } from './store-orders.dto.js';
+
+const STATUS_MESSAGES: Partial<Record<StoreOrderStatus, string>> = {
+  SEPARADO: 'Seu pedido está separado e pronto para envio! 📦',
+  EM_ROTA: 'Seu pedido saiu para entrega! 🛵',
+};
 
 const STATUS_TRANSITIONS: Record<StoreOrderStatus, StoreOrderStatus[]> = {
   PENDENTE_SEPARACAO: ['SEPARANDO', 'OBSERVACAO'],
@@ -26,6 +34,8 @@ const STATUS_TRANSITIONS: Record<StoreOrderStatus, StoreOrderStatus[]> = {
 
 @Injectable()
 export class StoreOrdersService {
+  private readonly logger = new Logger(StoreOrdersService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly tenantContext: TenantContextService,
@@ -34,6 +44,9 @@ export class StoreOrdersService {
     private readonly media: MediaProcessingService,
     private readonly config: ConfigService<Env, true>,
     @Inject(STORAGE) private readonly storage: StorageService,
+    private readonly conversations: ConversationsService,
+    private readonly processing: ConversationProcessingService,
+    private readonly storeAccess: StoreAccessService,
   ) {}
 
   async createStore(dto: CreateStoreDto) {
@@ -43,6 +56,7 @@ export class StoreOrdersService {
     if (!name || !externalCode) {
       throw new AppException('STORE_FIELDS_REQUIRED', 'Informe o nome e o código da loja.', 400);
     }
+    await this.assertTenantInstance(tenantId, dto.whatsappInstanceId ?? null);
     const generated = generateWebhookSecret();
     const store = await this.prisma.store.create({
       data: {
@@ -51,8 +65,9 @@ export class StoreOrdersService {
         externalCode,
         deliveryConfirmationMode: dto.deliveryConfirmationMode ?? 'AUTOMATIC',
         integrationSecretHash: generated.hash,
+        whatsappInstanceId: dto.whatsappInstanceId ?? null,
       },
-      select: { id: true, name: true, externalCode: true, deliveryConfirmationMode: true, active: true, logoUpdatedAt: true },
+      select: { id: true, name: true, externalCode: true, deliveryConfirmationMode: true, whatsappInstanceId: true, active: true, logoUpdatedAt: true },
     });
     return { ...store, secret: generated.secret };
   }
@@ -61,7 +76,7 @@ export class StoreOrdersService {
     const { tenantId } = this.tenantContext.requireContext();
     return this.prisma.store.findMany({
       where: { tenantId },
-      select: { id: true, name: true, externalCode: true, deliveryConfirmationMode: true, active: true, createdAt: true, logoUpdatedAt: true },
+      select: { id: true, name: true, externalCode: true, deliveryConfirmationMode: true, whatsappInstanceId: true, separationReminderMinutes: true, active: true, createdAt: true, logoUpdatedAt: true },
       orderBy: { name: 'asc' },
     });
   }
@@ -72,13 +87,25 @@ export class StoreOrdersService {
     if (!store) throw new AppException('STORE_NOT_FOUND', 'Loja não encontrada.', 404);
     const name = dto.name?.trim();
     if (dto.name !== undefined && !name) throw new AppException('STORE_NAME_REQUIRED', 'Informe o nome da loja.', 400);
-    return this.prisma.store.update({
+    const changesInstance = 'whatsappInstanceId' in dto && (dto.whatsappInstanceId ?? null) !== store.whatsappInstanceId;
+    if (changesInstance) await this.assertTenantInstance(tenantId, dto.whatsappInstanceId ?? null);
+    const updated = await this.prisma.store.update({
       where: { id: storeId },
       data: { ...(name ? { name } : {}),
         ...(dto.deliveryConfirmationMode ? { deliveryConfirmationMode: dto.deliveryConfirmationMode } : {}),
-        ...(dto.active !== undefined ? { active: dto.active } : {}) },
-      select: { id: true, name: true, externalCode: true, deliveryConfirmationMode: true, active: true, createdAt: true, logoUpdatedAt: true },
+        ...(dto.active !== undefined ? { active: dto.active } : {}),
+        ...('whatsappInstanceId' in dto ? { whatsappInstanceId: dto.whatsappInstanceId ?? null } : {}),
+        ...('separationReminderMinutes' in dto ? { separationReminderMinutes: dto.separationReminderMinutes ?? null } : {}) },
+      select: { id: true, name: true, externalCode: true, deliveryConfirmationMode: true, whatsappInstanceId: true, separationReminderMinutes: true, active: true, createdAt: true, logoUpdatedAt: true },
     });
+    if (changesInstance) await this.storeAccess.refreshRealtimeRoomsForStore(tenantId, storeId);
+    return updated;
+  }
+
+  private async assertTenantInstance(tenantId: string, instanceId: string | null): Promise<void> {
+    if (!instanceId) return;
+    const instance = await this.prisma.whatsAppInstance.findFirst({ where: { id: instanceId, tenantId }, select: { id: true } });
+    if (!instance) throw new AppException('WHATSAPP_INSTANCE_NOT_FOUND', 'WhatsApp não encontrado nesta organização.', 404);
   }
 
   async rotateStoreSecret(storeId: string) {
@@ -134,11 +161,12 @@ export class StoreOrdersService {
     return this.storage.get(store.logoStorageKey);
   }
 
-  listStores() {
+  async listStores() {
     const { tenantId } = this.tenantContext.requireContext();
+    const scope = await this.storeAccess.current();
     return this.prisma.store.findMany({
-      where: { tenantId, active: true },
-      select: { id: true, name: true, externalCode: true, deliveryConfirmationMode: true, logoUpdatedAt: true },
+      where: { tenantId, active: true, AND: [this.storeAccess.storeFilter(scope)] },
+      select: { id: true, name: true, externalCode: true, deliveryConfirmationMode: true, whatsappInstanceId: true, logoUpdatedAt: true },
       orderBy: { name: 'asc' },
     });
   }
@@ -167,8 +195,10 @@ export class StoreOrdersService {
       throw new AppException('STORE_ID_INVALID', 'Loja inválida.', 400);
     }
     const term = search?.trim().slice(0, 120);
+    const scope = await this.storeAccess.current();
     const where: Prisma.StoreOrderWhereInput = {
       tenantId,
+      AND: [this.storeAccess.storeOrderFilter(scope)],
       ...(storeId ? { storeId } : {}),
       ...(term ? { OR: [
         { externalOrderId: { contains: term, mode: 'insensitive' } },
@@ -191,8 +221,9 @@ export class StoreOrdersService {
 
   async getOrder(id: string) {
     const { tenantId } = this.tenantContext.requireContext();
+    const scope = await this.storeAccess.current();
     const order = await this.prisma.storeOrder.findFirst({
-      where: { id, tenantId },
+      where: { id, tenantId, AND: [this.storeAccess.storeOrderFilter(scope)] },
       include: { store: { select: { id: true, name: true, logoUpdatedAt: true } }, contact: { select: { id: true, name: true, address: true } } },
     });
     if (!order) throw new AppException('ORDER_NOT_FOUND', 'Pedido não encontrado.', 404);
@@ -203,9 +234,10 @@ export class StoreOrdersService {
     const { tenantId, membershipId } = this.tenantContext.requireContext();
     const text = dto.orderText.trim();
     if (!text) throw new AppException('ORDER_TEXT_REQUIRED', 'Informe o texto do pedido.', 400);
+    const scope = await this.storeAccess.current();
     const [store, contact] = await Promise.all([
-      this.prisma.store.findFirst({ where: { id: dto.storeId, tenantId, active: true } }),
-      this.prisma.contact.findFirst({ where: { id: dto.contactId, tenantId } }),
+      this.prisma.store.findFirst({ where: { id: dto.storeId, tenantId, active: true, AND: [this.storeAccess.storeFilter(scope)] } }),
+      this.prisma.contact.findFirst({ where: { id: dto.contactId, tenantId, AND: [this.storeAccess.contactFilter(scope)] } }),
     ]);
     if (!store || !contact) throw new AppException('ORDER_PARTY_NOT_FOUND', 'Loja ou contato não encontrado.', 404);
     const externalOrderId = `manual:${dto.requestId ?? randomUUID()}`;
@@ -215,12 +247,12 @@ export class StoreOrdersService {
         const order = await tx.storeOrder.create({
           data: {
             tenantId, storeId: store.id, contactId: contact.id,
-            externalOrderId,
+            externalOrderId, status: 'SEPARANDO',
             customerName: contact.name, orderText: text, approvedAt: new Date(),
           },
         });
         await tx.storeOrderStatusChange.create({
-          data: { tenantId, orderId: order.id, status: 'PENDENTE_SEPARACAO',
+          data: { tenantId, orderId: order.id, status: 'SEPARANDO',
             actorMembershipId: membershipId, origin: 'CRM_MANUAL' },
         });
         return order;
@@ -239,23 +271,27 @@ export class StoreOrdersService {
 
   async updateStatus(id: string, status: StoreOrderStatus) {
     const { tenantId, membershipId } = this.tenantContext.requireContext();
-    const order = await this.prisma.$transaction(async (tx) => {
-      const order = await tx.storeOrder.findFirst({ where: { id, tenantId }, include: { store: true } });
-      if (!order) throw new AppException('ORDER_NOT_FOUND', 'Pedido não encontrado.', 404);
-      if (!STATUS_TRANSITIONS[order.status].includes(status)) {
+    const scope = await this.storeAccess.current();
+    const { order, contactId, instanceId } = await this.prisma.$transaction(async (tx) => {
+      const found = await tx.storeOrder.findFirst({
+        where: { id, tenantId, AND: [this.storeAccess.storeOrderFilter(scope)] },
+        include: { store: true },
+      });
+      if (!found) throw new AppException('ORDER_NOT_FOUND', 'Pedido não encontrado.', 404);
+      if (!STATUS_TRANSITIONS[found.status].includes(status)) {
         throw new AppException('ORDER_STATUS_INVALID', 'Mudança de status não permitida.', 409);
       }
       const now = new Date();
-      const enteringRoute = status === 'EM_ROTA' && order.status !== 'EM_ROTA';
+      const enteringRoute = status === 'EM_ROTA' && found.status !== 'EM_ROTA';
       const delivered = status === 'ENTREGUE';
       const updated = await tx.storeOrder.updateMany({
-        where: { id, tenantId, status: order.status },
+        where: { id, tenantId, status: found.status },
         data: {
           status,
           ...(enteringRoute ? {
             enteredRouteAt: now,
-            deliveryConfirmationMode: order.store.deliveryConfirmationMode,
-            deliveryDueAt: order.store.deliveryConfirmationMode === 'AUTOMATIC'
+            deliveryConfirmationMode: found.store.deliveryConfirmationMode,
+            deliveryDueAt: found.store.deliveryConfirmationMode === 'AUTOMATIC'
               ? new Date(now.getTime() + 2 * 60 * 60 * 1000) : null,
           } : {}),
           ...(delivered ? { deliveredAt: now, deliveryDueAt: null,
@@ -265,13 +301,47 @@ export class StoreOrdersService {
       });
       if (updated.count !== 1) throw new AppException('ORDER_STATUS_CONFLICT', 'O pedido foi alterado por outro usuário.', 409);
       await tx.storeOrderStatusChange.create({
-        data: { tenantId, orderId: id, previousStatus: order.status, status,
+        data: { tenantId, orderId: id, previousStatus: found.status, status,
           actorMembershipId: membershipId, origin: 'CRM_USER' },
       });
-      return tx.storeOrder.findUniqueOrThrow({ where: { id } });
+      return {
+        order: await tx.storeOrder.findUniqueOrThrow({ where: { id } }),
+        contactId: found.contactId,
+        instanceId: found.store.whatsappInstanceId,
+      };
     });
     this.realtime.emitToTenant(tenantId, 'store-order.updated', { orderId: id });
+    const message = STATUS_MESSAGES[status];
+    if (message && contactId && instanceId) {
+      void this.sendStatusMessage(tenantId, contactId, instanceId, message).catch((error: unknown) => {
+        this.logger.warn('store-order.status-message.failed', { orderId: id, status, error });
+      });
+    }
     return order;
+  }
+
+  async updateContact(id: string, contactId: string) {
+    const { tenantId } = this.tenantContext.requireContext();
+    const scope = await this.storeAccess.current();
+    const [order, contact] = await Promise.all([
+      this.prisma.storeOrder.findFirst({ where: { id, tenantId, AND: [this.storeAccess.storeOrderFilter(scope)] }, select: { id: true } }),
+      this.prisma.contact.findFirst({
+        where: { id: contactId, tenantId, AND: [this.storeAccess.contactFilter(scope)] },
+        select: { id: true, name: true },
+      }),
+    ]);
+    if (!order) throw new AppException('ORDER_NOT_FOUND', 'Pedido não encontrado.', 404);
+    if (!contact) throw new AppException('CONTACT_NOT_FOUND', 'Contato não encontrado.', 404);
+    return this.prisma.storeOrder.update({
+      where: { id },
+      data: { contactId: contact.id, customerName: contact.name },
+      include: { store: { select: { id: true, name: true, logoUpdatedAt: true } }, contact: { select: { id: true, name: true, address: true } } },
+    });
+  }
+
+  private async sendStatusMessage(tenantId: string, contactId: string, instanceId: string, text: string) {
+    const conversation = await this.conversations.startFromContact({ contactId, whatsappInstanceId: instanceId });
+    await this.processing.deliverText(tenantId, conversation.id, text, { senderId: null, senderName: null, showAgentName: false });
   }
 
   async receiveApproved(storeId: string, authorization: string | undefined, dto: ApprovedOrderDto) {

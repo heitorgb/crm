@@ -14,6 +14,7 @@ import { RateLimitGuard } from '../../common/http/rate-limit/rate-limit.guard.js
 import { Roles } from '../auth/decorators/auth.decorators.js';
 import { MODULE_KEYS } from '../modules/modules.constants.js';
 import { RequireModule } from '../modules/require-module.decorator.js';
+import { ConversationAccessGuard } from '../store-access/conversation-access.guard.js';
 import { UpdateTranscriptionSettingsDto } from './dto/transcription.dto.js';
 import { TRANSCRIPTION_PROVIDERS } from './transcription.models.js';
 import { TranscriptionSettingsService } from './transcription-settings.service.js';
@@ -59,7 +60,7 @@ export class TranscriptionController {
   }
 
   @RequireModule(MODULE_KEYS.ATTENDANCE)
-  @UseGuards(RateLimitGuard)
+  @UseGuards(RateLimitGuard, ConversationAccessGuard)
   @RateLimit({ name: 'ai-transcription-retry', limit: 10, windowMs: 60_000 })
   @Post('messages/:conversationId/:messageId/retry')
   @HttpCode(200)

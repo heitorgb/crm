@@ -117,6 +117,7 @@ function createHarness() {
     } as unknown as MediaProcessingService,
     { get: vi.fn(), put: vi.fn(), delete: vi.fn(), exists: vi.fn() } as unknown as StorageService,
     { enqueue: vi.fn() } as unknown as JobQueue,
+    { current: vi.fn().mockResolvedValue({ restricted: false }) } as never,
   );
 
   return { service, prisma, tx, tenantContext };
@@ -442,7 +443,7 @@ describe('ScheduledMessagesService cancel', () => {
 
     expect(tenantContext.requireContext).toHaveBeenCalled();
     expect(prisma.scheduledMessage.findFirst).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: 'schedule-1', tenantId: 'tenant-a' } }),
+      expect.objectContaining({ where: { id: 'schedule-1', tenantId: 'tenant-a', AND: [{}] } }),
     );
     expect(tx.scheduledMessage.updateMany).toHaveBeenCalledWith({
       where: {

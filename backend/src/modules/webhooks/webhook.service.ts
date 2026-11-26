@@ -652,7 +652,7 @@ export class WebhookService implements OnModuleInit {
     }
 
     for (const conversationId of conversations) {
-      this.realtime.emitToTenant(instance.tenantId, 'conversation.updated', {
+      this.realtime.emitConversationEvent(instance.tenantId, instance.id, 'conversation.updated', {
         conversationId,
       });
     }
@@ -911,12 +911,12 @@ export class WebhookService implements OnModuleInit {
         messageId: persisted.id,
         direction,
       });
-      this.realtime.emitToTenant(instance.tenantId, 'message.created', {
+      this.realtime.emitConversationEvent(instance.tenantId, instance.id, 'message.created', {
         conversationId: conversation.id,
         messageId: persisted.id,
         direction,
       });
-      this.realtime.emitToTenant(instance.tenantId, 'conversation.updated', {
+      this.realtime.emitConversationEvent(instance.tenantId, instance.id, 'conversation.updated', {
         conversationId: conversation.id,
         status: conversation.status,
       });
@@ -1027,7 +1027,7 @@ export class WebhookService implements OnModuleInit {
     }
 
     if (applied.changed && options.emitRealtime !== false && applied.messageId) {
-      this.realtime.emitToTenant(instance.tenantId, 'message.reaction', {
+      this.realtime.emitConversationEvent(instance.tenantId, instance.id, 'message.reaction', {
         conversationId: conversation.id,
         messageId: applied.messageId,
         reactions: applied.reactions,
@@ -1112,7 +1112,7 @@ export class WebhookService implements OnModuleInit {
     }
 
     for (const activity of activities) {
-      this.realtime.emitToTenant(instance.tenantId, 'conversation.presence', {
+      this.realtime.emitConversationEvent(instance.tenantId, instance.id, 'conversation.presence', {
         conversationId: conversation.id,
         participantId: activity.participantId,
         participantName: activity.identity.name,
@@ -1510,7 +1510,7 @@ export class WebhookService implements OnModuleInit {
       conversationId: updated.conversationId,
       messageId: updated.messageId,
     });
-    this.realtime.emitToTenant(instance.tenantId, 'conversation.updated', {
+    this.realtime.emitConversationEvent(instance.tenantId, instance.id, 'conversation.updated', {
       conversationId: updated.conversationId,
     });
   }
@@ -1556,7 +1556,7 @@ export class WebhookService implements OnModuleInit {
           status: updated.status,
         },
       );
-      this.realtime.emitToTenant(instance.tenantId, 'conversation.updated', {
+      this.realtime.emitConversationEvent(instance.tenantId, instance.id, 'conversation.updated', {
         conversationId: updated.conversationId,
       });
 
@@ -1860,7 +1860,7 @@ export class WebhookService implements OnModuleInit {
     }
 
     await this.prisma.conversation.update({ where: { id: conversation.id }, data });
-    this.realtime.emitToTenant(instance.tenantId, 'conversation.updated', {
+    this.realtime.emitConversationEvent(instance.tenantId, instance.id, 'conversation.updated', {
       conversationId: conversation.id,
     });
   }
@@ -2104,7 +2104,7 @@ export class WebhookService implements OnModuleInit {
         conversationId: input.conversationId,
         messageId: reply.id,
       });
-      this.realtime.emitToTenant(input.tenantId, 'conversation.updated', {
+      await this.realtime.emitToConversationAudience(input.tenantId, input.conversationId, 'conversation.updated', {
         conversationId: input.conversationId,
       });
     }

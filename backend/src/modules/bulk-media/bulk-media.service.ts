@@ -21,6 +21,7 @@ import {
 } from '../../infrastructure/queue/job-queue.types.js';
 import { STORAGE, type StorageService } from '../../infrastructure/storage/storage.types.js';
 import { ConversationProcessingService } from '../conversations/conversation-processing.service.js';
+import { StoreAccessService } from '../store-access/store-access.service.js';
 import {
   BULK_MEDIA_MAX_ERROR_LENGTH,
   BULK_MEDIA_STALE_PROCESSING_MS,
@@ -91,6 +92,7 @@ export class BulkMediaService {
     private readonly conversations: ConversationProcessingService,
     @Inject(STORAGE) private readonly storage: StorageService,
     @Inject(JOB_QUEUE) private readonly queue: JobQueue,
+    private readonly storeAccess: StoreAccessService,
   ) {}
 
   async create(input: CreateBulkMediaInput): Promise<BulkMediaBatchView> {
@@ -150,6 +152,7 @@ export class BulkMediaService {
         'Uma ou mais conversas selecionadas não pertencem a esta organização.',
       );
     }
+    await this.storeAccess.assertConversations(conversationIds);
 
     const recipients = conversations.map((conversation) => {
       const destination = pickDestination(
@@ -232,12 +235,12 @@ export class BulkMediaService {
 
   async findOne(id: string): Promise<BulkMediaBatchView> {
     const { tenantId } = this.tenantContext.requireContext();
-    return toBatchView(await this.requireBatch(tenantId, id));
+    return toBatchView(await this.requireReachableBatch(tenantId, id));
   }
 
   async retry(id: string): Promise<BulkMediaBatchView> {
     const { tenantId } = this.tenantContext.requireContext();
-    await this.requireBatch(tenantId, id);
+    await this.requireReachableBatch(tenantId, id);
 
     await this.prisma.$transaction([
       this.prisma.bulkMediaRecipient.updateMany({
@@ -403,6 +406,16 @@ export class BulkMediaService {
         }`,
       );
     }
+  }
+
+  private async requireReachableBatch(tenantId: string, id: string): Promise<PrismaBatch> {
+    const batch = await this.requireBatch(tenantId, id);
+    try {
+      await this.storeAccess.assertConversations(batch.recipients.map((recipient) => recipient.conversationId));
+    } catch {
+      throw new BulkMediaBatchNotFoundError();
+    }
+    return batch;
   }
 
   private async requireBatch(tenantId: string, id: string): Promise<PrismaBatch> {

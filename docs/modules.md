@@ -116,6 +116,28 @@ Endpoints de saúde, autenticação e administração nunca são bloqueados.
 - Na tela de Cobranças, os controles da Régua de Cobrança (configuração, envio manual e histórico)
   são ocultados quando `billing.collection` está desabilitado.
 
+## Módulos por usuário (implementado)
+
+Além da disponibilidade por organização, um admin pode limitar um membro `USER` a alguns módulos em
+**Configurações → Equipe → Módulos** (`tenant_user_modules`, migration
+`20261121120000_tenant_user_module_access`).
+
+- `OWNER`, `ADMIN` e membros `USER` **sem** módulos marcados usam todos os módulos ligados na
+  organização. Módulos `controllable = false` nunca são restringidos.
+- `ModuleEnabledGuard` checa primeiro a organização (`403 MODULE_DISABLED`) e depois o membro
+  (`403 MODULE_FORBIDDEN`). `GET /api/modules/enabled` devolve só os módulos que o membro pode usar,
+  então menu e `ModuleRoute` seguem a mesma regra.
+- `GET /api/modules/grantable` (admin) lista os módulos que podem ser liberados: ligados na
+  organização e controláveis. `PATCH /api/members/:id` aceita `moduleKeys`.
+- Sem `attendance`, o membro não entra nas salas realtime de conversa nem recebe push de mensagens;
+  sem `deliveries`, não recebe lembretes de separação. Ao mudar módulos ou lojas, o usuário recebe
+  `member.access-updated` e o frontend recarrega os dados.
+- **Atenção à ordem dos guards globais:** `APP_GUARD` roda na ordem de registro dos módulos. Um
+  módulo que importe `ModulesModule` precisa vir depois de `AuthModule` em `app.module.ts`, senão o
+  guard de módulos roda sem contexto de tenant e responde 401.
+- Funcionalidades que atravessam módulos exigem os dois: criar pedido manual envia a mensagem pelo
+  Atendimento e escolhe contato em Contatos.
+
 ## Cache e consistência
 
 Não há camada de cache de permissões/navegação no backend: a leitura é sempre do PostgreSQL. No

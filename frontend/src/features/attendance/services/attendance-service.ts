@@ -4,6 +4,7 @@ import type { PageResult } from '@/types/crm';
 import type {
   Conversation,
   ConversationMessage,
+  ConversationMessageSearchResult,
   ConversationStatus,
   LinkPreview,
   MessageTranscription,
@@ -75,6 +76,11 @@ export const attendanceService = {
   listMessages: (id: string, page = 1, perPage = 50) =>
     apiRequest<PageResult<ConversationMessage>>(
       `/conversations/${id}/messages${toQueryString({ page, perPage })}`,
+    ),
+
+  searchMessages: (id: string, query: string) =>
+    apiRequest<ConversationMessageSearchResult[]>(
+      `/conversations/${id}/messages/search${toQueryString({ q: query })}`,
     ),
 
   takeover: (id: string) =>

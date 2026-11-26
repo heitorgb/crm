@@ -96,6 +96,15 @@ export interface MessageReaction {
   occurredAt: string;
 }
 
+export interface ConversationMessageSearchResult {
+  id: string;
+  direction: MessageDirection;
+  type: MessageType;
+  text: string;
+  senderName: string | null;
+  occurredAt: string;
+}
+
 export interface ConversationMessage {
   id: string;
   conversationId: string;

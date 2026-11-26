@@ -793,8 +793,12 @@ export class TranscriptionService implements OnModuleInit {
       conversationId,
       messageId,
     });
-    this.realtime.emitToTenant(tenantId, 'message.updated', { conversationId, messageId });
-    this.realtime.emitToTenant(tenantId, 'conversation.updated', { conversationId, messageId });
+    void Promise.all([
+      this.realtime.emitToConversationAudience(tenantId, conversationId, 'message.updated', { conversationId, messageId }),
+      this.realtime.emitToConversationAudience(tenantId, conversationId, 'conversation.updated', { conversationId, messageId }),
+    ]).catch((error: unknown) => {
+      this.logger.debug(`transcription.realtime.failed ${error instanceof Error ? error.message : 'unknown'}`);
+    });
   }
 
   private runAsTenant<T>(tenantId: string, fn: () => Promise<T>): Promise<T> {

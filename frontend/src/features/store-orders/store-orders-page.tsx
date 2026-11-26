@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowRight, Clock3, MapPin, Plus, Search } from 'lucide-react';
 import { ContactPicker } from '@/features/contacts/contact-picker';
@@ -15,14 +16,17 @@ import { useAuthStore } from '@/stores/auth-store';
 import { StoreLogo } from './store-logo';
 
 type Status = 'PENDENTE_SEPARACAO' | 'SEPARANDO' | 'SEPARADO' | 'EM_ROTA' | 'OBSERVACAO' | 'ENTREGUE';
-type Store = { id: string; name: string; externalCode: string; logoUpdatedAt: string | null };
+type Store = { id: string; name: string; externalCode: string; whatsappInstanceId: string | null; logoUpdatedAt: string | null };
 type Order = {
   id: string; externalOrderId: string; customerName: string | null; orderText: string | null;
   status: Status; approvedAt: string; enteredRouteAt: string | null;
   deliveryDueAt: string | null; deliveryConfirmationMode: 'AUTOMATIC' | 'MANUAL' | null;
   deliveryConfirmationSource: 'AUTOMATIC' | 'MANUAL' | null;
+  separationReminderSentAt?: string | null;
   store: { id: string; name: string; logoUpdatedAt: string | null }; contact: { id: string; name: string; address: string | null } | null;
 };
+const isSeparationLate = (order: Order) =>
+  Boolean(order.separationReminderSentAt) && (order.status === 'PENDENTE_SEPARACAO' || order.status === 'SEPARANDO');
 type OrderItem = { productCode: string; description: string; quantity: string; unitPrice: string; lineTotal: string };
 type OrderDetail = Order & { items: OrderItem[] | null; totalAmount: string | null };
 type OrdersResult = { data: Order[]; counts: Partial<Record<Status, number>> };
@@ -97,10 +101,14 @@ export function StoreOrdersPage() {
   const queryClient = useQueryClient();
   const { socket } = useRealtime();
   const tenantId = useAuthStore((state) => state.session?.tenant.id);
+  const navigate = useNavigate();
+  const { search: locationSearch } = useLocation();
   const [storeId, setStoreId] = useState('all');
   const [group, setGroup] = useState('all');
   const [search, setSearch] = useState('');
-  const [manualOpen, setManualOpen] = useState(false);
+  const [manualOpen, setManualOpen] = useState(
+    () => new URLSearchParams(locationSearch).get('novo') === '1',
+  );
   const [selected, setSelected] = useState<Order | null>(null);
   const [formStoreId, setFormStoreId] = useState('');
   const [contactId, setContactId] = useState('');
@@ -132,6 +140,12 @@ export function StoreOrdersPage() {
     queryFn: () => apiRequest<OrderDetail>(`/store-orders/${selected!.id}`),
     enabled: selected !== null,
   });
+  useEffect(() => {
+    if (new URLSearchParams(locationSearch).get('novo') === '1') {
+      navigate('/entregas', { replace: true });
+    }
+  }, [locationSearch, navigate]);
+
   useEffect(() => {
     if (!socket) return;
     const refresh = () => {
@@ -178,6 +192,15 @@ export function StoreOrdersPage() {
     },
     onError: (cause: Error) => setError(cause.message),
   });
+  const [linkContactId, setLinkContactId] = useState('');
+  const linkContact = useMutation({
+    mutationFn: (contactId: string) => apiRequest<Order>(`/store-orders/${selected?.id}/contact`, { method: 'PATCH', body: { contactId } }),
+    onSuccess: async (updated) => {
+      setSelected(updated); setLinkContactId(''); setError('');
+      await queryClient.invalidateQueries({ queryKey: ['store-orders', 'list'] });
+    },
+    onError: (cause: Error) => setError(cause.message),
+  });
   const visibleGroups = cards.data ? groups.filter((item) => cards.data.statuses.includes(item.statuses[0])) : groups;
   const activeGroup = group !== 'all' && !visibleGroups.some((item) => item.key === group) ? 'all' : group;
   const visible = (orders.data?.data ?? []).filter((order) =>
@@ -185,7 +208,7 @@ export function StoreOrdersPage() {
 
   return <div className="mx-auto max-w-5xl space-y-5 p-4 pb-24 sm:p-6">
     <div className="flex items-center justify-between gap-4">
-      <div><p className="text-sm text-muted-foreground">Operação das lojas</p><h1 className="text-3xl font-semibold">Entregas</h1></div>
+      <div><p className="text-sm text-muted-foreground">Operação das lojas</p><h1 className="text-3xl font-semibold">Acompanhamento</h1></div>
       <Button onClick={() => { setError(''); setManualOpen(true); }} aria-label="Criar pedido manual"><Plus className="mr-2 size-4"/> Novo pedido</Button>
     </div>
     <div className="flex gap-2 overflow-x-auto pb-1">
@@ -205,7 +228,7 @@ export function StoreOrdersPage() {
     {orders.isPending ? <p className="text-sm text-muted-foreground">Carregando pedidos…</p> : orders.isError ? <p role="alert" className="text-sm text-danger">Não foi possível carregar os pedidos.</p> : visible.length === 0 ? <div className="rounded-xl border bg-card p-8 text-center text-muted-foreground">Nenhum pedido encontrado.</div> :
       <div className="max-h-[60vh] space-y-2 overflow-y-auto pr-1 scrollbar-thin">{visible.map((order) => <button key={order.id} type="button" onClick={() => { setError(''); setSelected(order); }} className="flex w-full items-center gap-3 rounded-xl border bg-card p-4 text-left shadow-sm transition hover:bg-surface-hover">
         <StoreLogo key={order.store.logoUpdatedAt ?? 'empty'} store={order.store} />
-        <span className="min-w-0 flex-1"><span className="flex flex-wrap items-center gap-2"><strong className="truncate text-base">{order.contact?.name ?? order.customerName ?? `Pedido ${order.externalOrderId}`}</strong><span className={`${statusBackground[order.status]} rounded px-2 py-0.5 text-xs font-semibold text-white`}>{labels[order.status]}</span></span>
+        <span className="min-w-0 flex-1"><span className="flex flex-wrap items-center gap-2"><strong className="truncate text-base">{order.contact?.name ?? order.customerName ?? `Pedido ${order.externalOrderId}`}</strong><span className={`${statusBackground[order.status]} rounded px-2 py-0.5 text-xs font-semibold text-white`}>{labels[order.status]}</span>{isSeparationLate(order) && <span className="rounded bg-red-700 px-2 py-0.5 text-xs font-semibold text-white">Atrasado</span>}</span>
           <span className="block text-xs text-muted-foreground">{order.store.name} · {order.externalOrderId.startsWith('manual:') ? 'Manual' : `#${order.externalOrderId}`}</span>
           {order.contact?.address && <span className="mt-1 flex items-center gap-1 truncate text-xs text-muted-foreground"><MapPin className="size-3"/>{order.contact.address}</span>}</span>
         <ArrowRight className="size-4 shrink-0 text-muted-foreground"/>
@@ -214,7 +237,7 @@ export function StoreOrdersPage() {
 
     <Dialog open={manualOpen} onOpenChange={setManualOpen}><DialogContent className="max-h-[calc(100dvh-1.5rem)] w-[calc(100vw-1.5rem)] overflow-y-auto overscroll-contain p-4 sm:max-h-[85vh] sm:p-5"><DialogHeader><DialogTitle>Novo pedido manual</DialogTitle></DialogHeader>
       <form className="space-y-4" onSubmit={(event) => { event.preventDefault(); setError(''); create.mutate(); }}>
-        <div className="space-y-2"><Label htmlFor="manual-store">Loja</Label><select id="manual-store" required value={formStoreId} disabled={messageSent || create.isPending} onChange={(event) => setFormStoreId(event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm"><option value="">Selecione a loja</option>{(stores.data ?? []).map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}</select></div>
+        <div className="space-y-2"><Label htmlFor="manual-store">Loja</Label><select id="manual-store" required value={formStoreId} disabled={messageSent || create.isPending} onChange={(event) => { const id = event.target.value; setFormStoreId(id); const linked = stores.data?.find((s) => s.id === id)?.whatsappInstanceId; if (linked) setWhatsappInstanceId(linked); }} className="h-10 w-full rounded-md border bg-background px-3 text-sm"><option value="">Selecione a loja</option>{(stores.data ?? []).map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}</select></div>
         <div className="space-y-2"><Label htmlFor="manual-contact">Contato</Label><ContactPicker id="manual-contact" value={contactId} onValueChange={setContactId} disabled={messageSent || create.isPending}/></div>
         <div className="space-y-2"><Label htmlFor="manual-whatsapp">Enviar pelo WhatsApp</Label><select id="manual-whatsapp" required value={selectedInstanceId} disabled={messageSent || create.isPending} onChange={(event) => setWhatsappInstanceId(event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm"><option value="">Selecione um WhatsApp conectado</option>{connectedInstances.map((instance) => <option key={instance.id} value={instance.id}>{instance.name}</option>)}</select>{connectedInstances.length === 0 && <p className="text-xs text-muted-foreground">Conecte um WhatsApp em Configurações para enviar a mensagem.</p>}</div>
         <div className="space-y-2"><Label htmlFor="manual-text">Texto do pedido</Label><Textarea id="manual-text" required maxLength={4000} value={orderText} disabled={messageSent || create.isPending} onChange={(event) => setOrderText(event.target.value)} placeholder="Cole ou escreva a mensagem do pedido" rows={6}/><p className="text-xs text-muted-foreground">O texto será enviado ao contato e registrado no pedido.</p></div>
@@ -230,6 +253,10 @@ export function StoreOrdersPage() {
         {selected.status === 'EM_ROTA' && selected.deliveryConfirmationMode === 'MANUAL' && <p className="text-muted-foreground">A entrega precisa ser confirmada manualmente.</p>}
         {selected.status === 'ENTREGUE' && selected.deliveryConfirmationSource === 'AUTOMATIC' && <p className="text-muted-foreground">Entrega presumida automaticamente, sem confirmação do destinatário.</p>}
         {selected.contact?.address && <p className="flex gap-2"><MapPin className="size-4"/>{selected.contact.address}</p>}
+        {!selected.contact && <div className="flex items-end gap-2 rounded-md border bg-muted/30 p-3">
+          <div className="flex-1 space-y-1"><p className="text-xs text-muted-foreground">Nenhum contato vinculado — vincule para habilitar mensagens automáticas.</p><ContactPicker id="link-contact" value={linkContactId} onValueChange={setLinkContactId} disabled={linkContact.isPending}/></div>
+          <Button size="sm" disabled={!linkContactId || linkContact.isPending} onClick={() => linkContact.mutate(linkContactId)}>Vincular</Button>
+        </div>}
         <p className="flex gap-2 text-muted-foreground"><Clock3 className="size-4"/>Aprovado em {new Date(selected.approvedAt).toLocaleString('pt-BR')}</p>
         {detail.isPending ? <p className="text-muted-foreground">Carregando itens…</p> : detail.isError ? <p role="alert" className="text-danger">Não foi possível carregar os itens deste pedido.</p> : detail.data?.items?.length ? <OrderItems items={detail.data.items} totalAmount={detail.data.totalAmount} /> : detail.data?.items === null ? <p className="text-muted-foreground">Itens indisponíveis para este pedido.</p> : null}
         {selected.orderText && <div className="whitespace-pre-wrap rounded-md border bg-muted/40 p-3">{selected.orderText}</div>}

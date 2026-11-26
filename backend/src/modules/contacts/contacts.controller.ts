@@ -18,6 +18,7 @@ import {
   CreateContactDto,
   ListContactsQueryDto,
   ResolveContactDto,
+  SetContactStoresDto,
   UpdateContactDto,
 } from './dto/contact.dto.js';
 
@@ -50,6 +51,12 @@ export class ContactsController {
   @Patch(':id')
   update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateContactDto) {
     return this.contacts.update(id, dto);
+  }
+
+  @Roles('OWNER', 'ADMIN')
+  @Patch(':id/stores')
+  setStores(@Param('id', ParseUUIDPipe) id: string, @Body() dto: SetContactStoresDto) {
+    return this.contacts.setStores(id, dto.storeIds);
   }
 
   @Roles('OWNER', 'ADMIN')

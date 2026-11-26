@@ -44,6 +44,7 @@ import { CustomMenuModule } from './modules/custom-menu/custom-menu.module.js';
 import { AiModule } from './modules/ai/ai.module.js';
 import { TranscriptionModule } from './modules/transcription/transcription.module.js';
 import { StoreOrdersModule } from './modules/store-orders/store-orders.module.js';
+import { StoreAccessModule } from './modules/store-access/store-access.module.js';
 
 @Module({
   imports: [
@@ -76,6 +77,8 @@ import { StoreOrdersModule } from './modules/store-orders/store-orders.module.js
     MembershipsModule,
     AuthModule,
     ModulesModule,
+    // Imports ModulesModule, so it must come after AuthModule to keep JwtAuthGuard ahead of the module guard.
+    StoreAccessModule,
     AdminModule,
     TenantsModule,
     CustomersModule,

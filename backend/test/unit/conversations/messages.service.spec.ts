@@ -42,6 +42,58 @@ function seedMessage(prisma: PrismaMock, status: MessageStatus): void {
   });
 }
 
+describe('MessagesService.searchInConversation', () => {
+  it('searches text and transcriptions of the tenant conversation, skipping hidden and deleted messages', async () => {
+    const findMany = vi.fn().mockResolvedValue([
+      { id: 'm-2', direction: 'INBOUND', type: 'AUDIO', content: null, senderName: 'Ana',
+        occurredAt: new Date('2026-11-05T12:05:00Z'), transcription: { text: 'quero o pedido azul' } },
+      { id: 'm-1', direction: 'OUTBOUND', type: 'TEXT', content: 'Pedido azul enviado', senderName: null,
+        occurredAt: new Date('2026-11-05T12:00:00Z'), transcription: null },
+    ]);
+    const conversationFindFirst = vi.fn().mockResolvedValue({ id: 'conversation-1' });
+    const prisma = { message: { findMany }, conversation: { findFirst: conversationFindFirst } };
+    const tenantContext = {
+      requireContext: () => ({ tenantId: 'tenant-1', userId: 'user-1', membershipId: 'member-1', role: 'OWNER' }),
+    } as unknown as TenantContextService;
+    const service = new MessagesService(prisma as unknown as PrismaService, tenantContext, {} as never);
+
+    const results = await service.searchInConversation('conversation-1', 'azul');
+
+    expect(conversationFindFirst).toHaveBeenCalledWith({
+      where: { id: 'conversation-1', tenantId: 'tenant-1' }, select: { id: true },
+    });
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        tenantId: 'tenant-1',
+        conversationId: 'conversation-1',
+        hiddenForUsers: { none: { userId: 'user-1' } },
+        NOT: { metadata: { path: ['deletedForEveryone'], equals: true } },
+        OR: [
+          { content: { contains: 'azul', mode: 'insensitive' } },
+          { transcription: { text: { contains: 'azul', mode: 'insensitive' } } },
+        ],
+      },
+      orderBy: { occurredAt: 'desc' },
+      take: 50,
+    }));
+    expect(results.map((result) => [result.id, result.text])).toEqual([
+      ['m-2', 'quero o pedido azul'],
+      ['m-1', 'Pedido azul enviado'],
+    ]);
+  });
+
+  it('rejects conversations outside the current tenant', async () => {
+    const prisma = { message: { findMany: vi.fn() }, conversation: { findFirst: vi.fn().mockResolvedValue(null) } };
+    const tenantContext = {
+      requireContext: () => ({ tenantId: 'tenant-1', userId: 'user-1', membershipId: 'member-1', role: 'OWNER' }),
+    } as unknown as TenantContextService;
+    const service = new MessagesService(prisma as unknown as PrismaService, tenantContext, {} as never);
+
+    await expect(service.searchInConversation('other-tenant-conversation', 'azul')).rejects.toThrow();
+    expect(prisma.message.findMany).not.toHaveBeenCalled();
+  });
+});
+
 describe('MessagesService.updateOutboundStatusByExternalId', () => {
   it('turns a SENT message into FAILED when the provider reports ERROR', async () => {
     const { service, prisma } = createService();

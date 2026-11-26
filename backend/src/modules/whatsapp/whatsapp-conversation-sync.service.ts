@@ -91,7 +91,7 @@ export class WhatsAppConversationSyncService {
       where: { id: conversation.id },
       data,
     });
-    this.publish(instance.tenantId, conversation.id);
+    this.publish(instance.tenantId, instance.id, conversation.id);
     return true;
   }
 
@@ -163,7 +163,7 @@ export class WhatsAppConversationSyncService {
     }
 
     if (metadataChanged || participantsChanged) {
-      this.publish(instance.tenantId, conversation.id);
+      this.publish(instance.tenantId, instance.id, conversation.id);
       return true;
     }
     return false;
@@ -224,7 +224,7 @@ export class WhatsAppConversationSyncService {
     }
 
     if (changed) {
-      this.publish(instance.tenantId, conversation.id);
+      this.publish(instance.tenantId, instance.id, conversation.id);
     }
     return changed;
   }
@@ -253,7 +253,7 @@ export class WhatsAppConversationSyncService {
 
     const changed = await this.replaceParticipants(instance, conversation.id, participants);
     if (changed) {
-      this.publish(instance.tenantId, conversation.id);
+      this.publish(instance.tenantId, instance.id, conversation.id);
     }
     return changed;
   }
@@ -396,8 +396,8 @@ export class WhatsAppConversationSyncService {
     return true;
   }
 
-  private publish(tenantId: string, conversationId: string): void {
-    this.realtime.emitToTenant(tenantId, 'conversation.updated', { conversationId });
+  private publish(tenantId: string, instanceId: string, conversationId: string): void {
+    this.realtime.emitConversationEvent(tenantId, instanceId, 'conversation.updated', { conversationId });
   }
 }
 

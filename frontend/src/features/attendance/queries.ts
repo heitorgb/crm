@@ -16,6 +16,7 @@ export const attendanceKeys = {
   conversation: (id: string) => ['attendance', 'conversation', id] as const,
   unreadCount: ['attendance', 'unread-count'] as const,
   messages: (id: string) => ['attendance', 'messages', id] as const,
+  messageSearch: (id: string, query: string) => ['attendance', 'message-search', id, query] as const,
   historyMessages: (id: string) => ['attendance-history', 'messages', id] as const,
   participantAvatar: (conversationId: string, jid: string) =>
     ['attendance', 'participant-avatar', conversationId, jid] as const,
@@ -89,6 +90,16 @@ export function useConversationMessages(id: string | undefined) {
     queryFn: () => attendanceService.listMessages(id as string, 1, MESSAGES_PAGE_SIZE),
     enabled: Boolean(id),
     refetchInterval: 10000,
+  });
+}
+
+export function useConversationMessageSearch(id: string, query: string) {
+  const term = query.trim();
+  return useQuery({
+    queryKey: attendanceKeys.messageSearch(id, term),
+    queryFn: () => attendanceService.searchMessages(id, term),
+    enabled: term.length >= 2,
+    staleTime: 30_000,
   });
 }
 

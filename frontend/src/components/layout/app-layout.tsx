@@ -4,6 +4,7 @@ import { useSessionSync } from '@/features/auth/queries';
 import { useMessageNotifications } from '@/features/notifications/use-message-notifications';
 import { useNativePush } from '@/features/notifications/use-native-push';
 import { AttendanceMobileOptions } from '@/features/attendance/attendance-mobile-options';
+import { useAccessUpdates } from '@/features/modules/use-access-updates';
 import { useUiStore } from '@/stores/ui-store';
 import { useNoIndex } from '@/lib/page-metadata';
 import { cn } from '@/lib/utils';
@@ -25,6 +26,7 @@ export function AppLayout() {
   useSessionSync();
   useMessageNotifications();
   useNativePush();
+  useAccessUpdates();
   useNoIndex();
   useVisualViewportHeight();
 

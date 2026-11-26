@@ -46,5 +46,8 @@ export const contactsService = {
   update: (id: string, input: Partial<ContactInput>) =>
     apiRequest<Contact>(`/contacts/${id}`, { method: 'PATCH', body: input }),
 
+  setStores: (id: string, storeIds: string[]) =>
+    apiRequest<Contact>(`/contacts/${id}/stores`, { method: 'PATCH', body: { storeIds } }),
+
   remove: (id: string) => apiRequest<void>(`/contacts/${id}`, { method: 'DELETE' }),
 };

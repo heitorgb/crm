@@ -12,6 +12,10 @@ vi.mock('@/features/notifications/use-message-notifications', () => ({
   useMessageNotifications: () => undefined,
 }));
 
+vi.mock('@/features/modules/use-access-updates', () => ({
+  useAccessUpdates: () => undefined,
+}));
+
 vi.mock('@/features/attendance/attendance-mobile-options', () => ({
   AttendanceMobileOptions: () => null,
 }));

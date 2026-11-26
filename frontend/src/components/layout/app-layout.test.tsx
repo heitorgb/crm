@@ -24,6 +24,10 @@ vi.mock('@/components/layout/main-content', () => ({
   MainContent: () => <main />,
 }));
 
+vi.mock('@/components/layout/mobile-bottom-navigation', () => ({
+  MobileBottomNavigation: () => null,
+}));
+
 vi.mock('@/components/layout/sidebar', () => ({
   Sidebar: () => <div>Menu principal</div>,
 }));

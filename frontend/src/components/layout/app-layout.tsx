@@ -9,6 +9,7 @@ import { useNoIndex } from '@/lib/page-metadata';
 import { cn } from '@/lib/utils';
 import { Header } from './header';
 import { MainContent } from './main-content';
+import { MobileBottomNavigation } from './mobile-bottom-navigation';
 import { Sidebar } from './sidebar';
 import { useVisualViewportHeight } from './use-visual-viewport-height';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
@@ -71,6 +72,7 @@ export function AppLayout() {
         <MainContent>
           <Outlet />
         </MainContent>
+        <MobileBottomNavigation />
       </div>
     </div>
   );

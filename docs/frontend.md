@@ -170,6 +170,13 @@ frontend/
 
 ## Responsividade e UX
 
+- No celular (abaixo de `md`), Conversas e Entregas compartilham uma barra inferior com
+  atalhos para as duas telas e destaque da tela ativa. O contador de Conversas usa o total
+  real de mensagens não lidas; os atalhos respeitam os módulos habilitados da organização.
+  Atualizações e Ligações são apenas elementos visuais desabilitados, sem telas ou ações.
+  A barra reserva espaço no layout, respeita a área segura inferior do aparelho e fica
+  oculta com uma conversa aberta para preservar a área das mensagens e do compositor.
+
 - Layout testado para `1366x768` e menores (sidebar recolhível de `68px`, drawer no mobile com
   posição esquerda/direita configurável).
 - Em telas mobile, inputs, textareas e selects usam no mínimo `16px` para evitar o zoom automático

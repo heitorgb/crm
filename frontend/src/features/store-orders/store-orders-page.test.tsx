@@ -11,6 +11,8 @@ const mocks = vi.hoisted(() => ({
   listOrders: vi.fn(),
   getOrder: vi.fn(),
   getCards: vi.fn(),
+  linkContact: vi.fn(),
+  updateStatus: vi.fn(),
 }));
 
 vi.mock('@/providers/use-realtime', () => ({ useRealtime: () => ({ socket: null }) }));
@@ -32,6 +34,8 @@ vi.mock('@/lib/api-client', () => ({
     if (path.startsWith('/store-orders?')) return mocks.listOrders();
     if (path === '/store-orders/manual') return mocks.createOrder(options);
     if (path === '/store-orders/order-1') return mocks.getOrder();
+    if (path === '/store-orders/order-1/contact') return mocks.linkContact(options);
+    if (path === '/store-orders/order-1/status') return mocks.updateStatus(options);
     throw new Error(`Rota inesperada: ${path}`);
   },
 }));
@@ -80,6 +84,65 @@ describe('Novo pedido manual', () => {
     await waitFor(() => expect(mocks.createOrder).toHaveBeenCalledTimes(2));
     expect(mocks.sendMessage).toHaveBeenCalledOnce();
     expect(mocks.createOrder.mock.calls[0][0].body.requestId).toBe(mocks.createOrder.mock.calls[1][0].body.requestId);
+  });
+});
+
+describe('Vínculo do contato ao pedido', () => {
+  it.each([
+    ['SENT', 'Contato vinculado e aviso do status atual enviado ao WhatsApp.', 'status'],
+    ['FAILED', 'Contato vinculado, mas o aviso não foi enviado.', 'alert'],
+    ['SKIPPED', 'Contato vinculado. Os avisos são enviados nos status Separado e Em rota.', 'status'],
+  ])('shows the %s notification result without losing the saved contact', async (status, message, role) => {
+    const order = {
+      id: 'order-1', externalOrderId: '123', customerName: 'Cliente teste', orderText: null,
+      status: status === 'SKIPPED' ? 'PENDENTE_SEPARACAO' : 'SEPARADO',
+      approvedAt: '2026-11-05T12:00:00.000Z', enteredRouteAt: null,
+      deliveryDueAt: null, deliveryConfirmationMode: null, deliveryConfirmationSource: null,
+      store: { id: 'store-1', name: 'Loja', logoUpdatedAt: null }, contact: null,
+    };
+    mocks.listOrders.mockResolvedValue({ data: [order], counts: {} });
+    mocks.getOrder.mockResolvedValue({ ...order, items: null, totalAmount: null });
+    mocks.linkContact.mockResolvedValue({
+      ...order, contact: { id: 'contact-1', name: 'Ana', address: null },
+      contactNotification: { status, message },
+    });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<MemoryRouter><QueryClientProvider client={queryClient}><StoreOrdersPage /></QueryClientProvider></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('button', { name: /Cliente teste/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Escolher contato' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Vincular' }));
+
+    expect((await screen.findByRole(role)).textContent).toBe(message);
+    expect(screen.getByRole('dialog').textContent).toContain('Ana');
+    expect(screen.queryByRole('button', { name: 'Vincular' })).toBeNull();
+    expect(mocks.linkContact).toHaveBeenCalledExactlyOnceWith({ method: 'PATCH', body: { contactId: 'contact-1' } });
+  });
+});
+
+describe('Aviso ao mudar o status do pedido', () => {
+  it.each([
+    ['SENT', 'Status atualizado. Aviso do status atual enviado ao WhatsApp.', 'status'],
+    ['FAILED', 'Status atualizado. O aviso não foi enviado: configure o WhatsApp da loja em Configurações > Lojas.', 'alert'],
+  ])('keeps the updated order visible with the %s sending outcome', async (status, message, role) => {
+    const order = {
+      id: 'order-1', externalOrderId: '123', customerName: 'Ana', orderText: null,
+      status: 'SEPARANDO', approvedAt: '2026-11-05T12:00:00.000Z', enteredRouteAt: null,
+      deliveryDueAt: null, deliveryConfirmationMode: null, deliveryConfirmationSource: null,
+      store: { id: 'store-1', name: 'Loja', logoUpdatedAt: null },
+      contact: { id: 'contact-1', name: 'Ana', address: null },
+    };
+    mocks.listOrders.mockResolvedValue({ data: [order], counts: {} });
+    mocks.getOrder.mockResolvedValue({ ...order, items: null, totalAmount: null });
+    mocks.updateStatus.mockResolvedValue({ ...order, status: 'SEPARADO', statusNotification: { status, message } });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<MemoryRouter><QueryClientProvider client={queryClient}><StoreOrdersPage /></QueryClientProvider></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('button', { name: /Ana/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Separado' }));
+    expect((await screen.findByRole(role)).textContent).toBe(message);
+    expect(screen.getByRole('dialog').textContent).toContain('Separado');
+    expect(screen.getByRole('button', { name: 'Em rota' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Separado' })).toBeNull();
+    expect(mocks.updateStatus).toHaveBeenCalledExactlyOnceWith({ method: 'PATCH', body: { status: 'SEPARADO' } });
   });
 });
 

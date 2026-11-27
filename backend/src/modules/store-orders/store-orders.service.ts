@@ -1,6 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Prisma, StoreOrderStatus } from '@prisma/client';
+import { MessageStatus, Prisma, StoreOrderStatus } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { AppException } from '../../common/errors/app.exception.js';
 import { TenantContextService } from '../../common/tenant-context/tenant-context.service.js';
@@ -22,6 +22,11 @@ const STATUS_MESSAGES: Partial<Record<StoreOrderStatus, string>> = {
   SEPARADO: 'Seu pedido está separado e pronto para envio! 📦',
   EM_ROTA: 'Seu pedido saiu para entrega! 🛵',
 };
+
+export interface OrderNotification {
+  status: 'SENT' | 'FAILED' | 'SKIPPED';
+  message: string;
+}
 
 const STATUS_TRANSITIONS: Record<StoreOrderStatus, StoreOrderStatus[]> = {
   PENDENTE_SEPARACAO: ['SEPARANDO', 'OBSERVACAO'],
@@ -305,43 +310,113 @@ export class StoreOrdersService {
           actorMembershipId: membershipId, origin: 'CRM_USER' },
       });
       return {
-        order: await tx.storeOrder.findUniqueOrThrow({ where: { id } }),
+        order: await tx.storeOrder.findFirstOrThrow({
+          where: { id, tenantId },
+          include: { store: { select: { id: true, name: true, logoUpdatedAt: true } }, contact: { select: { id: true, name: true, address: true } } },
+        }),
         contactId: found.contactId,
         instanceId: found.store.whatsappInstanceId,
       };
     });
     this.realtime.emitToTenant(tenantId, 'store-order.updated', { orderId: id });
-    const message = STATUS_MESSAGES[status];
-    if (message && contactId && instanceId) {
-      void this.sendStatusMessage(tenantId, contactId, instanceId, message).catch((error: unknown) => {
-        this.logger.warn('store-order.status-message.failed', { orderId: id, status, error });
-      });
-    }
-    return order;
+    const notification = await this.notifyOrderContact(id, status, contactId, instanceId);
+    return { ...order, statusNotification: { ...notification, message: `Status atualizado. ${notification.message}` } };
   }
 
   async updateContact(id: string, contactId: string) {
     const { tenantId } = this.tenantContext.requireContext();
     const scope = await this.storeAccess.current();
-    const [order, contact] = await Promise.all([
-      this.prisma.storeOrder.findFirst({ where: { id, tenantId, AND: [this.storeAccess.storeOrderFilter(scope)] }, select: { id: true } }),
-      this.prisma.contact.findFirst({
-        where: { id: contactId, tenantId, AND: [this.storeAccess.contactFilter(scope)] },
-        select: { id: true, name: true },
-      }),
-    ]);
-    if (!order) throw new AppException('ORDER_NOT_FOUND', 'Pedido não encontrado.', 404);
-    if (!contact) throw new AppException('CONTACT_NOT_FOUND', 'Contato não encontrado.', 404);
-    return this.prisma.storeOrder.update({
-      where: { id },
-      data: { contactId: contact.id, customerName: contact.name },
-      include: { store: { select: { id: true, name: true, logoUpdatedAt: true } }, contact: { select: { id: true, name: true, address: true } } },
+    const { order, changed, instanceId } = await this.prisma.$transaction(async (tx) => {
+      const [found, contact] = await Promise.all([
+        tx.storeOrder.findFirst({
+          where: { id, tenantId, AND: [this.storeAccess.storeOrderFilter(scope)] },
+          select: { id: true, contactId: true, status: true, store: { select: { whatsappInstanceId: true } } },
+        }),
+        tx.contact.findFirst({
+          where: { id: contactId, tenantId, AND: [this.storeAccess.contactFilter(scope)] },
+          select: { id: true, name: true },
+        }),
+      ]);
+      if (!found) throw new AppException('ORDER_NOT_FOUND', 'Pedido não encontrado.', 404);
+      if (!contact) throw new AppException('CONTACT_NOT_FOUND', 'Contato não encontrado.', 404);
+      const changed = found.contactId !== contact.id;
+      if (changed) {
+        const updated = await tx.storeOrder.updateMany({
+          where: { id, tenantId, contactId: found.contactId, status: found.status },
+          data: { contactId: contact.id, customerName: contact.name },
+        });
+        if (updated.count !== 1) {
+          throw new AppException('ORDER_CONTACT_CONFLICT', 'O pedido foi alterado por outro usuário. Atualize e tente novamente.', 409);
+        }
+      }
+      return {
+        order: await tx.storeOrder.findFirstOrThrow({
+          where: { id, tenantId },
+          include: { store: { select: { id: true, name: true, logoUpdatedAt: true } }, contact: { select: { id: true, name: true, address: true } } },
+        }),
+        changed,
+        instanceId: found.store.whatsappInstanceId,
+      };
     });
+    if (changed) this.realtime.emitToTenant(tenantId, 'store-order.updated', { orderId: id });
+    const notification = changed ? await this.notifyOrderContact(id, order.status, contactId, instanceId) : null;
+    const contactNotification = notification
+      ? { ...notification, message: `Contato vinculado. ${notification.message}` }
+      : { status: 'SKIPPED' as const, message: 'Este contato já estava vinculado. Nenhum aviso foi reenviado.' };
+    return { ...order, contactNotification };
   }
 
-  private async sendStatusMessage(tenantId: string, contactId: string, instanceId: string, text: string) {
-    const conversation = await this.conversations.startFromContact({ contactId, whatsappInstanceId: instanceId });
-    await this.processing.deliverText(tenantId, conversation.id, text, { senderId: null, senderName: null, showAgentName: false });
+  private async notifyOrderContact(
+    orderId: string,
+    status: StoreOrderStatus,
+    contactId: string | null,
+    instanceId: string | null,
+  ): Promise<OrderNotification> {
+    const text = STATUS_MESSAGES[status];
+    if (!text) {
+      return { status: 'SKIPPED', message: 'Os avisos são enviados nos status Separado e Em rota.' };
+    }
+    if (!contactId) {
+      this.logger.warn('store-order.status-message.failed', { orderId, status, code: 'ORDER_CONTACT_REQUIRED' });
+      return { status: 'FAILED', message: 'O aviso não foi enviado: vincule um contato ao pedido.' };
+    }
+    if (!instanceId) {
+      this.logger.warn('store-order.status-message.failed', { orderId, status, code: 'STORE_WHATSAPP_REQUIRED' });
+      return { status: 'FAILED', message: 'O aviso não foi enviado: configure o WhatsApp da loja em Configurações > Lojas.' };
+    }
+    const member = this.tenantContext.requireContext();
+    try {
+      if (!(await this.modules.isEnabled(member.tenantId, MODULE_KEYS.ATTENDANCE)) ||
+        !(await this.modules.isAllowedForMember(member, MODULE_KEYS.ATTENDANCE))) {
+        this.logger.warn('store-order.status-message.failed', { orderId, status, code: 'ATTENDANCE_UNAVAILABLE' });
+        return { status: 'FAILED', message: 'O aviso não foi enviado: o módulo Atendimento não está disponível para este usuário ou organização.' };
+      }
+      const conversation = await this.conversations.startFromContact({ contactId, whatsappInstanceId: instanceId });
+      const sent = await this.processing.sendStoredTextToConversation({
+        tenantId: member.tenantId,
+        conversationId: conversation.id,
+        text,
+        metadata: { storeOrderId: orderId, storeOrderStatus: status },
+      });
+      if (sent.status !== MessageStatus.SENT) {
+        this.logger.warn('store-order.status-message.failed', { orderId, status, messageId: sent.messageId, code: sent.errorCode });
+        return { status: 'FAILED', message: 'O aviso não foi enviado. Verifique a mensagem no Atendimento antes de tentar novamente.' };
+      }
+      this.logger.log('store-order.status-message.sent', { orderId, status, messageId: sent.messageId });
+      return { status: 'SENT', message: 'Aviso do status atual enviado ao WhatsApp.' };
+    } catch (error) {
+      this.logger.warn('store-order.status-message.failed', {
+        orderId, status, code: error instanceof AppException ? error.code : 'SEND_FAILED',
+      });
+      const reasons: Record<string, string> = {
+        CONTACT_PHONE_REQUIRED: 'O contato precisa ter um telefone cadastrado.',
+        WHATSAPP_INSTANCE_NOT_CONNECTED: 'O WhatsApp da loja está desconectado. Conecte-o em Configurações > WhatsApp.',
+        WHATSAPP_INSTANCE_NOT_FOUND: 'O WhatsApp configurado na loja não está disponível para este usuário.',
+        CONTACT_NOT_FOUND: 'O contato não está disponível para este usuário.',
+      };
+      const reason = error instanceof AppException ? reasons[error.code] : undefined;
+      return { status: 'FAILED', message: `O aviso não foi enviado. ${reason ?? 'Verifique o telefone do contato e a conexão do WhatsApp da loja.'}` };
+    }
   }
 
   async receiveApproved(storeId: string, authorization: string | undefined, dto: ApprovedOrderDto) {

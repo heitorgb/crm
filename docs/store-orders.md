@@ -115,8 +115,37 @@ ativas para a tela de Entregas.
 
 ## Contrato a implementar nas próximas etapas
 
-O vínculo do pedido recebido com um `Contact` do CRM e atualizações posteriores dos
-dados vindos da loja ainda precisam de contrato próprio.
+Atualizações posteriores dos dados vindos da loja ainda precisam de contrato próprio.
+
+## Vínculo de contato e aviso do status atual
+
+`PATCH /api/store-orders/:id/contact` vincula um contato acessível ao usuário, sempre
+no mesmo tenant e respeitando as lojas às quais ele tem acesso. O vínculo não muda
+o status do pedido nem cria uma movimentação de status.
+
+| Status ao vincular | Comportamento |
+| --- | --- |
+| Pendente separação ou Separando | Salva o contato para os próximos avisos, sem enviar mensagem. |
+| Separado | Envia o aviso de que o pedido está separado e pronto para envio. |
+| Em rota | Envia somente o aviso de que o pedido saiu para entrega. |
+| Observação ou Entregue | Salva o vínculo sem enviar aviso. |
+
+O envio usa o WhatsApp vinculado à loja e exige Atendimento disponível para a
+organização e para o membro. A mensagem fica registrada no Atendimento. A resposta
+inclui `contactNotification` (`SENT`, `FAILED` ou `SKIPPED`) e a tela informa o resultado.
+Uma falha de envio preserva o vínculo; ausência de WhatsApp na loja também é informada.
+Repetir o vínculo com o mesmo contato não reenvia a mensagem. Alterações concorrentes
+do pedido são rejeitadas para evitar sobrescrever outro vínculo ou duplicar o aviso.
+Nas mudanças para Separado e Em rota, `PATCH /api/store-orders/:id/status` também
+aguarda o resultado do envio e retorna `statusNotification`. A tela mantém o detalhe
+aberto para informar sucesso ou falha, com o status atualizado. Falta de contato,
+WhatsApp não configurado na loja, telefone ausente e conexão indisponível têm retorno
+explícito; não há envio por outra instância escolhida automaticamente. O envio usa
+o mesmo fluxo registrado no Atendimento utilizado ao vincular o contato. Falhas não
+disparam novas tentativas automáticas nesse fluxo; a mensagem que foi gravada pode ser
+conferida e reenviada pelo Atendimento. Os logs `store-order.status-message.sent` e
+`store-order.status-message.failed` identificam o pedido, o status e o resultado sem
+incluir texto da mensagem, telefone ou credenciais.
 
 ## Tela de Entregas
 

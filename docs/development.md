@@ -59,6 +59,16 @@ npm run prisma:seed         # cria tenant/usuário de desenvolvimento (idempoten
 npm run start:dev           # watch mode: http://localhost:3003/api/health
 ```
 
+`npm run start:dev` gera o Prisma Client antes de iniciar o Nest. Depois de atualizar o
+projeto, pare e reinicie esse comando para carregar as alterações do schema. O watch do
+Nest não substitui a geração do client nem aplica migrations.
+
+Se a consulta de contatos retornar erro 500 depois de uma atualização, confira o erro
+`Unhandled exception` no terminal e execute `npx prisma migrate status` com o PostgreSQL
+disponível. A relação de contatos com lojas exige a migration
+`20261122090000_contact_store_links`. Aplique as migrations existentes pendentes com
+`npm run prisma:deploy` e reinicie `npm run start:dev`.
+
 ### Usuário de desenvolvimento (seed)
 
 `npm run prisma:seed` cria, de forma **idempotente**, um tenant e um usuário `OWNER`. Credenciais:
@@ -109,7 +119,7 @@ nenhum módulo as consome.
 
 | Script                  | Descrição                                            |
 | ----------------------- | ---------------------------------------------------- |
-| `npm run start:dev`     | API em watch mode                                    |
+| `npm run start:dev`     | gera o Prisma Client e inicia a API em watch mode     |
 | `npm run build`         | `prisma generate` + build (`nest build`)             |
 | `npm run start:prod`    | executa `dist/main`                                  |
 | `npm run lint`          | ESLint                                               |

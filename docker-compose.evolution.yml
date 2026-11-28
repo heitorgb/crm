@@ -10,6 +10,12 @@
 #   EVOLUTION_API_BASE_URL=http://localhost:8080
 #   EVOLUTION_API_KEY=<mesmo AUTHENTICATION_API_KEY abaixo>
 #
+# Versão da imagem: `EVOLUTION_API_VERSION` (default `2.4.0-rc2`).
+# `EVOLUTION_IMAGE` sobrescreve a imagem completa quando necessário.
+# Atenção: no Docker Hub as tags estáveis 2.3.x usam o prefixo `v` (ex.: `v2.3.8`).
+# O `scripts/deploy.sh` normaliza `EVOLUTION_API_VERSION=2.3.8` para `v2.3.8`;
+# ao subir o compose manualmente com essa versão, use `EVOLUTION_API_VERSION=v2.3.8`.
+#
 # Observação: os nomes das variáveis de ambiente podem variar entre versões da
 # Evolution API. Ajuste a tag da imagem e as chaves conforme a documentação oficial.
 
@@ -44,7 +50,7 @@ services:
       retries: 10
 
   evolution:
-    image: ${EVOLUTION_IMAGE:-evoapicloud/evolution-api:2.4.0-rc2}
+    image: ${EVOLUTION_IMAGE:-evoapicloud/evolution-api:${EVOLUTION_API_VERSION:-2.4.0-rc2}}
     container_name: orderup-evolution
     restart: unless-stopped
     ports:

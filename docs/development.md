@@ -205,9 +205,14 @@ docker compose -f docker-compose.yml -f docker-compose.evolution.yml up -d
 docker compose logs -f evolution
 ```
 
-Variáveis aceitas pelo compose: `EVOLUTION_IMAGE` (default
-`evoapicloud/evolution-api:2.4.0-rc2`), `EVOLUTION_PORT` (default `8080`), `EVOLUTION_API_KEY`,
-`EVOLUTION_POSTGRES_*`.
+Variáveis aceitas pelo compose: `EVOLUTION_API_VERSION` (default `2.4.0-rc2`), `EVOLUTION_IMAGE`
+(sobrescreve a imagem completa e tem precedência), `EVOLUTION_PORT` (default `8080`),
+`EVOLUTION_API_KEY`, `EVOLUTION_POSTGRES_*`.
+
+A imagem é montada como `evoapicloud/evolution-api:${EVOLUTION_API_VERSION:-2.4.0-rc2}`. Para
+rollback, `EVOLUTION_API_VERSION=2.3.8` no `.env` da raiz: o `scripts/deploy.sh` converte para a tag
+publicada `v2.3.8`; no compose manual use `EVOLUTION_API_VERSION=v2.3.8`. Antes de rebaixar, leia os
+riscos em [deploy.md](./deploy.md#rollback-da-evolution-api).
 
 ### Configurar o backend (`backend/.env`)
 

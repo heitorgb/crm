@@ -39,8 +39,13 @@ Configure em **Settings → Secrets and variables → Actions**:
 | `DEPLOY_SSH_KEY`  | secret   | sim         | Chave privada SSH (com a pública no `authorized_keys`). |
 | `DEPLOY_PORT`     | secret   | não         | Porta SSH (default `22`).                            |
 | `DEPLOY_PATH`     | variable | não         | Caminho do repositório no servidor (default `/home/crm`). |
+| `UPDATE_EVOLUTION` | variable | não        | `1` baixa/recria a Evolution (default `0`).          |
+| `EVOLUTION_API_VERSION` | variable | não    | Tag da Evolution (ex.: `2.3.8`). Vazio usa o `.env`/default do compose. |
 
 > A chave deve ser dedicada ao deploy e, de preferência, restrita no servidor.
+>
+> `EVOLUTION_API_VERSION` definida como *variable* tem precedência sobre o `.env` do servidor. Se a
+> variável estiver vazia, o workflow não a envia e o `.env` continua valendo.
 
 ## Pré-requisitos no servidor
 
@@ -93,6 +98,8 @@ Configure em **Settings → Secrets and variables → Actions**:
    | `POSTGRES_DB`       | Nome do banco (default `orderup`).                                 |
    | `HTTP_PORT`         | Porta pública do frontend/nginx (default `80`).                    |
    | `BACKEND_PORT`      | Porta **no host** para a API (default `4100`; a API escuta em `3000` dentro do container). |
+   | `EVOLUTION_API_VERSION` | Tag da imagem da Evolution (default `2.4.0-rc2`). Ex.: `2.3.8` para rollback. |
+   | `EVOLUTION_IMAGE`   | Imagem completa da Evolution; tem precedência sobre a versão.      |
 
    O compose lê esse `.env` automaticamente (mesmo diretório do `docker-compose.prod.yml`).
    Sem ele, valem os defaults do compose.
@@ -193,6 +200,73 @@ docker run --rm -v orderup-crm_storage_data:/data -v "$PWD/backups:/backup" alpi
 A Evolution roda em compose separado (`docker-compose.evolution.yml`) e **não** faz parte deste
 deploy. Para o webhook funcionar, `PUBLIC_API_URL` deve ser uma URL pública que **a Evolution
 consiga alcançar** (ex.: `https://<seu-dominio>`), apontando para `POST /api/webhooks/evolution`.
+
+### Versão da imagem
+
+A imagem é definida por `EVOLUTION_API_VERSION`, com default `2.4.0-rc2` no
+`docker-compose.evolution.yml`:
+
+```yaml
+image: ${EVOLUTION_IMAGE:-evoapicloud/evolution-api:${EVOLUTION_API_VERSION:-2.4.0-rc2}}
+```
+
+| Variável | Efeito |
+| --- | --- |
+| `EVOLUTION_API_VERSION` | Tag da imagem. Default `2.4.0-rc2`. |
+| `EVOLUTION_IMAGE` | Imagem completa (ex.: `evoapicloud/evolution-api:v2.3.8`); tem precedência. |
+
+Configure no `.env` da raiz do repositório **no servidor** (o mesmo lido pelo compose) ou exporte
+no ambiente do deploy:
+
+```env
+EVOLUTION_API_VERSION=2.3.8
+```
+
+> As tags estáveis 2.3.x são publicadas no Docker Hub com prefixo `v` (`v2.3.8`). O
+> `scripts/deploy.sh` normaliza `2.3.8` para `v2.3.8`; ao rodar o compose manualmente, use
+> `EVOLUTION_API_VERSION=v2.3.8` ou `EVOLUTION_IMAGE=evoapicloud/evolution-api:v2.3.8`.
+
+O deploy imprime a imagem resolvida antes de atualizar:
+
+```text
+[deploy] Evolution API: em execução evoapicloud/evolution-api:v2.3.7 | configurada evoapicloud/evolution-api:2.4.0-rc2 | UPDATE_EVOLUTION=0
+```
+
+Para efetivamente baixar e recriar **somente** o serviço `evolution`:
+
+```bash
+UPDATE_EVOLUTION=1 EVOLUTION_API_VERSION=2.3.8 bash scripts/deploy.sh
+```
+
+O script preserva `evolution_postgres_data` e `evolution_redis_data`, faz backup do banco da
+Evolution antes de recriar o container e não mexe nos serviços do CRM.
+
+### Rollback da Evolution API
+
+Rebaixar a imagem **não** garante compatibilidade automática do schema. Antes de voltar para
+`2.3.8`:
+
+- faça backup do banco da Evolution (`pg_dump`) e teste o rollback em um ambiente separado;
+- verifique se a versão atual aplicou migrations de schema que a 2.3.8 não conhece (Prisma da
+  Evolution); downgrade com schema mais novo pode falhar na inicialização;
+- confirme a compatibilidade dos eventos/webhooks consumidos pelo CRM (`messages.set`,
+  `connection.update`, `qrcode.updated`, etc.);
+- esteja ciente de que sessões podem exigir reconexão/novo pareamento após a troca.
+
+O deploy **não** apaga volumes, bancos, instâncias ou configurações do WhatsApp e **não** executa
+migrations destrutivas. Se a 2.3.8 não iniciar por incompatibilidade de schema, o caminho seguro é
+restaurar o backup do banco da Evolution feito antes da atualização — procedimento manual e
+destrutivo, que não é executado automaticamente.
+
+Para retornar à versão anterior após o teste:
+
+```env
+EVOLUTION_API_VERSION=2.4.0-rc2
+```
+
+```bash
+UPDATE_EVOLUTION=1 bash scripts/deploy.sh
+```
 
 ## Deploy manual (fallback)
 

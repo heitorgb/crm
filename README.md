@@ -100,6 +100,17 @@ docker compose -f docker-compose.evolution.yml up -d
 A porta `8080` fica exposta no host. A imagem padrão é `evoapicloud/evolution-api:2.4.0-rc2` e a chave
 padrão é `change-me-evolution-api-key` (mude em produção).
 
+A versão da imagem vem de `EVOLUTION_API_VERSION` (default `2.4.0-rc2`):
+
+```env
+# rollback para a versão estável anterior
+EVOLUTION_API_VERSION=2.3.8
+```
+
+> No Docker Hub as tags estáveis 2.3.x usam prefixo `v` (`v2.3.8`). O
+> `scripts/deploy.sh` normaliza `2.3.8` automaticamente; ao subir o compose
+> manualmente use `EVOLUTION_API_VERSION=v2.3.8` ou `EVOLUTION_IMAGE`.
+
 ### 2. Configurar o backend (`backend/.env`)
 
 ```env

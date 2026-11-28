@@ -88,6 +88,7 @@ docker compose -f docker-compose.yml -f docker-compose.evolution.yml ps
 ```
 
 - Imagem: `evoapicloud/evolution-api:2.4.0-rc2` (namespace oficial atual; `atendai/...` foi descontinuado).
+  A tag vem de `EVOLUTION_API_VERSION` (ex.: `v2.3.8`; o deploy normaliza `2.3.8`).
 - Porta: `8080`.
 - Chave padrão: `change-me-evolution-api-key`.
 

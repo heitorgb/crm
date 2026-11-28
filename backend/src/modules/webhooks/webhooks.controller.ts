@@ -1,9 +1,7 @@
-import { Controller, HttpCode, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { Controller, HttpCode, Post, Query, Req } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { timingSafeEqual } from 'node:crypto';
 import type { FastifyRequest } from 'fastify';
-import { RateLimit } from '../../common/http/rate-limit/rate-limit.decorator.js';
-import { RateLimitGuard } from '../../common/http/rate-limit/rate-limit.guard.js';
 import type { Env } from '../../config/env.validation.js';
 import { Public } from '../auth/decorators/auth.decorators.js';
 import { WhatsAppInstancesService } from '../whatsapp/whatsapp-instances.service.js';
@@ -18,9 +16,11 @@ export class WebhooksController {
     private readonly config: ConfigService<Env, true>,
   ) {}
 
+  // Evolution delivers every instance through the same egress IP, so an
+  // IP-scoped route limit drops legitimate bursts with 429. Authenticity is
+  // enforced by the webhook secrets below; payload size is bounded by the
+  // global Fastify limit and processing is idempotent/recoverable.
   @Public()
-  @UseGuards(RateLimitGuard)
-  @RateLimit({ name: 'webhook-evolution', limit: 300, windowMs: 60_000 })
   @Post('evolution')
   @HttpCode(200)
   async evolution(

@@ -1462,6 +1462,19 @@ describe('WhatsApp attendance (integration)', () => {
       expect(response.statusCode).toBe(401);
     });
 
+    it('accepts the webhook secret configured for the instance', async () => {
+      const instanceName = `instance-secret-${randomUUID()}`;
+      await createInstance(ownerA, instanceName);
+
+      const response = await postWebhook(
+        evolutionPayload(instanceName, randomUUID(), 'oi'),
+        'super-secret-webhook',
+      );
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json().accepted).toBe(true);
+    });
+
     it('ignores an unknown instance', async () => {
       const response = await postWebhook(evolutionPayload('missing-instance', randomUUID(), 'oi'));
       expect(response.statusCode).toBe(200);

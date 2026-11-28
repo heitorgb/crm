@@ -38,12 +38,18 @@ Isso também resolve o teste de integração que falhava desde o Prompt 03 (a su
 força bruta/abuso. Adicionado `RateLimitGuard` (janela deslizante em memória, chave por IP real do
 socket — sem `X-Forwarded-For` spoofável):
 
-- login: 10 req/min por IP; refresh: 30 req/min; webhook: 300 req/min.
+- login: 10 req/min por IP; refresh: 30 req/min.
 - `RATE_LIMIT_ENABLED` (default `true`); desabilitado nos testes.
 - Resposta `429 RATE_LIMITED` via filtro global.
 
 Limitação conhecida: o contador é em memória (por instância). Para múltiplas instâncias, migrar para
 Redis (pendência abaixo).
+
+> Atualização: o rate limit de 300 req/min do `POST /webhooks/evolution` foi **removido**. Todas as
+> instâncias da Evolution chegam pelo mesmo IP e o contador compartilhado rejeitava rajadas
+> legítimas com `429`. A rota continua protegida pelo segredo global/por instância, pelo limite de
+> payload do Fastify (1 MiB) e pela idempotência/recuperação de eventos. Não há novo limite por IP
+> nessa rota.
 
 ### [High] Filas — retry, backoff e dead-letter
 

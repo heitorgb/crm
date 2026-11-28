@@ -1,10 +1,16 @@
-import type { ConfigService } from '@nestjs/config';
+import { ConfigService } from '@nestjs/config';
+import type { NestFastifyApplication } from '@nestjs/platform-fastify';
+import { Test } from '@nestjs/testing';
 import type { FastifyRequest } from 'fastify';
+import { createFastifyAdapter } from '../../../src/common/http/create-fastify-adapter.js';
+import { RATE_LIMIT_KEY } from '../../../src/common/http/rate-limit/rate-limit.decorator.js';
+import { RateLimitGuard } from '../../../src/common/http/rate-limit/rate-limit.guard.js';
+import { RateLimitService } from '../../../src/common/http/rate-limit/rate-limit.service.js';
 import type { Env } from '../../../src/config/env.validation.js';
-import type { WebhookService } from '../../../src/modules/webhooks/webhook.service.js';
+import { WebhookService } from '../../../src/modules/webhooks/webhook.service.js';
 import { WebhooksController } from '../../../src/modules/webhooks/webhooks.controller.js';
 import { WebhookUnauthorizedError } from '../../../src/modules/webhooks/webhooks.errors.js';
-import type { WhatsAppInstancesService } from '../../../src/modules/whatsapp/whatsapp-instances.service.js';
+import { WhatsAppInstancesService } from '../../../src/modules/whatsapp/whatsapp-instances.service.js';
 
 interface Harness {
   controller: WebhooksController;
@@ -26,10 +32,7 @@ function createHarness(env: Record<string, string | undefined>): Harness {
   return { controller, webhooks, instances };
 }
 
-function request(
-  body: Record<string, unknown>,
-  headerSecret?: string,
-): FastifyRequest {
+function request(body: Record<string, unknown>, headerSecret?: string): FastifyRequest {
   return {
     body,
     headers: headerSecret ? { 'x-webhook-secret': headerSecret } : {},
@@ -42,7 +45,10 @@ describe('WebhooksController secret validation', () => {
       EVOLUTION_WEBHOOK_SECRET: 'global-secret',
     });
 
-    await controller.evolution(request({ event: 'messages.upsert', instance: 'inst-1' }), 'global-secret');
+    await controller.evolution(
+      request({ event: 'messages.upsert', instance: 'inst-1' }),
+      'global-secret',
+    );
 
     expect(instances.resolveWebhookSecretForInstanceName).not.toHaveBeenCalled();
     expect(webhooks.ingestEvolution).toHaveBeenCalled();
@@ -100,5 +106,57 @@ describe('WebhooksController secret validation', () => {
     await expect(
       controller.evolution(request({ event: 'messages.upsert', instance: 'inst-1' }), undefined),
     ).rejects.toBeInstanceOf(WebhookUnauthorizedError);
+  });
+});
+
+describe('WebhooksController rate limit', () => {
+  it('accepts more than 300 valid requests in the same minute', async () => {
+    const webhooks = { ingestEvolution: vi.fn().mockResolvedValue({ accepted: true }) };
+    const instances = { resolveWebhookSecretForInstanceName: vi.fn().mockResolvedValue(null) };
+    const config = {
+      get: vi.fn((key: string) => {
+        if (key === 'RATE_LIMIT_ENABLED') {
+          return true;
+        }
+        if (key === 'EVOLUTION_WEBHOOK_SECRET') {
+          return 'global-secret';
+        }
+        return undefined;
+      }),
+    };
+
+    const moduleRef = await Test.createTestingModule({
+      controllers: [WebhooksController],
+      providers: [
+        { provide: WebhookService, useValue: webhooks },
+        { provide: WhatsAppInstancesService, useValue: instances },
+        { provide: ConfigService, useValue: config },
+        RateLimitGuard,
+        RateLimitService,
+      ],
+    }).compile();
+
+    const app = moduleRef.createNestApplication<NestFastifyApplication>(createFastifyAdapter());
+    app.useGlobalGuards(app.get(RateLimitGuard));
+    await app.init();
+    await app.getHttpAdapter().getInstance().ready();
+
+    try {
+      const controller = app.get(WebhooksController);
+      expect(Reflect.getMetadata(RATE_LIMIT_KEY, controller.evolution)).toBeUndefined();
+
+      for (let attempt = 0; attempt < 301; attempt += 1) {
+        const response = await app.inject({
+          method: 'POST',
+          url: '/webhooks/evolution?token=global-secret',
+          payload: { event: 'presence.update', instance: 'inst-1' },
+        });
+        expect(response.statusCode).toBe(200);
+      }
+
+      expect(webhooks.ingestEvolution).toHaveBeenCalledTimes(301);
+    } finally {
+      await app.close();
+    }
   });
 });

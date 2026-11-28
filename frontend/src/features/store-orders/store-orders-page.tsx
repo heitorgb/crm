@@ -23,6 +23,8 @@ type Order = {
   deliveryDueAt: string | null; deliveryConfirmationMode: 'AUTOMATIC' | 'MANUAL' | null;
   deliveryConfirmationSource: 'AUTOMATIC' | 'MANUAL' | null;
   separationReminderSentAt?: string | null;
+  contactNotification?: { status: 'SENT' | 'FAILED' | 'SKIPPED'; message: string };
+  statusNotification?: { status: 'SENT' | 'FAILED' | 'SKIPPED'; message: string };
   store: { id: string; name: string; logoUpdatedAt: string | null }; contact: { id: string; name: string; address: string | null } | null;
 };
 const isSeparationLate = (order: Order) =>
@@ -185,10 +187,15 @@ export function StoreOrdersPage() {
       : cause.message),
   });
   const move = useMutation({
-    mutationFn: (status: Status) => apiRequest(`/store-orders/${selected?.id}/status`, { method: 'PATCH', body: { status } }),
-    onSuccess: async () => {
-      setSelected(null); setError('');
+    mutationFn: (status: Status) => apiRequest<Order>(`/store-orders/${selected?.id}/status`, { method: 'PATCH', body: { status } }),
+    onSuccess: async (updated) => {
+      setSelected((current) => current?.id === updated.id
+        ? updated.statusNotification?.status === 'SKIPPED' ? null : updated
+        : current);
+      setError('');
       await queryClient.invalidateQueries({ queryKey: ['store-orders', 'list'] });
+      void queryClient.invalidateQueries({ queryKey: ['store-orders', 'detail'] });
+      void queryClient.invalidateQueries({ queryKey: ['attendance'] });
     },
     onError: (cause: Error) => setError(cause.message),
   });
@@ -198,6 +205,8 @@ export function StoreOrdersPage() {
     onSuccess: async (updated) => {
       setSelected(updated); setLinkContactId(''); setError('');
       await queryClient.invalidateQueries({ queryKey: ['store-orders', 'list'] });
+      void queryClient.invalidateQueries({ queryKey: ['store-orders', 'detail'] });
+      void queryClient.invalidateQueries({ queryKey: ['attendance'] });
     },
     onError: (cause: Error) => setError(cause.message),
   });
@@ -257,6 +266,8 @@ export function StoreOrdersPage() {
           <div className="flex-1 space-y-1"><p className="text-xs text-muted-foreground">Nenhum contato vinculado — vincule para habilitar mensagens automáticas.</p><ContactPicker id="link-contact" value={linkContactId} onValueChange={setLinkContactId} disabled={linkContact.isPending}/></div>
           <Button size="sm" disabled={!linkContactId || linkContact.isPending} onClick={() => linkContact.mutate(linkContactId)}>Vincular</Button>
         </div>}
+        {selected.contactNotification && <p role={selected.contactNotification.status === 'FAILED' ? 'alert' : 'status'} className={selected.contactNotification.status === 'FAILED' ? 'text-warning' : 'text-muted-foreground'}>{selected.contactNotification.message}</p>}
+        {selected.statusNotification && <p role={selected.statusNotification.status === 'FAILED' ? 'alert' : 'status'} className={selected.statusNotification.status === 'FAILED' ? 'text-warning' : 'text-muted-foreground'}>{selected.statusNotification.message}</p>}
         <p className="flex gap-2 text-muted-foreground"><Clock3 className="size-4"/>Aprovado em {new Date(selected.approvedAt).toLocaleString('pt-BR')}</p>
         {detail.isPending ? <p className="text-muted-foreground">Carregando itens…</p> : detail.isError ? <p role="alert" className="text-danger">Não foi possível carregar os itens deste pedido.</p> : detail.data?.items?.length ? <OrderItems items={detail.data.items} totalAmount={detail.data.totalAmount} /> : detail.data?.items === null ? <p className="text-muted-foreground">Itens indisponíveis para este pedido.</p> : null}
         {selected.orderText && <div className="whitespace-pre-wrap rounded-md border bg-muted/40 p-3">{selected.orderText}</div>}

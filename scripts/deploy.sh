@@ -12,7 +12,9 @@
 #   UPDATE_EVOLUTION=1       baixa a nova imagem e recria a Evolution  (default: 0)
 #   EVOLUTION_COMPOSE_FILE   compose da Evolution  (default: docker-compose.evolution.yml)
 #   EVOLUTION_PROJECT        projeto compose da Evolution (default: detectado do container)
-#   EVOLUTION_IMAGE          sobrescreve a tag da imagem (default: a do compose)
+#   EVOLUTION_API_VERSION    tag da imagem (default: 2.4.0-rc2). Ex.: 2.3.8 para rollback.
+#                            Também aceita ser definida no `.env` da raiz.
+#   EVOLUTION_IMAGE          sobrescreve a imagem completa (tem precedência sobre a versão)
 #
 # Pré-requisitos no servidor: git, docker, docker compose (v2) e o repositório
 # já clonado em APP_DIR com o remote configurado, além de backend/.env preenchido.
@@ -30,6 +32,23 @@ log() { printf '\n\033[1;32m[deploy]\033[0m %s\n' "$*"; }
 warn() { printf '\n\033[1;33m[deploy:aviso]\033[0m %s\n' "$*"; }
 fail() { printf '\n\033[1;31m[deploy:erro]\033[0m %s\n' "$*" >&2; exit 1; }
 
+# Lê um valor simples do `.env` da raiz sem executá-lo como shell.
+env_file_value() {
+  local key="$1" line value
+  [ -f .env ] || return 0
+  line="$(grep -E "^[[:space:]]*${key}[[:space:]]*=" .env | tail -n 1 || true)"
+  [ -n "$line" ] || return 0
+  value="${line#*=}"
+  value="${value%$'\r'}"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  value="${value#\"}"
+  value="${value%\"}"
+  value="${value#\'}"
+  value="${value%\'}"
+  printf '%s' "$value"
+}
+
 command -v git >/dev/null 2>&1 || fail "git não encontrado no servidor."
 command -v docker >/dev/null 2>&1 || fail "docker não encontrado no servidor."
 docker compose version >/dev/null 2>&1 || fail "docker compose (v2) não encontrado."
@@ -46,6 +65,16 @@ git reset --hard "$GIT_REMOTE/$DEPLOY_BRANCH"
 log "HEAD em $(git rev-parse --short HEAD) — $(git log -1 --pretty=%s)"
 
 [ -f backend/.env ] || fail "backend/.env ausente em $APP_DIR/backend/.env (crie a partir de backend/.env.example)."
+
+configured_evolution_version="${EVOLUTION_API_VERSION:-$(env_file_value EVOLUTION_API_VERSION)}"
+if [[ -n "$configured_evolution_version" ]]; then
+  case "$configured_evolution_version" in
+    # As tags estáveis 2.3.x são publicadas com prefixo `v` no Docker Hub.
+    2.3.[0-9]*) EVOLUTION_API_VERSION="v$configured_evolution_version" ;;
+    *) EVOLUTION_API_VERSION="$configured_evolution_version" ;;
+  esac
+  export EVOLUTION_API_VERSION
+fi
 
 log "Construindo imagens (backend, migrate, frontend)"
 docker compose -f "$COMPOSE_FILE" build
@@ -90,6 +119,14 @@ docker compose -f "$COMPOSE_FILE" up -d --remove-orphans postgres redis backend 
 # a nova imagem e recriar apenas o serviço `evolution`, preservando os volumes.
 # Reutiliza o MESMO projeto compose do container existente para não criar um
 # volume novo (e vazio) nem colidir com o nome fixo `orderup-evolution`.
+evolution_image=""
+if [[ -f "$EVOLUTION_COMPOSE_FILE" ]]; then
+  evolution_image="$(docker compose -f "$EVOLUTION_COMPOSE_FILE" config --images evolution \
+    2>/dev/null | head -n 1 || true)"
+fi
+running_evolution_image="$(docker inspect -f '{{.Config.Image}}' orderup-evolution 2>/dev/null || true)"
+log "Evolution API: em execução ${running_evolution_image:-indisponível} | configurada ${evolution_image:-padrão do compose} | UPDATE_EVOLUTION=$UPDATE_EVOLUTION"
+
 if [[ "$UPDATE_EVOLUTION" == "1" ]]; then
   [ -f "$EVOLUTION_COMPOSE_FILE" ] ||
     fail "UPDATE_EVOLUTION=1, mas $EVOLUTION_COMPOSE_FILE não foi encontrado em $APP_DIR."
@@ -102,7 +139,7 @@ if [[ "$UPDATE_EVOLUTION" == "1" ]]; then
     evolution_compose+=(-p "$EVOLUTION_PROJECT")
   fi
 
-  log "Atualizando Evolution API ($EVOLUTION_COMPOSE_FILE${EVOLUTION_PROJECT:+ | projeto: $EVOLUTION_PROJECT})"
+  log "Atualizando Evolution API ($EVOLUTION_COMPOSE_FILE${EVOLUTION_PROJECT:+ | projeto: $EVOLUTION_PROJECT} | imagem: ${evolution_image:-padrão do compose})"
 
   # Backup do banco da Evolution antes de migrar (best-effort).
   mkdir -p backups

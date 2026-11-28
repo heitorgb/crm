@@ -4,6 +4,7 @@ import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { PrismaService } from '../../src/infrastructure/prisma/prisma.service.js';
 import { RealtimeService } from '../../src/infrastructure/realtime/realtime.service.js';
 import { StoreOrderDeliverySchedulerService } from '../../src/modules/store-orders/store-order-delivery-scheduler.service.js';
+import { ConversationProcessingService } from '../../src/modules/conversations/conversation-processing.service.js';
 import { authHeaders, cleanupTenants, createTestApp, seedMember, seedTenant, type SeededTenant, type TestApp } from './crm.helpers.js';
 
 describe('Store order approval (integration)', () => {
@@ -99,12 +100,97 @@ describe('Store order approval (integration)', () => {
     expect(await prisma.storeOrder.count({ where: { tenantId: { in: [ownerA.tenantId, ownerB.tenantId] } } })).toBe(0);
   });
 
+  it.each(['PENDENTE_SEPARACAO', 'SEPARADO', 'EM_ROTA'] as const)(
+    'links a contact in %s and notifies only the current eligible status once', async (status) => {
+      const processing = app.get(ConversationProcessingService);
+      const send = vi.spyOn(processing, 'sendStoredTextToConversation').mockResolvedValue({
+        conversationId: 'test-conversation', messageId: 'test-message', externalMessageId: 'test-external', status: 'SENT',
+      });
+      try {
+        const store = await createStore(ownerA);
+        const instance = await prisma.whatsAppInstance.create({
+          data: { tenantId: ownerA.tenantId, name: 'WhatsApp loja', instanceName: `order-${randomUUID()}`, status: 'CONNECTED' },
+        });
+        await prisma.store.update({ where: { id: store.id }, data: { whatsappInstanceId: instance.id } });
+        const approved = await approve(store.id, store.secret);
+        const id = approved.json().id as string;
+        if (status !== 'PENDENTE_SEPARACAO') {
+          for (const next of ['SEPARANDO', 'SEPARADO', ...(status === 'EM_ROTA' ? ['EM_ROTA'] : [])]) {
+            expect((await app.inject({ method: 'PATCH', url: `/api/store-orders/${id}/status`,
+              headers: authHeaders(ownerA), payload: { status: next } })).statusCode).toBe(200);
+          }
+        }
+        const contact = await prisma.contact.create({ data: { tenantId: ownerA.tenantId, name: 'Ana', phone: '5511912345678' } });
+        const foreignContact = await prisma.contact.create({ data: { tenantId: ownerB.tenantId, name: 'Outra organização' } });
+        const link = (owner: SeededTenant, contactId: string) => app.inject({
+          method: 'PATCH', url: `/api/store-orders/${id}/contact`, headers: authHeaders(owner), payload: { contactId },
+        });
+        expect((await link(ownerB, foreignContact.id)).statusCode).toBe(404);
+        expect((await link(ownerA, foreignContact.id)).statusCode).toBe(404);
+        expect(send).not.toHaveBeenCalled();
+
+        const response = await link(ownerA, contact.id);
+        expect(response.statusCode).toBe(200);
+        expect(response.json()).toMatchObject({ contactId: contact.id, status,
+          contactNotification: { status: status === 'PENDENTE_SEPARACAO' ? 'SKIPPED' : 'SENT' } });
+        expect((await link(ownerA, contact.id)).json().contactNotification.status).toBe('SKIPPED');
+        if (status === 'PENDENTE_SEPARACAO') expect(send).not.toHaveBeenCalled();
+        else {
+          expect(send).toHaveBeenCalledOnce();
+          expect(send).toHaveBeenCalledWith(expect.objectContaining({
+            tenantId: ownerA.tenantId, metadata: { storeOrderId: id, storeOrderStatus: status },
+            text: expect.stringContaining(status === 'SEPARADO' ? 'separado e pronto' : 'saiu para entrega'),
+          }));
+        }
+        expect((await prisma.storeOrder.findUniqueOrThrow({ where: { id } })).contactId).toBe(contact.id);
+      } finally {
+        send.mockRestore();
+      }
+    },
+  );
+
   it('allows the same external order ID in separate stores', async () => {
     const a = await createStore(ownerA);
     const b = await createStore(ownerB);
     expect((await approve(a.id, a.secret)).json().created).toBe(true);
     expect((await approve(b.id, b.secret)).json().created).toBe(true);
     expect(await prisma.storeOrder.count({ where: { tenantId: { in: [ownerA.tenantId, ownerB.tenantId] } } })).toBe(2);
+  });
+
+  it.each([true, false])('reports notifications when moving a previously linked order (store WhatsApp configured: %s)', async (configured) => {
+    const send = vi.spyOn(app.get(ConversationProcessingService), 'sendStoredTextToConversation').mockResolvedValue({
+      conversationId: 'test-conversation', messageId: 'test-message', externalMessageId: 'test-external', status: 'SENT',
+    });
+    try {
+      const store = await createStore(ownerA);
+      if (configured) {
+        const instance = await prisma.whatsAppInstance.create({ data: {
+          tenantId: ownerA.tenantId, name: 'WhatsApp loja', instanceName: `status-${randomUUID()}`, status: 'CONNECTED',
+        } });
+        await prisma.store.update({ where: { id: store.id }, data: { whatsappInstanceId: instance.id } });
+      }
+      const contact = await prisma.contact.create({ data: { tenantId: ownerA.tenantId, name: 'Contato do pedido', phone: '5511912345678' } });
+      const approved = await approve(store.id, store.secret);
+      const id = approved.json().id as string;
+      const linked = await app.inject({ method: 'PATCH', url: `/api/store-orders/${id}/contact`,
+        headers: authHeaders(ownerA), payload: { contactId: contact.id } });
+      expect(linked.json().contactNotification.status).toBe('SKIPPED');
+      const move = (status: string) => app.inject({ method: 'PATCH', url: `/api/store-orders/${id}/status`,
+        headers: authHeaders(ownerA), payload: { status } });
+      expect((await move('SEPARANDO')).json().statusNotification.status).toBe('SKIPPED');
+      for (const status of ['SEPARADO', 'EM_ROTA']) {
+        const moved = await move(status);
+        expect(moved.statusCode).toBe(200);
+        expect(moved.json()).toMatchObject({ status, contact: { id: contact.id }, store: { id: store.id },
+          statusNotification: { status: configured ? 'SENT' : 'FAILED' } });
+        if (!configured) expect(moved.json().statusNotification.message).toContain('Configurações > Lojas');
+        expect((await move(status)).statusCode).toBe(409);
+      }
+      expect(send).toHaveBeenCalledTimes(configured ? 2 : 0);
+      expect((await prisma.storeOrder.findUniqueOrThrow({ where: { id } })).status).toBe('EM_ROTA');
+    } finally {
+      send.mockRestore();
+    }
   });
 
   it('blocks delivery operations for a disabled organization without affecting another', async () => {
